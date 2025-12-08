@@ -1,0 +1,18 @@
+[
+  {"N": 90, "P": 42, "K": 43, "temperature": 20.8, "humidity": 82.0, "ph": 6.5, "rainfall": 202.9, "label": "rice"},
+  {"N": 85, "P": 58, "K": 41, "temperature": 21.0, "humidity": 80.0, "ph": 7.0, "rainfall": 110.0, "label": "maize"},
+  {"N": 80, "P": 55, "K": 44, "temperature": 23.0, "humidity": 70.0, "ph": 6.8, "rainfall": 146.0, "label": "chickpea"},
+  {"N": 74, "P": 35, "K": 40, "temperature": 24.6, "humidity": 65.0, "ph": 6.0, "rainfall": 100.0, "label": "kidneybeans"},
+  {"N": 86, "P": 52, "K": 37, "temperature": 25.5, "humidity": 90.0, "ph": 7.5, "rainfall": 250.0, "label": "pigeonpeas"},
+  {"N": 77, "P": 39, "K": 47, "temperature": 26.8, "humidity": 85.0, "ph": 6.2, "rainfall": 200.0, "label": "mothbeans"},
+  {"N": 87, "P": 51, "K": 54, "temperature": 27.4, "humidity": 95.0, "ph": 5.5, "rainfall": 300.0, "label": "mungbean"},
+  {"N": 70, "P": 45, "K": 50, "temperature": 28.5, "humidity": 88.0, "ph": 7.8, "rainfall": 150.0, "label": "blackgram"},
+  {"N": 82, "P": 48, "K": 44, "temperature": 29.8, "humidity": 75.0, "ph": 6.9, "rainfall": 175.0, "label": "lentil"},
+  {"N": 88, "P": 53, "K": 42, "temperature": 30.0, "humidity": 82.0, "ph": 7.2, "rainfall": 180.0, "label": "pomegranate"},
+  {"N": 75, "P": 38, "K": 39, "temperature": 22.4, "humidity": 78.0, "ph": 6.4, "rainfall": 190.0, "label": "banana"},
+  {"N": 84, "P": 46, "K": 48, "temperature": 21.6, "humidity": 80.0, "ph": 7.1, "rainfall": 210.0, "label": "mango"},
+  {"N": 95, "P": 60, "K": 50, "temperature": 18.0, "humidity": 70.0, "ph": 7.0, "rainfall": 600.0, "label": "wheat"},
+  {"N": 92, "P": 55, "K": 45, "temperature": 22.0, "humidity": 75.0, "ph": 6.8, "rainfall": 500.0, "label": "cotton"},
+  {"N": 100, "P": 65, "K": 55, "temperature": 26.0, "humidity": 85.0, "ph": 7.2, "rainfall": 2000.0, "label": "sugarcane"}
+]
+

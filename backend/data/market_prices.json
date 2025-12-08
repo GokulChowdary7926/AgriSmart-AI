@@ -1,0 +1,15 @@
+[
+  {"commodity": "Rice", "price": 2200, "unit": "Quintal", "market": "Delhi", "date": "2024-01-15"},
+  {"commodity": "Wheat", "price": 2100, "unit": "Quintal", "market": "Punjab", "date": "2024-01-15"},
+  {"commodity": "Maize", "price": 1800, "unit": "Quintal", "market": "Karnataka", "date": "2024-01-15"},
+  {"commodity": "Cotton", "price": 5500, "unit": "Quintal", "market": "Gujarat", "date": "2024-01-15"},
+  {"commodity": "Sugarcane", "price": 3200, "unit": "Quintal", "market": "Maharashtra", "date": "2024-01-15"},
+  {"commodity": "Groundnut", "price": 5000, "unit": "Quintal", "market": "Andhra Pradesh", "date": "2024-01-15"},
+  {"commodity": "Soybean", "price": 3500, "unit": "Quintal", "market": "Madhya Pradesh", "date": "2024-01-15"},
+  {"commodity": "Pulses", "price": 4500, "unit": "Quintal", "market": "Rajasthan", "date": "2024-01-15"},
+  {"commodity": "Potato", "price": 1500, "unit": "Quintal", "market": "Uttar Pradesh", "date": "2024-01-15"},
+  {"commodity": "Onion", "price": 2000, "unit": "Quintal", "market": "Maharashtra", "date": "2024-01-15"},
+  {"commodity": "Tomato", "price": 1200, "unit": "Quintal", "market": "Karnataka", "date": "2024-01-15"},
+  {"commodity": "Brinjal", "price": 1800, "unit": "Quintal", "market": "Tamil Nadu", "date": "2024-01-15"}
+]
+

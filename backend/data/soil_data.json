@@ -1,0 +1,18 @@
+[
+  {"state": "Punjab", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "6.5-8.5", "organic_carbon": "0.5-0.8"},
+  {"state": "Haryana", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "7.0-8.5", "organic_carbon": "0.4-0.7"},
+  {"state": "Uttar Pradesh", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "6.5-8.0", "organic_carbon": "0.5-0.9"},
+  {"state": "Maharashtra", "district": "Multiple", "soil_type": "Black", "ph_range": "7.0-8.5", "organic_carbon": "0.6-1.0"},
+  {"state": "Karnataka", "district": "Multiple", "soil_type": "Red", "ph_range": "5.5-7.5", "organic_carbon": "0.3-0.6"},
+  {"state": "Tamil Nadu", "district": "Multiple", "soil_type": "Red", "ph_range": "5.5-7.0", "organic_carbon": "0.3-0.5"},
+  {"state": "Andhra Pradesh", "district": "Multiple", "soil_type": "Red & Black", "ph_range": "6.0-7.5", "organic_carbon": "0.4-0.7"},
+  {"state": "Gujarat", "district": "Multiple", "soil_type": "Alluvial & Desert", "ph_range": "7.5-8.5", "organic_carbon": "0.2-0.5"},
+  {"state": "Rajasthan", "district": "Multiple", "soil_type": "Desert", "ph_range": "7.5-9.0", "organic_carbon": "0.1-0.4"},
+  {"state": "Madhya Pradesh", "district": "Multiple", "soil_type": "Black", "ph_range": "7.0-8.5", "organic_carbon": "0.5-0.9"},
+  {"state": "West Bengal", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "5.5-7.0", "organic_carbon": "0.8-1.2"},
+  {"state": "Bihar", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "6.0-7.5", "organic_carbon": "0.7-1.0"},
+  {"state": "Odisha", "district": "Multiple", "soil_type": "Red & Laterite", "ph_range": "5.0-6.5", "organic_carbon": "0.4-0.7"},
+  {"state": "Kerala", "district": "Multiple", "soil_type": "Laterite", "ph_range": "4.5-6.0", "organic_carbon": "1.0-2.0"},
+  {"state": "Assam", "district": "Multiple", "soil_type": "Alluvial", "ph_range": "5.0-6.5", "organic_carbon": "0.9-1.5"}
+]
+

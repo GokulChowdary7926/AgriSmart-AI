@@ -1,0 +1,15 @@
+[
+  {"disease_name": "Leaf Blight", "crop_affected": "Rice", "symptoms": "Yellow-brown spots on leaves", "treatment": "Copper-based fungicide"},
+  {"disease_name": "Bacterial Blight", "crop_affected": "Rice", "symptoms": "Water-soaked lesions", "treatment": "Streptomycin spray"},
+  {"disease_name": "Blast", "crop_affected": "Rice", "symptoms": "Diamond-shaped lesions", "treatment": "Tricyclazole"},
+  {"disease_name": "Brown Spot", "crop_affected": "Rice", "symptoms": "Brown oval spots", "treatment": "Mancozeb"},
+  {"disease_name": "Downy Mildew", "crop_affected": "Maize", "symptoms": "White downy growth", "treatment": "Metalaxyl"},
+  {"disease_name": "Powdery Mildew", "crop_affected": "Wheat", "symptoms": "White powdery coating", "treatment": "Sulfur dust"},
+  {"disease_name": "Rust", "crop_affected": "Wheat", "symptoms": "Orange-red pustules", "treatment": "Propiconazole"},
+  {"disease_name": "Smut", "crop_affected": "Sugarcane", "symptoms": "Black spore masses", "treatment": "Carbendazim"},
+  {"disease_name": "Wilt", "crop_affected": "Tomato", "symptoms": "Wilting and yellowing", "treatment": "Carbendazim drench"},
+  {"disease_name": "Mosaic Virus", "crop_affected": "Tomato", "symptoms": "Mosaic pattern on leaves", "treatment": "No chemical treatment"},
+  {"disease_name": "Leaf Curl", "crop_affected": "Cotton", "symptoms": "Curling and twisting", "treatment": "Imidacloprid"},
+  {"disease_name": "Anthracnose", "crop_affected": "Mango", "symptoms": "Dark sunken lesions", "treatment": "Copper oxychloride"}
+]
+

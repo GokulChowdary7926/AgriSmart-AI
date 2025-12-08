@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with PostGIS
+  postgres:
+    image: postgis/postgis:14-3.3
+    container_name: agri-postgres
+    environment:
+      POSTGRES_DB: agri_smart
+      POSTGRES_USER: agri_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-agri_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agri_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agri-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: agri-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agri-network
+
+  # MongoDB for unstructured data
+  mongodb:
+    image: mongo:6
+    container_name: agri-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-admin_password}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - agri-network
+
+  # ML Model Serving (Python/FastAPI)
+  ml-serving:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: agri-ml-serving
+    environment:
+      - MODEL_PATH=/models
+      - REDIS_URL=redis://redis:6379
+      - MONGODB_URL=mongodb://mongodb:27017
+    volumes:
+      - ./models:/models
+      - ./ai-service:/app
+      - ./data:/data
+    ports:
+      - "5002:5002"  # AI Service Port
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - agri-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agri-backend
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://agri_user:${DB_PASSWORD:-agri_password}@postgres:5432/agri_smart
+      - REDIS_URL=redis://redis:6379
+      - MONGODB_URI=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-admin_password}@mongodb:27017/agrismart?authSource=admin
+      - ML_SERVING_URL=http://ml-serving:8501
+      - WEATHER_API_KEY=${WEATHER_API_KEY}
+      - SOIL_API_KEY=${SOIL_API_KEY}
+      - MARKET_API_KEY=${MARKET_API_KEY}
+      - AGMARKNET_API_KEY=${AGMARKNET_API_KEY}
+      - IMD_API_KEY=${IMD_API_KEY}
+      - PM_KISAN_API_KEY=${PM_KISAN_API_KEY}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3030}
+    volumes:
+      - ./backend:/app
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    ports:
+      - "5001:5001"  # Backend API Port
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-serving:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - agri-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: agri-frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:5001
+      - REACT_APP_WS_URL=ws://localhost:5001
+    ports:
+      - "3030:3030"  # Frontend Port
+    depends_on:
+      - backend
+    networks:
+      - agri-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: agri-nginx
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - agri-network
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: agri-prometheus
+    volumes:
+      - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - agri-network
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: agri-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/monitoring/dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - agri-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  mongo_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  agri-network:
+    driver: bridge
+
+
