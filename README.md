@@ -135,7 +135,9 @@ A full-stack agricultural intelligence platform providing real-time crop recomme
 - **DL Types:** CNN, YOLO, LSTM
 - **Tasks:** Classification, Regression, Object Detection, Time Series Forecasting
 
-📖 **Detailed Documentation:** See [ML_DL_MODELS.md](./ML_DL_MODELS.md) for complete model architectures, training methods, and datasets.
+📖 **Detailed Documentation:** 
+- [ML_DL_MODELS.md](./ML_DL_MODELS.md) - Complete model architectures, training methods, and datasets
+- [CROP_RECOMMENDATION_ARCHITECTURE.md](./CROP_RECOMMENDATION_ARCHITECTURE.md) - Comprehensive architecture documentation including alternative Python/FastAPI patterns
 
 ---
 
