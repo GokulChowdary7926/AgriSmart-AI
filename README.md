@@ -16,17 +16,35 @@ A full-stack agricultural intelligence platform providing real-time crop recomme
 - **Market Trends**: Visual charts and analytics for price trends
 - **Filtering & Search**: Filter by commodity, state, date, quality, and more
 
-### 🌱 **Crop Recommendations**
+### 🌱 **Crop Recommendations - AI-Powered Precision Agriculture System**
+- **Multi-Layered Recommendation Algorithm:**
+  - **Layer 1:** Location & Season Filtering (determines current season, filters suitable crops)
+  - **Layer 2:** Soil & Weather Suitability Scoring (25+30 points: pH, soil type, temperature, rainfall, humidity)
+  - **Layer 3:** Economic & Practicality Analysis (25+20 points: market prices, revenue potential, risk assessment)
 - **Location-Based Recommendations**: GPS and IP-based location detection
 - **Location Search Bar**: Search for cities, states, and districts
-- **Soil Type Analysis**: Detailed soil information (type, pH, organic matter, drainage)
+- **Soil Type Analysis**: Detailed soil information (type, pH, pH range, organic matter, drainage)
 - **Weather Integration**: Real-time weather data for crop suitability
-- **Detailed Recommendations**: 
-  - Reasons for recommendation (expandable accordion)
+- **Detailed Recommendations with Scoring Breakdown:**
+  - **Soil Compatibility:** 25/25 (pH match, soil type compatibility)
+  - **Weather Alignment:** 30/30 (temperature, rainfall, humidity matching)
+  - **Economic Viability:** 25/25 (market prices, revenue potential, profit margins)
+  - **Risk Factor:** 20/20 (duration-based risk, weather risk assessment)
+  - **Total Suitability Score:** 0-100 points
+- **Economic Information:**
+  - Potential revenue per hectare
+  - Profit margin estimates (30-40%)
+  - Market price trends (increasing/stable/decreasing)
+  - Current market prices
+- **Detailed Crop Information:**
+  - Reasons for recommendation (expandable accordion with component scores)
   - Advantages of each crop
-  - Suitability scores
   - Expected yield and market prices
   - Season and duration information
+  - Planting window recommendations
+  - Risk assessment with explanations
+
+📖 **Architecture Documentation:** See [CROP_RECOMMENDATION_ARCHITECTURE.md](./CROP_RECOMMENDATION_ARCHITECTURE.md) for detailed system architecture, alternative implementations, and best practices.
 
 ### 🌤️ **Weather Services**
 - **Apple Weather-Style UI**: Beautiful, modern weather interface
