@@ -59,7 +59,7 @@ class DynamicCropDatabase {
           AgroClimaticZone.SUBTROPICAL
         ],
         countries: ['India', 'Bangladesh', 'Thailand', 'Vietnam', 'China'],
-        regions: ['South Asia', 'Southeast Asia', 'East Asia'],
+        regions: ['South Asia', 'Southeast Asia', 'East Asia', 'Punjab', 'West Bengal', 'Andhra Pradesh'],
         min_ph: 5.0,
         max_ph: 6.5,
         optimal_ph: 5.5,
@@ -70,7 +70,7 @@ class DynamicCropDatabase {
         rainfall_min: 1000,
         rainfall_max: 2500,
         drainage: 'poor_to_moderate',
-        seasons: [Season.KHARIF, Season.SUMMER],
+        seasons: [Season.KHARIF, Season.SUMMER, Season.RABI],
         duration_days: 90,
         yield_range: [2.0, 6.0],
         elevation_range: [0, 1500],
@@ -93,7 +93,7 @@ class DynamicCropDatabase {
           AgroClimaticZone.MEDITERRANEAN
         ],
         countries: ['India', 'USA', 'China', 'Russia', 'Canada'],
-        regions: ['Punjab', 'Uttar Pradesh', 'Haryana', 'Midwest USA'],
+        regions: ['Punjab', 'Uttar Pradesh', 'Haryana', 'Rajasthan', 'Madhya Pradesh', 'Midwest USA'],
         min_ph: 6.0,
         max_ph: 7.5,
         optimal_ph: 6.5,
@@ -158,10 +158,11 @@ class DynamicCropDatabase {
         agro_climatic_zones: [
           AgroClimaticZone.COLD,
           AgroClimaticZone.MOUNTAIN,
-          AgroClimaticZone.TEMPERATE
+          AgroClimaticZone.TEMPERATE,
+          AgroClimaticZone.SUBTROPICAL
         ],
         countries: ['India', 'USA', 'China', 'Turkey'],
-        regions: ['Kashmir', 'Himachal Pradesh', 'Washington'],
+        regions: ['Kashmir', 'Jammu and Kashmir', 'Himachal Pradesh', 'Uttarakhand', 'Washington'],
         min_ph: 5.5,
         max_ph: 6.8,
         optimal_ph: 6.0,
@@ -172,7 +173,7 @@ class DynamicCropDatabase {
         rainfall_min: 800,
         rainfall_max: 1600,
         drainage: 'well',
-        seasons: [Season.SPRING],
+        seasons: [Season.SPRING, Season.RABI, Season.AUTUMN],
         duration_days: 150,
         yield_range: [10.0, 25.0],
         elevation_range: [1000, 3000],
@@ -192,10 +193,11 @@ class DynamicCropDatabase {
         agro_climatic_zones: [
           AgroClimaticZone.TEMPERATE,
           AgroClimaticZone.SUBTROPICAL,
-          AgroClimaticZone.COLD
+          AgroClimaticZone.COLD,
+          AgroClimaticZone.MOUNTAIN
         ],
         countries: ['India', 'China', 'Russia', 'USA', 'Germany'],
-        regions: ['Uttarakhand', 'Himachal Pradesh', 'Idaho'],
+        regions: ['Uttarakhand', 'Himachal Pradesh', 'Kashmir', 'Jammu and Kashmir', 'Uttar Pradesh', 'West Bengal', 'Idaho'],
         min_ph: 5.0,
         max_ph: 6.5,
         optimal_ph: 5.8,
@@ -229,7 +231,7 @@ class DynamicCropDatabase {
           AgroClimaticZone.SEMI_ARID
         ],
         countries: ['India', 'USA', 'China', 'Pakistan'],
-        regions: ['Punjab', 'Gujarat', 'Maharashtra', 'Texas'],
+        regions: ['Punjab', 'Gujarat', 'Maharashtra', 'Rajasthan', 'Andhra Pradesh', 'Telangana', 'Texas'],
         min_ph: 5.5,
         max_ph: 8.0,
         optimal_ph: 6.5,
@@ -240,7 +242,7 @@ class DynamicCropDatabase {
         rainfall_min: 500,
         rainfall_max: 1200,
         drainage: 'well',
-        seasons: [Season.KHARIF, Season.SUMMER],
+        seasons: [Season.KHARIF, Season.SUMMER, Season.RABI],
         duration_days: 150,
         yield_range: [1.5, 2.5],
         elevation_range: [0, 1000],
@@ -324,8 +326,9 @@ class DynamicCropDatabase {
       // India regions
       'punjab': ['wheat', 'rice', 'cotton', 'sugarcane'],
       'uttar pradesh': ['wheat', 'rice', 'sugarcane', 'potato'],
-      'rajasthan': ['millet', 'wheat', 'cotton', 'mustard'],
+      'rajasthan': ['millet', 'wheat', 'cotton', 'mustard', 'groundnut'],
       'kashmir': ['apple', 'saffron', 'walnut', 'pear'],
+      'jammu and kashmir': ['apple', 'saffron', 'walnut', 'pear', 'potato'],
       'himachal pradesh': ['apple', 'potato', 'maize', 'peas'],
       'uttarakhand': ['potato', 'apple', 'rice', 'wheat'],
       'gujarat': ['cotton', 'groundnut', 'millet', 'wheat'],
@@ -392,18 +395,31 @@ class DynamicCropDatabase {
       elevation >= crop.elevation_range[0] && elevation <= crop.elevation_range[1]
     );
 
-    // Step 6: Filter by current season
+    // Step 6: Filter by current season (but be lenient)
     const currentSeason = locationContext.current_season;
     let seasonFiltered = suitableCrops.filter(crop =>
-      crop.seasons.includes(currentSeason)
+      crop.seasons.includes(currentSeason) || 
+      crop.seasons.includes('Year-round') ||
+      crop.seasons.includes('All')
     );
 
-    // If no crops match current season, relax season filter
+    // If no crops match current season, relax season filter completely
     if (seasonFiltered.length === 0) {
       seasonFiltered = suitableCrops;
+      logger.info(`No crops match current season (${currentSeason}), showing all suitable crops`);
     }
 
-    logger.info(`Found ${seasonFiltered.length} location-specific crops for ${locationContext.region || 'unknown region'}`);
+    // If still too few crops, include zone crops even if not in region map
+    if (seasonFiltered.length < 3 && zoneCrops.length > seasonFiltered.length) {
+      // Add zone crops that weren't in region map but match zone
+      const additionalCrops = zoneCrops.filter(crop => 
+        !seasonFiltered.some(sc => sc.crop_id === crop.crop_id) &&
+        elevation >= crop.elevation_range[0] && elevation <= crop.elevation_range[1]
+      );
+      seasonFiltered = [...seasonFiltered, ...additionalCrops.slice(0, 5)];
+    }
+
+    logger.info(`Found ${seasonFiltered.length} location-specific crops for ${locationContext.region || 'unknown region'} (zone: ${zone}, season: ${currentSeason})`);
 
     return seasonFiltered;
   }
@@ -529,7 +545,16 @@ class LocationAwareCropEngine {
    * Analyze location and create context
    */
   analyzeLocation(lat, lon, state = null, region = null, country = 'India') {
-    const elevation = this._getElevation(lat, lon);
+    // Get elevation - for Kashmir and mountain regions, use higher elevation
+    let elevation = this._getElevation(lat, lon);
+    
+    // Adjust elevation for known mountain regions
+    if (state && (state.toLowerCase().includes('kashmir') || 
+                  state.toLowerCase().includes('himachal') ||
+                  state.toLowerCase().includes('uttarakhand'))) {
+      elevation = Math.max(elevation, 1500); // Minimum 1500m for mountain regions
+    }
+    
     const zone = this.agroClimaticClassifier.classify(lat, lon, elevation);
     const season = this.seasonDetector.getSeason(lat, lon);
     const plantingWindow = this.seasonDetector.getPlantingWindow(lat, lon, season);

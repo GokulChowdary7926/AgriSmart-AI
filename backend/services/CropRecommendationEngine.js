@@ -15,6 +15,15 @@ class CropRecommendationEngine {
     this.diseaseData = [];
     this.dataPath = path.join(__dirname, '../../data');
     
+    // Initialize location-aware engine
+    try {
+      this.locationAwareEngine = new LocationAwareCropEngine();
+      logger.info('✅ Location-aware crop engine initialized');
+    } catch (error) {
+      logger.warn('⚠️ Failed to initialize location-aware engine:', error.message);
+      this.locationAwareEngine = null;
+    }
+    
     // Initialize with fallback data
     this.initializeData();
   }
@@ -1067,7 +1076,26 @@ class CropRecommendationEngine {
     try {
       // Get state from coordinates if not provided
       if (!state) {
-        state = this.getStateFromCoords(latitude, longitude);
+        // Try to get state from location service first
+        try {
+          const locationService = require('./locationService');
+          const locInfo = await locationService.getLocationFromCoordinates(latitude, longitude);
+          if (locInfo && locInfo.state) {
+            state = locInfo.state;
+            region = region || locInfo.state;
+            logger.info(`📍 Detected state from location service: ${state}`);
+          } else {
+            state = this.getStateFromCoords(latitude, longitude);
+          }
+        } catch (locErr) {
+          logger.warn('Location service failed, using coordinate-based detection:', locErr.message);
+          state = this.getStateFromCoords(latitude, longitude);
+        }
+      }
+      
+      // Ensure region is set
+      if (!region) {
+        region = state;
       }
 
       // Get soil data

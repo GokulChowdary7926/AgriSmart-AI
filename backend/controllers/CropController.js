@@ -258,14 +258,26 @@ class CropController {
             logger.warn('Weather data not available, using defaults');
           }
           
-          // Use CropRecommendationEngine to get comprehensive data
-          const engineData = await cropRecommendationEngine.getLocationData(lat, lng, weatherData);
+          // Use CropRecommendationEngine to get comprehensive data with location-aware engine
+          // Pass state and region to enable location-specific recommendations
+          const stateFromLocation = engineData?.location?.state || state || null;
+          const regionFromLocation = engineData?.location?.region || stateFromLocation || null;
+          
+          const engineData = await cropRecommendationEngine.getLocationData(
+            lat, 
+            lng, 
+            weatherData,
+            stateFromLocation,
+            regionFromLocation,
+            'India'
+          );
           
           logger.info('Engine data received:', {
             hasRecommendations: !!engineData.recommendations,
             recommendationsCount: engineData.recommendations?.length || 0,
             weather: engineData.weather,
-            soil: engineData.soil
+            soil: engineData.soil,
+            location: engineData.location?.state || engineData.location?.region
           });
           
           // Set locationData for response
@@ -295,12 +307,13 @@ class CropController {
             location: engineData.location
           };
           
-          // Store engine recommendations for later use
+          // Store engine recommendations for later use (these are location-specific)
           locationData.engineRecommendations = engineData.recommendations;
           locationData.marketPrices = engineData.market_prices;
           locationData.diseases = engineData.common_diseases;
           
           logger.info('✅ Conditions set successfully from engine data:', conditions);
+          logger.info(`✅ Location-specific recommendations: ${engineData.recommendations?.length || 0} crops for ${engineData.location?.state || engineData.location?.region || 'unknown location'}`);
         } catch (err) {
           logger.error('Error getting location data from engine:', err);
           locationData = null;
@@ -409,47 +422,97 @@ class CropController {
         });
       }
       
-      // Use ML recommendations if available, otherwise use engine
+      // PRIORITIZE location-aware engine recommendations over ML
+      // Location-aware engine provides location-specific crops
       let recommendations = [];
-      try {
-        // Prepare features for ML model
-        const mlFeatures = {
-          N: 70, // Default nitrogen
-          P: 40, // Default phosphorus
-          K: 40, // Default potassium
-          temperature: conditions.temperature || 25,
-          humidity: locationData?.humidity || weatherData?.humidity || 65,
-          ph: conditions.ph || 7.0,
-          rainfall: conditions.rainfall || 800,
-          soil_type: conditions.soilType || 'alluvial',
-          state: locationData?.location?.state || 'Unknown'
-        };
-
-        // Try ML prediction first
-        logger.info('Attempting ML prediction with features:', mlFeatures);
-        const mlRecommendations = await cropRecommenderML.predict(mlFeatures);
+      
+      // First priority: Use location-aware engine recommendations (location-specific)
+      if (locationData?.engineRecommendations && locationData.engineRecommendations.length > 0) {
+        recommendations = locationData.engineRecommendations;
+        const location = locationData.location?.state || locationData.location?.region || 'location';
+        logger.info(`✅ Using location-aware engine recommendations: ${recommendations.length} crops for ${location}`);
         
-        if (mlRecommendations && mlRecommendations.length > 0) {
-          recommendations = mlRecommendations.map(rec => ({
-            crop: rec.crop,
-            score: rec.confidence,
-            suitability: rec.confidence,
-            season: rec.season || CropController.getCurrentSeason(locationData?.location?.state),
-            reason: rec.reason || 'ML model recommendation',
-            method: rec.method || 'ml_model',
-            ml_confidence: rec.confidence
-          }));
-          logger.info('✅ ML recommendations received:', recommendations.length);
-        } else {
-          // Fallback to engine recommendations
-          if (locationData?.engineRecommendations && locationData.engineRecommendations.length > 0) {
-            recommendations = locationData.engineRecommendations;
-            logger.info('Using engine recommendations:', recommendations.length);
-          } else {
-            // Use engine recommendations with all parameters
+        // Log first few crop names to verify location-specific results
+        if (recommendations.length > 0) {
+          const cropNames = recommendations.slice(0, 5).map(r => r.crop_name || r.name || r.crop).join(', ');
+          logger.info(`   📍 Location-specific crops: ${cropNames}`);
+        }
+      } else {
+        // If no location-aware recommendations, try to force generate them
+        logger.warn('⚠️ No location-aware recommendations found, attempting to generate...');
+        try {
+          const detectedState = locationData?.location?.state || state || null;
+          const detectedRegion = locationData?.location?.region || detectedState || null;
+          
+          if (lat && lng) {
+            const forcedEngineData = await cropRecommendationEngine.getLocationData(
+              lat,
+              lng,
+              weatherData,
+              detectedState,
+              detectedRegion,
+              'India'
+            );
+            
+            if (forcedEngineData.recommendations && forcedEngineData.recommendations.length > 0) {
+              recommendations = forcedEngineData.recommendations;
+              logger.info(`✅ Generated location-aware recommendations: ${recommendations.length} crops`);
+            }
+          }
+        } catch (forceError) {
+          logger.warn('Could not force generate location-aware recommendations:', forceError.message);
+        }
+        
+        // Fallback: Try ML model (but it's generic, not location-specific)
+        if (recommendations.length === 0) {
+          try {
+            // Prepare features for ML model
+            const mlFeatures = {
+              N: 70, // Default nitrogen
+              P: 40, // Default phosphorus
+              K: 40, // Default potassium
+              temperature: conditions.temperature || 25,
+              humidity: locationData?.humidity || weatherData?.humidity || 65,
+              ph: conditions.ph || 7.0,
+              rainfall: conditions.rainfall || 800,
+              soil_type: conditions.soilType || 'alluvial',
+              state: locationData?.location?.state || 'Unknown'
+            };
+
+            logger.info('⚠️ No location-aware recommendations, trying ML model:', mlFeatures);
+            const mlRecommendations = await cropRecommenderML.predict(mlFeatures);
+            
+            if (mlRecommendations && mlRecommendations.length > 0) {
+              recommendations = mlRecommendations.map(rec => ({
+                crop: rec.crop,
+                name: rec.crop,
+                score: rec.confidence,
+                suitability: rec.confidence,
+                season: rec.season || CropController.getCurrentSeason(locationData?.location?.state),
+                reason: rec.reason || 'ML model recommendation',
+                method: rec.method || 'ml_model',
+                ml_confidence: rec.confidence
+              }));
+              logger.info('⚠️ Using generic ML recommendations (not location-specific):', recommendations.length);
+            } else {
+              // Final fallback: Use basic engine recommendations
+              logger.warn('⚠️ Using basic engine recommendations (not location-specific)');
+              recommendations = cropRecommendationEngine.getCropRecommendations(
+                conditions.temperature || 25,
+                locationData?.humidity || weatherData?.humidity || 65,
+                conditions.ph || 7.0,
+                conditions.rainfall || 800,
+                conditions.soilType || 'alluvial',
+                locationData?.location?.state || null,
+                conditions.season || null
+              );
+            }
+          } catch (mlError) {
+            logger.error('ML prediction error, using final fallback:', mlError);
+            // Final fallback
             recommendations = cropRecommendationEngine.getCropRecommendations(
               conditions.temperature || 25,
-              locationData?.humidity || weatherData?.humidity || 65,
+              65,
               conditions.ph || 7.0,
               conditions.rainfall || 800,
               conditions.soilType || 'alluvial',
@@ -458,18 +521,6 @@ class CropController {
             );
           }
         }
-      } catch (mlError) {
-        logger.error('ML prediction error, using fallback:', mlError);
-        // Final fallback
-        recommendations = cropRecommendationEngine.getCropRecommendations(
-          conditions.temperature || 25,
-          65,
-          conditions.ph || 7.0,
-          conditions.rainfall || 800,
-          conditions.soilType || 'alluvial',
-          locationData?.location?.state || null,
-          conditions.season || null
-        );
       }
       
       // Format recommendations for frontend
