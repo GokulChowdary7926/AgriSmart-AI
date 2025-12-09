@@ -446,12 +446,15 @@ class CropController {
             recommendations = locationData.engineRecommendations;
             logger.info('Using engine recommendations:', recommendations.length);
           } else {
+            // Use engine recommendations with all parameters
             recommendations = cropRecommendationEngine.getCropRecommendations(
-              conditions.temperature,
-              locationData?.humidity || 65,
-              conditions.ph,
-              conditions.rainfall,
-              conditions.soilType
+              conditions.temperature || 25,
+              locationData?.humidity || weatherData?.humidity || 65,
+              conditions.ph || 7.0,
+              conditions.rainfall || 800,
+              conditions.soilType || 'alluvial',
+              locationData?.location?.state || null,
+              conditions.season || null
             );
           }
         }
@@ -463,31 +466,58 @@ class CropController {
           65,
           conditions.ph || 7.0,
           conditions.rainfall || 800,
-          conditions.soilType || 'alluvial'
+          conditions.soilType || 'alluvial',
+          locationData?.location?.state || null,
+          conditions.season || null
         );
       }
       
       // Format recommendations for frontend
-      const formattedRecommendations = recommendations.map((rec, index) => ({
-        id: rec.id || `rec-${index}`,
-        name: rec.crop || rec.name || 'Unknown Crop',
-        scientificName: rec.scientificName || '',
-        suitability: rec.score || rec.suitabilityScore || rec.suitability || 0,
-        suitabilityScore: rec.score || rec.suitabilityScore || rec.suitability || 0,
-        season: rec.season || conditions.season || CropController.getCurrentSeason(locationData?.location?.state),
-        duration: rec.duration || '90-120 days',
-        durationUnit: rec.durationUnit || 'days',
-        estimatedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
-        expectedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
-        yieldUnit: rec.yieldUnit || 'tons/ha',
-        marketPrice: rec.market_price || rec.marketPrice || '₹2000-₹4000/ton',
-        priceUnit: rec.priceUnit || 'ton',
-        reason: rec.reason || CropController.generateRecommendationReason(rec, conditions, locationData),
-        reasons: rec.reasons || (rec.reason ? [rec.reason] : ['Suitable for your region']),
-        advantages: rec.advantages || [],
-        waterRequirements: rec.water_requirements || 'Moderate',
-        requirements: rec.requirements || {}
-      }));
+      const formattedRecommendations = recommendations.map((rec, index) => {
+        // Handle both old and new recommendation formats
+        const baseRec = {
+          id: rec.id || `rec-${index}`,
+          name: rec.crop || rec.name || 'Unknown Crop',
+          scientificName: rec.scientificName || '',
+          suitability: rec.score || rec.suitabilityScore || rec.suitability || 0,
+          suitabilityScore: rec.score || rec.suitabilityScore || rec.suitability || 0,
+          season: rec.season || conditions.season || CropController.getCurrentSeason(locationData?.location?.state),
+          duration: rec.duration || '90-120 days',
+          durationUnit: rec.durationUnit || 'days',
+          estimatedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
+          expectedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
+          yieldUnit: rec.yieldUnit || 'tons/ha',
+          marketPrice: rec.market_price || rec.marketPrice || '₹2000-₹4000/ton',
+          priceUnit: rec.priceUnit || 'ton',
+          reason: rec.reason || CropController.generateRecommendationReason(rec, conditions, locationData),
+          reasons: rec.reasons || (rec.reason ? [rec.reason] : ['Suitable for your region']),
+          advantages: rec.advantages || [],
+          waterRequirements: rec.water_requirements || 'Moderate',
+          requirements: rec.requirements || {}
+        };
+
+        // Add new fields if they exist (from multi-layered system)
+        if (rec.scoringBreakdown) {
+          baseRec.scoringBreakdown = rec.scoringBreakdown;
+        }
+        if (rec.potentialRevenue) {
+          baseRec.potentialRevenue = rec.potentialRevenue;
+        }
+        if (rec.profitMargin) {
+          baseRec.profitMargin = rec.profitMargin;
+        }
+        if (rec.priceTrend) {
+          baseRec.priceTrend = rec.priceTrend;
+        }
+        if (rec.currentMarketPrice) {
+          baseRec.currentMarketPrice = rec.currentMarketPrice;
+        }
+        if (rec.plantingWindow) {
+          baseRec.plantingWindow = rec.plantingWindow;
+        }
+
+        return baseRec;
+      });
       
       res.json({
         success: true,

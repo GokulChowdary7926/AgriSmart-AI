@@ -328,14 +328,21 @@ class CropRecommendationEngine {
    * Layer 3: Economic & Practicality Analysis
    */
   getCropRecommendations(temperature, humidity, ph, rainfall, soilType, state = null, season = null) {
-    const recommendations = [];
-    const currentSeason = season || this.getCurrentSeasonForLocation(state);
-    const currentDate = new Date();
-    const month = currentDate.getMonth() + 1;
+    try {
+      const recommendations = [];
+      const currentSeason = season || this.getCurrentSeasonForLocation(state || 'Punjab');
+      const currentDate = new Date();
+      const month = currentDate.getMonth() + 1;
 
-    // Layer 1: Location & Season Filtering
-    // Get crops suitable for current season and region
-    const seasonCrops = this.getCropsForSeason(currentSeason, state);
+      // Ensure we have valid crop data
+      if (!this.cropData || this.cropData.length === 0) {
+        logger.warn('No crop data available, using fallback');
+        this.createFallbackCropData();
+      }
+
+      // Layer 1: Location & Season Filtering
+      // Get crops suitable for current season and region
+      const seasonCrops = this.getCropsForSeason(currentSeason, state);
 
     // Score each crop using multi-layered approach
     for (const crop of this.cropData) {
@@ -403,21 +410,25 @@ class CropRecommendationEngine {
             soilCompatibility: {
               score: suitabilityScores.soilScore,
               maxScore: 25,
+              description: `Your pH: ${ph}, Soil Type: ${soilType}`,
               details: suitabilityScores.soilDetails
             },
             weatherAlignment: {
               score: suitabilityScores.weatherScore,
               maxScore: 30,
+              description: `Forecast: ${temperature}°C, ${rainfall}mm rainfall`,
               details: suitabilityScores.weatherDetails
             },
             economicViability: {
               score: economicAnalysis.economicScore,
               maxScore: 25,
+              description: `Good profit margin with ${economicAnalysis.priceTrend} prices`,
               details: economicAnalysis.economicDetails
             },
             riskFactor: {
               score: riskScore,
               maxScore: 20,
+              description: riskScore >= 15 ? 'Low risk' : riskScore >= 10 ? 'Moderate risk' : 'Higher risk',
               details: this.getRiskDetails(crop, cropDetails, temperature, rainfall)
             },
             total: totalScore
@@ -434,10 +445,41 @@ class CropRecommendationEngine {
       }
     }
 
-    // Sort by total score and return top recommendations
-    return recommendations
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10); // Return top 10 instead of 5 for better options
+      // Sort by total score and return top recommendations
+      return recommendations
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10); // Return top 10 instead of 5 for better options
+    } catch (error) {
+      logger.error('Error in getCropRecommendations:', error);
+      // Return fallback recommendations
+      return this.getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType);
+    }
+  }
+
+  /**
+   * Get fallback recommendations when main algorithm fails
+   */
+  getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType) {
+    const fallbackCrops = [
+      { crop: 'Rice', score: 75, season: 'Kharif', duration: '120-150 days', yield: '4-6 tons/ha', advantages: ['Staple food', 'High demand'] },
+      { crop: 'Wheat', score: 70, season: 'Rabi', duration: '110-120 days', yield: '3-4 tons/ha', advantages: ['High protein', 'Good storage'] },
+      { crop: 'Maize', score: 65, season: 'Kharif', duration: '90-100 days', yield: '2-3 tons/ha', advantages: ['Fast growing', 'Multiple uses'] }
+    ];
+
+    return fallbackCrops.map((crop, index) => ({
+      crop: crop.crop,
+      name: crop.crop,
+      score: crop.score,
+      suitabilityScore: crop.score,
+      season: crop.season,
+      duration: crop.duration,
+      yield: crop.yield,
+      expectedYield: crop.yield,
+      advantages: crop.advantages,
+      marketPrice: '₹2000-₹4000/ton',
+      reason: 'Fallback recommendation based on general suitability',
+      reasons: ['Suitable for your region']
+    }));
   }
 
   /**
