@@ -243,11 +243,18 @@ class CropRecommendationEngine {
 
     if (soilInfo) {
       const [phMin, phMax] = soilInfo.ph_range.split('-').map(parseFloat);
+      const organicCarbon = soilInfo.organic_carbon || '0.5-0.8%';
+      const [orgMin, orgMax] = organicCarbon.split('-').map(s => parseFloat(s.replace('%', '')));
+      const organicMatter = orgMin && orgMax ? `${((orgMin + orgMax) / 2 * 1.724).toFixed(1)}%` : '0.8-1.4%';
+      
       return {
         soil_type: soilInfo.soil_type,
+        soilType: soilInfo.soil_type,
         ph: parseFloat((phMin + phMax) / 2).toFixed(1),
         ph_range: soilInfo.ph_range,
-        organic_carbon: soilInfo.organic_carbon,
+        organic_carbon: organicCarbon,
+        organicMatter: organicMatter,
+        drainage: this.getDrainageForSoilType(soilInfo.soil_type),
         source: 'dataset'
       };
     }
@@ -271,9 +278,12 @@ class CropRecommendationEngine {
       const soilInfo = soilByState[stateLower];
       return {
         soil_type: soilInfo.type,
+        soilType: soilInfo.type,
         ph: soilInfo.ph,
         ph_range: `${soilInfo.ph - 0.5}-${parseFloat(soilInfo.ph) + 0.5}`,
         organic_carbon: '0.5-0.8%',
+        organicMatter: '0.8-1.4%',
+        drainage: this.getDrainageForSoilType(soilInfo.type),
         source: 'fallback'
       };
     }
@@ -281,11 +291,34 @@ class CropRecommendationEngine {
     // Default
     return {
       soil_type: 'Alluvial',
+      soilType: 'Alluvial',
       ph: 7.0,
       ph_range: '6.5-7.5',
       organic_carbon: '0.5-0.8%',
+      organicMatter: '0.8-1.4%',
+      drainage: this.getDrainageForSoilType('Alluvial'),
       source: 'default'
     };
+  }
+
+  /**
+   * Get drainage characteristics for soil type
+   */
+  getDrainageForSoilType(soilType) {
+    const drainageMap = {
+      'Alluvial': 'Well-drained to moderately well-drained',
+      'Black': 'Moderately well-drained',
+      'Red': 'Well-drained',
+      'Laterite': 'Well-drained to excessive',
+      'Desert': 'Excessive (sandy)',
+      'Clayey': 'Poorly drained to moderately well-drained',
+      'Loamy': 'Well-drained',
+      'Sandy': 'Excessive (well-drained)',
+      'Red & Black': 'Moderately well-drained',
+      'Red & Laterite': 'Well-drained'
+    };
+
+    return drainageMap[soilType] || 'Moderately well-drained';
   }
 
   /**
@@ -452,6 +485,148 @@ class CropRecommendationEngine {
       yield: '2-3 tons/ha',
       water: 'Moderate'
     };
+  }
+
+  /**
+   * Get crop advantages
+   */
+  getCropAdvantages(cropName) {
+    const advantagesMap = {
+      'rice': [
+        'High nutritional value and staple food',
+        'Good market demand throughout the year',
+        'Multiple varieties available for different seasons',
+        'Can be grown in both irrigated and rainfed conditions',
+        'High yield potential with proper management'
+      ],
+      'wheat': [
+        'High protein content and nutritional value',
+        'Stable market prices and good demand',
+        'Suitable for Rabi season cultivation',
+        'Multiple uses (flour, bread, pasta)',
+        'Good storage life'
+      ],
+      'maize': [
+        'Fast growing crop (90-100 days)',
+        'High yield potential',
+        'Multiple uses (food, feed, industrial)',
+        'Good market demand',
+        'Drought tolerant varieties available'
+      ],
+      'cotton': [
+        'High economic value',
+        'Good export potential',
+        'Long shelf life',
+        'Multiple uses (textile, oil)',
+        'Government support schemes available'
+      ],
+      'sugarcane': [
+        'Very high yield (70-100 tons/ha)',
+        'Year-round income potential',
+        'Multiple products (sugar, jaggery, ethanol)',
+        'Good market stability',
+        'Long-term crop with multiple harvests'
+      ],
+      'groundnut': [
+        'High oil content and nutritional value',
+        'Good market price',
+        'Short duration crop',
+        'Improves soil fertility (nitrogen fixing)',
+        'Multiple uses (oil, food, feed)'
+      ],
+      'soybean': [
+        'High protein content',
+        'Excellent market demand',
+        'Improves soil fertility',
+        'Multiple uses (food, oil, feed)',
+        'Good export potential'
+      ],
+      'pulses': [
+        'High protein content',
+        'Improves soil fertility',
+        'Short duration crop',
+        'Good market demand',
+        'Low water requirement'
+      ],
+      'chickpea': [
+        'High protein and nutritional value',
+        'Good market price',
+        'Improves soil fertility',
+        'Drought tolerant',
+        'Multiple culinary uses'
+      ],
+      'kidneybeans': [
+        'High protein content',
+        'Good market demand',
+        'Short duration crop',
+        'Improves soil fertility',
+        'Export potential'
+      ],
+      'pigeonpeas': [
+        'High protein content',
+        'Drought tolerant',
+        'Improves soil fertility',
+        'Good market price',
+        'Multiple uses'
+      ],
+      'mothbeans': [
+        'Very short duration (70-80 days)',
+        'Drought tolerant',
+        'Improves soil fertility',
+        'Low water requirement',
+        'Good for intercropping'
+      ],
+      'mungbean': [
+        'Very short duration (60-90 days)',
+        'High protein content',
+        'Improves soil fertility',
+        'Good market demand',
+        'Multiple harvests possible'
+      ],
+      'blackgram': [
+        'High protein content',
+        'Short duration crop',
+        'Improves soil fertility',
+        'Good market price',
+        'Drought tolerant'
+      ],
+      'lentil': [
+        'High protein and nutritional value',
+        'Good market demand',
+        'Short duration crop',
+        'Improves soil fertility',
+        'Low water requirement'
+      ],
+      'pomegranate': [
+        'High market value',
+        'Year-round income potential',
+        'Long shelf life',
+        'Export potential',
+        'Multiple health benefits'
+      ],
+      'banana': [
+        'Year-round cultivation possible',
+        'High yield potential',
+        'Good market demand',
+        'Multiple varieties available',
+        'Quick returns'
+      ],
+      'mango': [
+        'High market value',
+        'Export potential',
+        'Year-round income (with multiple varieties)',
+        'Long shelf life',
+        'Multiple uses (fresh, processed)'
+      ]
+    };
+
+    return advantagesMap[cropName.toLowerCase()] || [
+      'Suitable for your region',
+      'Good market demand',
+      'Stable prices',
+      'Easy to cultivate',
+      'Multiple benefits'
+    ];
   }
 
   /**
