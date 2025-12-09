@@ -6,26 +6,124 @@ AgriSmart AI utilizes a comprehensive suite of Machine Learning (ML) and Deep Le
 
 ---
 
+## 🤖 ML/DL Model Types Used in Application
+
+### **Machine Learning (ML) Models**
+
+1. **XGBoost Classifier** (Gradient Boosting)
+   - **Type:** Supervised Learning - Multi-class Classification
+   - **Category:** Ensemble Learning (Gradient Boosting Decision Trees)
+   - **Use Case:** Crop Recommendation
+   - **Framework:** XGBoost Library (Python)
+   - **Accuracy:** 85-95%
+
+2. **Random Forest Classifier** (Ensemble Method)
+   - **Type:** Supervised Learning - Multi-class Classification
+   - **Category:** Ensemble Learning (Bagging)
+   - **Use Case:** Crop Recommendation (Fallback)
+   - **Framework:** Scikit-learn
+   - **Accuracy:** 80-90%
+
+3. **Random Forest Regressor** (Ensemble Method)
+   - **Type:** Supervised Learning - Regression
+   - **Category:** Ensemble Learning (Bagging)
+   - **Use Case:** Market Price Prediction (Fallback)
+   - **Framework:** Scikit-learn
+   - **Performance:** R² Score 0.75-0.85
+
+4. **Linear Regression** (Traditional ML)
+   - **Type:** Supervised Learning - Multi-output Regression
+   - **Category:** Linear Models
+   - **Use Case:** Weather Prediction (Fallback)
+   - **Framework:** Scikit-learn
+   - **Performance:** Moderate accuracy
+
+### **Deep Learning (DL) Models**
+
+1. **Convolutional Neural Network (CNN)**
+   - **Type:** Deep Learning - Image Classification
+   - **Category:** Computer Vision
+   - **Architecture:** Sequential CNN with 3 Conv2D layers
+   - **Use Case:** Disease Detection from Crop Images
+   - **Framework:** TensorFlow/Keras
+   - **Input:** 224x224x3 RGB images
+   - **Output:** 38 disease classes
+   - **Accuracy:** 85-92%
+
+2. **YOLOv8 (You Only Look Once v8)**
+   - **Type:** Deep Learning - Object Detection
+   - **Category:** Computer Vision (Real-time Detection)
+   - **Architecture:** YOLOv8 (Ultralytics)
+   - **Use Case:** Real-time Disease Detection with Bounding Boxes
+   - **Framework:** PyTorch/Ultralytics
+   - **Input:** Variable size RGB images
+   - **Output:** Disease class + bounding box coordinates
+   - **Speed:** Real-time inference (< 2 seconds)
+
+3. **Long Short-Term Memory (LSTM) Network**
+   - **Type:** Deep Learning - Time Series Forecasting
+   - **Category:** Recurrent Neural Network (RNN)
+   - **Architecture:** Multi-layer LSTM with Dropout
+   - **Use Case:** Market Price Prediction
+   - **Framework:** TensorFlow/Keras
+   - **Input:** Sequential price data (60-day windows)
+   - **Output:** Future price predictions
+   - **Performance:** R² Score 0.85-0.95
+
+4. **LSTM Network (Multi-variate)**
+   - **Type:** Deep Learning - Multi-variate Time Series Forecasting
+   - **Category:** Recurrent Neural Network (RNN)
+   - **Architecture:** Multi-layer LSTM with Multi-output
+   - **Use Case:** Weather Prediction (Temperature, Humidity, Rainfall, etc.)
+   - **Framework:** TensorFlow/Keras
+   - **Input:** Sequential weather data (30-day windows)
+   - **Output:** Multiple weather parameters
+   - **Performance:** 75-80% accuracy
+
+### **Model Classification Summary**
+
+| Model | ML/DL Type | Learning Type | Task Type | Framework |
+|-------|-----------|---------------|-----------|-----------|
+| XGBoost Classifier | ML | Supervised | Classification | XGBoost |
+| Random Forest Classifier | ML | Supervised | Classification | Scikit-learn |
+| Random Forest Regressor | ML | Supervised | Regression | Scikit-learn |
+| Linear Regression | ML | Supervised | Regression | Scikit-learn |
+| CNN | DL | Supervised | Image Classification | TensorFlow/Keras |
+| YOLOv8 | DL | Supervised | Object Detection | PyTorch/Ultralytics |
+| LSTM (Market) | DL | Supervised | Time Series Regression | TensorFlow/Keras |
+| LSTM (Weather) | DL | Supervised | Multi-variate Time Series | TensorFlow/Keras |
+
+---
+
 ## 📊 Models Overview
 
 ### 1. **Crop Recommendation Model**
-**Type:** Machine Learning (Supervised Learning)  
-**Algorithm:** XGBoost Classifier  
+**Type:** Machine Learning (Supervised Learning - Classification)  
+**Model Types:** 
+- **Primary:** XGBoost Classifier (Gradient Boosting)
+- **Fallback 1:** Random Forest Classifier (Ensemble Bagging)
+- **Fallback 2:** Rule-based JavaScript System (Heuristic)
 **Purpose:** Recommend suitable crops based on environmental and soil conditions
 
 ### 2. **Disease Detection Model**
 **Type:** Deep Learning (Computer Vision)  
-**Algorithm:** Convolutional Neural Network (CNN) / YOLOv8  
+**Model Types:**
+- **Primary:** Convolutional Neural Network (CNN) - Image Classification
+- **Alternative:** YOLOv8 - Object Detection with Bounding Boxes
 **Purpose:** Detect and classify crop diseases from images
 
 ### 3. **Market Price Prediction Model**
-**Type:** Deep Learning (Time Series)  
-**Algorithm:** Long Short-Term Memory (LSTM) Network  
+**Type:** Deep Learning (Time Series Forecasting)  
+**Model Types:**
+- **Primary:** Long Short-Term Memory (LSTM) Network - Time Series Regression
+- **Fallback:** Random Forest Regressor - Traditional ML Regression
 **Purpose:** Predict future market prices for agricultural commodities
 
 ### 4. **Weather Prediction Model**
-**Type:** Machine Learning (Time Series)  
-**Algorithm:** LSTM / ARIMA  
+**Type:** Deep Learning (Multi-variate Time Series Forecasting)  
+**Model Types:**
+- **Primary:** LSTM Network - Multi-variate Time Series Regression
+- **Fallback:** Linear Regression - Traditional ML Multi-output Regression
 **Purpose:** Forecast weather conditions for agricultural planning
 
 ---
@@ -158,6 +256,29 @@ The model uses 7 key features for crop recommendation:
 
 ## 🦠 2. Disease Detection Model
 
+### Model Types Used
+
+**1. Primary Model: Convolutional Neural Network (CNN)**
+- **DL Type:** Deep Learning (Supervised Learning)
+- **Architecture Type:** Convolutional Neural Network
+- **Category:** Computer Vision - Image Classification
+- **Task Type:** Multi-class Image Classification
+- **Framework:** TensorFlow/Keras (Python)
+- **Input:** 224x224x3 RGB images
+- **Output:** 38 disease classes (Softmax probabilities)
+- **Model File:** `disease_model.h5` or `.h5` format
+
+**2. Alternative Model: YOLOv8 (You Only Look Once v8)**
+- **DL Type:** Deep Learning (Supervised Learning)
+- **Architecture Type:** YOLO (Object Detection Architecture)
+- **Category:** Computer Vision - Object Detection
+- **Task Type:** Object Detection + Classification
+- **Framework:** PyTorch/Ultralytics (Python)
+- **Input:** Variable size RGB images
+- **Output:** Bounding boxes + Disease class + Confidence scores
+- **Model File:** `best.pt` (PyTorch format)
+- **Advantage:** Real-time detection with precise location
+
 ### Model Architecture
 
 **Primary Model:** Convolutional Neural Network (CNN)
@@ -276,6 +397,27 @@ Sequential([
 ---
 
 ## 💰 3. Market Price Prediction Model
+
+### Model Types Used
+
+**1. Primary Model: Long Short-Term Memory (LSTM) Network**
+- **DL Type:** Deep Learning (Supervised Learning)
+- **Architecture Type:** Recurrent Neural Network (RNN) - LSTM variant
+- **Category:** Time Series Forecasting
+- **Task Type:** Regression (Continuous Value Prediction)
+- **Framework:** TensorFlow/Keras (Python)
+- **Input:** Sequential price data (60-day time windows)
+- **Output:** Future price prediction (single value)
+- **Model File:** `market_lstm.h5` (Keras format)
+
+**2. Fallback Model: Random Forest Regressor**
+- **ML Type:** Machine Learning (Supervised Learning)
+- **Algorithm Type:** Random Forest (Bagging)
+- **Category:** Ensemble Learning (Bagging)
+- **Task Type:** Regression
+- **Framework:** Scikit-learn (Python)
+- **Use Case:** When TensorFlow/LSTM is unavailable
+- **Model File:** `market_rf.pkl` (Pickle format)
 
 ### Model Architecture
 
@@ -404,12 +546,33 @@ Sequential([
 
 ## 🌤️ 4. Weather Prediction Model
 
+### Model Types Used
+
+**1. Primary Model: LSTM Network (Multi-variate)**
+- **DL Type:** Deep Learning (Supervised Learning)
+- **Architecture Type:** Recurrent Neural Network (RNN) - LSTM variant
+- **Category:** Multi-variate Time Series Forecasting
+- **Task Type:** Multi-output Regression (5 weather parameters)
+- **Framework:** TensorFlow/Keras (Python)
+- **Input:** Sequential weather data (30-day time windows, 5 features)
+- **Output:** Multiple weather parameters (temperature, humidity, pressure, wind, rainfall)
+- **Model File:** `weather_lstm.h5` (Keras format)
+
+**2. Fallback Model: Linear Regression (Multi-output)**
+- **ML Type:** Machine Learning (Supervised Learning)
+- **Algorithm Type:** Linear Regression
+- **Category:** Linear Models
+- **Task Type:** Multi-output Regression
+- **Framework:** Scikit-learn (Python)
+- **Use Case:** When TensorFlow/LSTM is unavailable
+- **Model File:** `weather_lr.pkl` (Pickle format)
+
 ### Model Architecture
 
 **Primary Model:** LSTM Network (Time Series)
 - **Framework:** TensorFlow/Keras
-- **Alternative:** ARIMA (for simpler forecasts)
-- **Purpose:** Predict temperature, rainfall, humidity
+- **Alternative:** Linear Regression (for simpler forecasts)
+- **Purpose:** Predict temperature, rainfall, humidity, pressure, wind speed
 
 ### LSTM Architecture
 
