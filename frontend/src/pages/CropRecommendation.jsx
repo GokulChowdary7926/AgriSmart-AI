@@ -463,7 +463,13 @@ export default function CropRecommendation() {
                 {soilInfo.organicMatter && (
                   <Grid item xs={6}>
                     <Typography variant="body2" color="text.secondary">Organic Matter</Typography>
-                    <Typography variant="h6">{soilInfo.organicMatter}%</Typography>
+                    <Typography variant="h6">{soilInfo.organicMatter}</Typography>
+                  </Grid>
+                )}
+                {soilInfo.organic_carbon && !soilInfo.organicMatter && (
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">Organic Carbon</Typography>
+                    <Typography variant="h6">{soilInfo.organic_carbon}</Typography>
                   </Grid>
                 )}
                 {soilInfo.drainage && (
@@ -471,6 +477,14 @@ export default function CropRecommendation() {
                     <Typography variant="body2" color="text.secondary">Drainage</Typography>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
                       {soilInfo.drainage}
+                    </Typography>
+                  </Grid>
+                )}
+                {soilInfo.ph_range && (
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">pH Range</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {soilInfo.ph_range}
                     </Typography>
                   </Grid>
                 )}
