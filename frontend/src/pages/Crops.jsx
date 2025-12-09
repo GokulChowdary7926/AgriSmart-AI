@@ -119,7 +119,16 @@ export default function Crops() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    createMutation.mutate(formData);
+    // Format data for backend - ensure area is properly structured
+    const submitData = {
+      ...formData,
+      area: {
+        value: parseFloat(formData.area.value) || 0,
+        unit: formData.area.unit || 'hectares'
+      },
+      plantingDate: formData.plantingDate ? new Date(formData.plantingDate).toISOString() : new Date().toISOString()
+    };
+    createMutation.mutate(submitData);
   };
 
   const handleDelete = (id) => {

@@ -7,7 +7,7 @@ const { authenticateToken } = require('../middleware/auth');
 router.get('/prices', MarketController.getLatest); // Real-time prices endpoint
 router.get('/latest', MarketController.getLatest); // Alias
 router.get('/trends', MarketController.getTrends); // Price trends with prediction
-router.get('/commodities', MarketController.getLatest); // Alias for commodities
+router.get('/commodities', MarketController.getCommodities); // Get list of commodities
 router.get('/:id', MarketController.getById); // Must be last
 
 // Protected routes

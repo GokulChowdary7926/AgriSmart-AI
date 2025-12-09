@@ -31,6 +31,7 @@ import Analytics from './pages/Analytics';
 import Profile from './pages/Profile';
 import GovernmentSchemes from './pages/GovernmentSchemes';
 import AgriMap from './pages/AgriMap';
+import AgriChat from './pages/AgriChat';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,6 +75,7 @@ function App() {
                               <Route path="/weather" element={<ProtectedRoute><Weather /></ProtectedRoute>} />
                               <Route path="/market" element={<ProtectedRoute><Market /></ProtectedRoute>} />
                               <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+                              <Route path="/agri-chat" element={<ProtectedRoute><AgriChat /></ProtectedRoute>} />
                               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                               <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
                               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />

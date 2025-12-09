@@ -11,6 +11,12 @@ router.get('/forecast', WeatherController.getForecast);
 // Get weather history
 router.get('/history', WeatherController.getHistory);
 
+// Get hourly forecast
+router.get('/hourly', WeatherController.getHourlyForecast);
+
+// Get weather alerts
+router.get('/alerts', WeatherController.getAlerts);
+
 // Create weather data (for admin/testing)
 router.post('/', WeatherController.create);
 

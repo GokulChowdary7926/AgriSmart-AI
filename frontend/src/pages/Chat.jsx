@@ -91,7 +91,7 @@ export default function Chat() {
       };
       setMessages(prev => [...prev, botMsg]);
     } catch (error) {
-      console.error('Chat error:', error);
+      // Error handled by snackbar notification
       enqueueSnackbar(t('errors.networkError') || 'Network error. Please try again.', { variant: 'error' });
       
       // Add error message
@@ -339,7 +339,7 @@ export default function Chat() {
               type="submit"
               disabled={!message.trim() || loading}
               color="primary"
-              sx={{ bgcolor: 'primary.main', color: 'white', '&:hover': { bgcolor: 'primary.dark' } }}
+              sx={{ bgcolor: 'primary.main', color: 'primary.contrastText', '&:hover': { bgcolor: 'primary.dark' } }}
             >
               {loading ? <CircularProgress size={24} color="inherit" /> : <SendIcon />}
             </IconButton>

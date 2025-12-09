@@ -46,7 +46,7 @@ export const AuthProvider = ({ children }) => {
         setFarmer(null);
       }
     } catch (err) {
-      console.error('Failed to fetch user data:', err);
+      // Failed to fetch user data - error handled below
       // Only logout if it's an auth error (401/403)
       if (err.response?.status === 401 || err.response?.status === 403) {
         localStorage.removeItem('token');
@@ -69,11 +69,6 @@ export const AuthProvider = ({ children }) => {
       const normalizedEmail = email?.trim().toLowerCase() || '';
       const normalizedPassword = password?.trim() || '';
       
-      console.log('🔐 Attempting login...', {
-        email: normalizedEmail,
-        passwordLength: normalizedPassword.length
-      });
-      
       if (!normalizedEmail || !normalizedPassword) {
         throw new Error('Email and password are required');
       }
@@ -82,30 +77,23 @@ export const AuthProvider = ({ children }) => {
         email: normalizedEmail, 
         password: normalizedPassword 
       });
-      console.log('✅ Login response:', response.data);
       
       // Handle both success: true and direct token/user response
       const token = response.data.token || response.data.access_token;
       const user = response.data.user || response.data;
       const farmer = response.data.farmer || null;
       
-      console.log('Extracted token:', token ? 'exists' : 'missing');
-      console.log('Extracted user:', user ? 'exists' : 'missing');
-      
       if (!token || !user) {
-        console.error('Invalid login response - missing token or user');
         throw new Error('Invalid login response');
       }
       
       // Store token first - this is synchronous and immediate
       localStorage.setItem('token', token);
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      console.log('Token stored in localStorage');
       
       // Update state immediately
       setUser(user);
       setFarmer(farmer);
-      console.log('User state updated');
       
       // Set loading to false
       setLoading(false);
@@ -113,8 +101,6 @@ export const AuthProvider = ({ children }) => {
       // Return success
       return { success: true, user };
     } catch (err) {
-      console.error('Login error:', err);
-      console.error('Error response:', err.response?.data);
       const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Login failed';
       setError(errorMessage);
       setLoading(false);

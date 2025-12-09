@@ -43,7 +43,11 @@ class AgriSmartServer {
         credentials: true
       }
     });
-    this.port = process.env.PORT || 5001; // Backend API Port
+    // Force port 5001 for backend API
+    this.port = parseInt(process.env.PORT) || 5001;
+    if (this.port === 80 || this.port === 443) {
+      this.port = 5001; // Override if accidentally set to HTTP/HTTPS ports
+    }
     
     this.initializeDatabase();
     this.initializeMiddlewares();
@@ -214,6 +218,14 @@ class AgriSmartServer {
     this.app.use('/api/analytics', analyticsRoutes);
     this.app.use('/api/agri-gpt', agriGPTRoutes); // AGRI-GPT routes (some require auth)
     this.app.use('/api/government-schemes', require('./routes/governmentSchemes')); // Government schemes
+    // AgriChat routes - peer-to-peer messaging
+    try {
+      const agriChatRoutes = require('./routes/agriChat');
+      this.app.use('/api/agri-chat', agriChatRoutes);
+      logger.info('✅ AgriChat routes registered at /api/agri-chat');
+    } catch (error) {
+      logger.error('❌ Failed to load AgriChat routes:', error);
+    }
     // this.app.use('/api/training', trainingRoutes); // Temporarily disabled
 
     // 404 Handler
@@ -226,8 +238,144 @@ class AgriSmartServer {
   }
 
   initializeSocketIO() {
+    const agriChatService = require('./services/agriChatService');
+    const Message = require('./models/Message');
+    const Conversation = require('./models/Conversation');
+    const jwt = require('jsonwebtoken');
+
+    this.io.use(async (socket, next) => {
+      try {
+        const token = socket.handshake.auth?.token;
+        if (!token) {
+          return next(new Error('Authentication error'));
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        socket.userId = decoded.userId;
+        next();
+      } catch (error) {
+        next(new Error('Authentication error'));
+      }
+    });
+
     this.io.on('connection', (socket) => {
-      logger.info('Client connected:', socket.id);
+      logger.info('Client connected:', socket.id, 'User:', socket.userId);
+
+      // Join user's personal room
+      socket.join(`user:${socket.userId}`);
+
+      // Handle sending messages
+      socket.on('agri-chat:send-message', async (data) => {
+        try {
+          const { conversationId, recipientId, content, type, attachments, product, location, replyTo } = data;
+
+          if (!content || !content.trim()) {
+            return socket.emit('agri-chat:error', { error: 'Message content is required' });
+          }
+
+          // Get or create conversation
+          let finalConversationId = conversationId;
+          if (!finalConversationId && recipientId) {
+            const conversation = await agriChatService.getOrCreateConversation(socket.userId, recipientId);
+            finalConversationId = conversation._id.toString();
+          }
+
+          if (!finalConversationId) {
+            return socket.emit('agri-chat:error', { error: 'Conversation or recipient required' });
+          }
+
+          // Get conversation to find recipient
+          const conversation = await Conversation.findById(finalConversationId);
+          const recipient = conversation.participants.find(p => p.toString() !== socket.userId.toString());
+          const finalRecipientId = recipientId || recipient;
+
+          // Send message
+          const message = await agriChatService.sendMessage(
+            finalConversationId,
+            socket.userId,
+            finalRecipientId,
+            content.trim(),
+            type || 'text',
+            attachments || [],
+            product,
+            location,
+            replyTo
+          );
+
+          // Populate message
+          await message.populate('sender', 'name email role');
+          await message.populate('recipient', 'name email role');
+
+          // Emit to sender (confirmation)
+          socket.emit('agri-chat:message-sent', message);
+
+          // Emit to recipient (new message)
+          this.io.to(`user:${finalRecipientId}`).emit('agri-chat:new-message', message);
+
+          // Emit conversation update to both users
+          const updatedConversation = await Conversation.findById(finalConversationId)
+            .populate('participants', 'name email role')
+            .populate('lastMessage.sender', 'name');
+
+          this.io.to(`user:${socket.userId}`).emit('agri-chat:conversation-updated', updatedConversation);
+          this.io.to(`user:${finalRecipientId}`).emit('agri-chat:conversation-updated', updatedConversation);
+        } catch (error) {
+          logger.error('Error sending message via socket:', error);
+          socket.emit('agri-chat:error', { error: error.message });
+        }
+      });
+
+      // Handle typing indicator
+      socket.on('agri-chat:typing', async (data) => {
+        try {
+          const { conversationId, recipientId } = data;
+          const recipient = recipientId || (await Conversation.findById(conversationId))?.participants.find(p => p.toString() !== socket.userId.toString());
+          if (recipient) {
+            this.io.to(`user:${recipient}`).emit('agri-chat:typing', {
+              conversationId,
+              userId: socket.userId,
+              isTyping: true
+            });
+          }
+        } catch (error) {
+          logger.error('Error handling typing indicator:', error);
+        }
+      });
+
+      // Handle stop typing
+      socket.on('agri-chat:stop-typing', async (data) => {
+        try {
+          const { conversationId, recipientId } = data;
+          const recipient = recipientId || (await Conversation.findById(conversationId))?.participants.find(p => p.toString() !== socket.userId.toString());
+          if (recipient) {
+            this.io.to(`user:${recipient}`).emit('agri-chat:typing', {
+              conversationId,
+              userId: socket.userId,
+              isTyping: false
+            });
+          }
+        } catch (error) {
+          logger.error('Error handling stop typing:', error);
+        }
+      });
+
+      // Handle message read
+      socket.on('agri-chat:mark-read', async (data) => {
+        try {
+          const { messageId } = data;
+          const message = await Message.findById(messageId);
+          if (message && message.recipient.toString() === socket.userId.toString()) {
+            await message.markAsRead();
+            // Notify sender that message was read
+            this.io.to(`user:${message.sender}`).emit('agri-chat:message-read', {
+              messageId: message._id,
+              readAt: message.readAt
+            });
+          }
+        } catch (error) {
+          logger.error('Error marking message as read:', error);
+        }
+      });
 
       socket.on('chatbot:message', async (data) => {
         try {
@@ -270,8 +418,21 @@ class AgriSmartServer {
 ║   Port: ${this.port}                              ║
 ║   Health: http://localhost:${this.port}/health    ║
 ║   API: http://localhost:${this.port}/api         ║
+║   AgriChat: /api/agri-chat/*          ║
 ╚════════════════════════════════════════╝
       `);
+      
+      // Log all registered routes
+      logger.info('📋 Registered API Routes:');
+      logger.info('   - /api/agri-chat/* (AgriChat - peer-to-peer messaging)');
+      logger.info('   - /api/government-schemes/* (Government Schemes)');
+      logger.info('   - /api/analytics/* (Analytics)');
+      logger.info('   - /api/crops/* (Crops)');
+      logger.info('   - /api/diseases/* (Diseases)');
+      logger.info('   - /api/weather/* (Weather)');
+      logger.info('   - /api/market/* (Market Prices)');
+      logger.info('   - /api/chatbot/* (Chatbot)');
+      logger.info('   - /api/agri-gpt/* (AGRI-GPT)');
       
       // Start training scheduler
       try {

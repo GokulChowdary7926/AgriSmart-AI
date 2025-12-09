@@ -19,7 +19,15 @@ class GovernmentSchemeService {
       pmfby: process.env.PMFBY_API_URL || 'https://pmfby.gov.in/api',
       agmarknet: process.env.AGMARKNET_API_URL || 'https://agmarknet.gov.in/api'
     };
-    logger.info('✅ Government Scheme Service initialized');
+    
+    // Verify database loaded correctly
+    const centralCount = this.schemeDatabase?.central ? Object.keys(this.schemeDatabase.central).length : 0;
+    const stateCount = this.schemeDatabase ? Object.keys(this.schemeDatabase).filter(k => k !== 'central').length : 0;
+    logger.info(`✅ Government Scheme Service initialized with ${centralCount} central schemes and ${stateCount} states`);
+    
+    if (centralCount === 0) {
+      logger.error('⚠️ WARNING: No central schemes loaded! Database may be empty.');
+    }
   }
 
   loadSchemeDatabase() {
@@ -361,30 +369,45 @@ class GovernmentSchemeService {
    */
   async recommendSchemes(farmerProfile, filters = {}) {
     try {
+      logger.info('=== Starting recommendSchemes ===');
+      logger.info('Farmer Profile:', JSON.stringify(farmerProfile, null, 2));
+      logger.info('Filters:', JSON.stringify(filters, null, 2));
+      
       const cacheKey = `schemes:${JSON.stringify(farmerProfile)}:${JSON.stringify(filters)}`;
       try {
         const cached = await cache.get(cacheKey);
         if (cached) {
+          logger.info('Returning cached schemes');
           return JSON.parse(cached);
         }
       } catch (cacheError) {
         logger.warn('Cache not available, continuing without cache');
       }
 
-      // Try to get real-time schemes from government API
+      // Try to get real-time schemes from government API (with timeout)
       const governmentAPIService = require('./governmentAPIService');
       const state = farmerProfile?.location?.state || 'Punjab';
       const category = filters?.category || null;
       
       let realTimeSchemes = null;
+      // Use Promise.race to timeout external API calls after 8 seconds
+      // (Multiple parallel API calls may take longer, but we don't want to wait forever)
       try {
-        realTimeSchemes = await governmentAPIService.getRealTimeSchemes(state, category);
+        const apiPromise = governmentAPIService.getRealTimeSchemes(state, category);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('API timeout')), 8000)
+        );
+        realTimeSchemes = await Promise.race([apiPromise, timeoutPromise]);
         if (realTimeSchemes && realTimeSchemes.length > 0) {
-          logger.info(`Fetched ${realTimeSchemes.length} schemes from government API`);
-          // Merge with local schemes
+          logger.info(`✅ Successfully fetched ${realTimeSchemes.length} real-time schemes from government APIs`);
         }
       } catch (apiError) {
-        logger.warn('Government API unavailable, using local database:', apiError.message);
+        // Silently fail - use local database instead
+        if (apiError.message !== 'API timeout') {
+          logger.warn('Government API unavailable, using local database:', apiError.message);
+        } else {
+          logger.warn('Government API request timed out, using local database');
+        }
       }
 
       // Get all applicable schemes (from local database or merged with API)
@@ -401,46 +424,101 @@ class GovernmentSchemeService {
         });
       }
 
-      // Filter by eligibility
-      const eligibleSchemes = [];
-      for (const scheme of allSchemes) {
-        const eligibility = await this.checkEligibility(scheme, farmerProfile);
-        if (eligibility.eligible) {
-          scheme.eligibilityDetails = eligibility;
-          scheme.relevanceScore = await this.calculateRelevanceScore(scheme, farmerProfile);
-          eligibleSchemes.push(scheme);
-        }
-      }
-
-      // Apply filters
-      let filteredSchemes = eligibleSchemes;
-      if (filters.category) {
-        filteredSchemes = filteredSchemes.filter(s => s.category === filters.category);
-      }
-
-      // Calculate relevance scores for ALL schemes (not just eligible)
-      const allSchemesWithScores = [];
-      for (const scheme of allSchemes) {
-        const eligibility = await this.checkEligibility(scheme, farmerProfile);
-        const relevanceScore = await this.calculateRelevanceScore(scheme, farmerProfile);
-        allSchemesWithScores.push({
-          ...scheme,
-          eligibilityDetails: eligibility,
-          relevanceScore: relevanceScore,
-          isEligible: eligibility.eligible
-        });
-      }
+      // Process ALL schemes in parallel (eligibility + relevance score calculation)
+      // This is much faster than sequential processing
+      logger.info(`Processing ${allSchemes.length} schemes for eligibility and relevance scoring`);
+      const schemesWithScores = await Promise.all(
+        allSchemes.map(async (scheme) => {
+          try {
+            const eligibility = await this.checkEligibility(scheme, farmerProfile);
+            // Pass eligibility to avoid duplicate calculation
+            const relevanceScore = await this.calculateRelevanceScore(scheme, farmerProfile, eligibility);
+            
+            // Generate recommendation reasons
+            const recommendationReasons = this.generateRecommendationReasonsForScheme(
+              scheme, 
+              farmerProfile, 
+              eligibility, 
+              relevanceScore
+            );
+            
+            return {
+              ...scheme,
+              eligibilityDetails: eligibility,
+              relevanceScore: relevanceScore,
+              isEligible: eligibility.eligible,
+              recommendationReasons: recommendationReasons
+            };
+          } catch (error) {
+            // If eligibility check fails, still include the scheme with default values
+            logger.warn(`Error checking eligibility for scheme ${scheme.schemeId}:`, error.message);
+            return {
+              ...scheme,
+              eligibilityDetails: { 
+                eligible: false, 
+                matchedCriteria: [], 
+                rejectionReasons: ['Error checking eligibility'],
+                summary: '❌ Unable to verify eligibility due to an error.'
+              },
+              relevanceScore: 50, // Default score
+              isEligible: false,
+              recommendationReasons: []
+            };
+          }
+        })
+      );
+      
+      logger.info(`Processed ${schemesWithScores.length} schemes. Eligible: ${schemesWithScores.filter(s => s.isEligible).length}`);
 
       // Sort all schemes by relevance score
-      allSchemesWithScores.sort((a, b) => b.relevanceScore - a.relevanceScore);
+      schemesWithScores.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
-      // Sort eligible schemes by relevance score
+      // Filter eligible schemes
+      const eligibleSchemes = schemesWithScores.filter(s => s.isEligible);
+
+      // Apply category filter if specified
+      let filteredSchemes = eligibleSchemes;
+      if (filters.category) {
+        filteredSchemes = eligibleSchemes.filter(s => s.category === filters.category);
+      }
+
+      // Sort eligible schemes by relevance score (already sorted, but ensure)
       filteredSchemes.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
-      // Group by category for eligible schemes
+      // Group by category and priority in a single pass (more efficient)
       let groupedSchemes = {};
       let allSchemesGrouped = {};
       let deadlineAlerts = [];
+      
+      // Pre-calculate priority groups to avoid multiple filter passes
+      const allHighPriority = [];
+      const allMediumPriority = [];
+      const allLowPriority = [];
+      const eligibleHighPriority = [];
+      const eligibleMediumPriority = [];
+      const eligibleLowPriority = [];
+
+      schemesWithScores.forEach(scheme => {
+        // Categorize by priority for all schemes
+        if (scheme.relevanceScore >= 80) {
+          allHighPriority.push(scheme);
+        } else if (scheme.relevanceScore >= 50) {
+          allMediumPriority.push(scheme);
+        } else {
+          allLowPriority.push(scheme);
+        }
+
+        // Categorize by priority for eligible schemes
+        if (scheme.isEligible) {
+          if (scheme.relevanceScore >= 80) {
+            eligibleHighPriority.push(scheme);
+          } else if (scheme.relevanceScore >= 50) {
+            eligibleMediumPriority.push(scheme);
+          } else {
+            eligibleLowPriority.push(scheme);
+          }
+        }
+      });
       
       try {
         groupedSchemes = this.groupByCategory(filteredSchemes);
@@ -450,7 +528,7 @@ class GovernmentSchemeService {
       
       try {
         // Group all schemes by category
-        allSchemesGrouped = this.groupByCategory(allSchemesWithScores);
+        allSchemesGrouped = this.groupByCategory(schemesWithScores);
       } catch (e) {
         logger.warn('Error grouping all schemes by category:', e);
       }
@@ -463,31 +541,33 @@ class GovernmentSchemeService {
       }
 
       const result = {
-        totalSchemesFound: allSchemes.length,
+        totalSchemesFound: schemesWithScores.length,
         eligibleSchemes: eligibleSchemes.length,
         recommendedSchemes: filteredSchemes.length,
-        // All schemes (for "Total Schemes" view)
-        allSchemes: allSchemesWithScores,
+        // All schemes (for "Total Schemes" view) - Always include all schemes
+        allSchemes: schemesWithScores,
         allSchemesByPriority: {
-          highPriority: allSchemesWithScores.filter(s => s.relevanceScore >= 80),
-          mediumPriority: allSchemesWithScores.filter(s => s.relevanceScore >= 50 && s.relevanceScore < 80),
-          lowPriority: allSchemesWithScores.filter(s => s.relevanceScore < 50)
+          highPriority: allHighPriority,
+          mediumPriority: allMediumPriority,
+          lowPriority: allLowPriority
         },
         allSchemesByCategory: allSchemesGrouped,
         // Eligible schemes only (for "Eligible Schemes" view)
         eligibleSchemesList: filteredSchemes,
         schemesByPriority: {
-          highPriority: filteredSchemes.filter(s => s.relevanceScore >= 80),
-          mediumPriority: filteredSchemes.filter(s => s.relevanceScore >= 50 && s.relevanceScore < 80),
-          lowPriority: filteredSchemes.filter(s => s.relevanceScore < 50)
+          highPriority: eligibleHighPriority,
+          mediumPriority: eligibleMediumPriority,
+          lowPriority: eligibleLowPriority
         },
         schemesByCategory: groupedSchemes,
-        topRecommendations: filteredSchemes.slice(0, 5),
+        topRecommendations: filteredSchemes.length > 0 ? filteredSchemes.slice(0, 5) : schemesWithScores.slice(0, 5),
         deadlineAlerts: deadlineAlerts,
         recommendationReasons: this.safeGenerateRecommendationReasons(filteredSchemes, farmerProfile),
         nextSteps: this.safeGenerateNextSteps(filteredSchemes),
         timestamp: new Date().toISOString()
       };
+
+      logger.info(`Returning ${result.totalSchemesFound} total schemes (${result.eligibleSchemes} eligible)`);
 
       // Cache for 1 hour (cache expects JSON string)
       try {
@@ -509,37 +589,97 @@ class GovernmentSchemeService {
     /**Get all schemes applicable to farmer's location*/
     const schemes = [];
 
-    // Get farmer's state
-    const state = farmerProfile?.location?.state?.toLowerCase() || '';
-
-    // Add central government schemes
-    Object.values(this.schemeDatabase.central).forEach(scheme => {
-      schemes.push({ ...scheme, level: 'central' });
-    });
-
-    // Add state-specific schemes
-    if (state && this.schemeDatabase[state]) {
-      Object.values(this.schemeDatabase[state]).forEach(scheme => {
-        schemes.push({ ...scheme, level: 'state', state: state });
-      });
+    // Verify database is loaded
+    if (!this.schemeDatabase) {
+      logger.error('Scheme database not initialized! Reinitializing...');
+      this.schemeDatabase = this.loadSchemeDatabase();
     }
 
+    if (!this.schemeDatabase.central) {
+      logger.error('Central schemes database missing!');
+      return schemes;
+    }
+
+    // Get farmer's state and normalize it
+    let state = farmerProfile?.location?.state || '';
+    
+    // Normalize state name to match database keys
+    // Convert "Uttar Pradesh" -> "uttar_pradesh", "Tamil Nadu" -> "tamil_nadu", etc.
+    if (state) {
+      state = state.toLowerCase().replace(/\s+/g, '_');
+    }
+
+    logger.info(`Loading schemes for state: ${state || 'all states'}`);
+    logger.info(`Database has central schemes: ${!!this.schemeDatabase.central}`);
+    logger.info(`Central schemes keys: ${Object.keys(this.schemeDatabase.central).join(', ')}`);
+
+    // Always add central government schemes (available to all states)
+    const centralSchemes = Object.values(this.schemeDatabase.central);
+    logger.info(`Found ${centralSchemes.length} central schemes in database`);
+    
+    centralSchemes.forEach(scheme => {
+      if (scheme && scheme.schemeId) {
+        schemes.push({ ...scheme, level: 'central' });
+      } else {
+        logger.warn('Invalid scheme found in central database:', scheme);
+      }
+    });
+    logger.info(`Added ${schemes.length} central government schemes`);
+
+    // Add state-specific schemes if state is provided and exists in database
+    if (state && this.schemeDatabase[state]) {
+      const stateSchemes = Object.values(this.schemeDatabase[state]);
+      logger.info(`Found ${stateSchemes.length} state schemes for ${state}`);
+      stateSchemes.forEach(scheme => {
+        if (scheme && scheme.schemeId) {
+          schemes.push({ ...scheme, level: 'state', state: state });
+        } else {
+          logger.warn(`Invalid scheme found in ${state} database:`, scheme);
+        }
+      });
+      logger.info(`Added ${stateSchemes.length} state-specific schemes for ${state}`);
+    } else if (state) {
+      logger.warn(`State "${state}" not found in database. Available states: ${Object.keys(this.schemeDatabase).filter(k => k !== 'central').join(', ')}`);
+    }
+
+    logger.info(`Total schemes loaded: ${schemes.length}`);
     return schemes;
   }
 
   async checkEligibility(scheme, farmerProfile) {
-    /**Check if farmer is eligible for a scheme*/
+    /**Check if farmer is eligible for a scheme with detailed reasons*/
     const eligibility = scheme.eligibility || {};
     const matchedCriteria = [];
     const rejectionReasons = [];
+    const detailedReasons = [];
 
     // Check land ownership
     if (eligibility.landOwnership !== undefined) {
       const hasLand = farmerProfile?.farmDetails?.landOwnership || false;
       if (hasLand === eligibility.landOwnership) {
         matchedCriteria.push('Land ownership requirement met');
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'met',
+          requirement: 'Land Ownership',
+          description: eligibility.landOwnership 
+            ? 'You own land, which meets the requirement for this scheme.'
+            : 'You do not own land, which meets the requirement for this scheme.',
+          value: hasLand ? 'Yes' : 'No'
+        });
       } else {
+        const reason = eligibility.landOwnership 
+          ? 'This scheme requires land ownership. You need to own land to be eligible.'
+          : 'This scheme is for farmers without land ownership. You own land, so you are not eligible.';
         rejectionReasons.push('Land ownership requirement not met');
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'not_met',
+          requirement: 'Land Ownership',
+          description: reason,
+          value: hasLand ? 'Yes' : 'No',
+          required: eligibility.landOwnership ? 'Yes' : 'No'
+        });
       }
     }
 
@@ -557,28 +697,68 @@ class GovernmentSchemeService {
       
       const minSize = eligibility.landSizeMin || 0;
       const maxSize = eligibility.landSizeMax || Infinity;
+      const landDisplay = farmerProfile?.farmDetails?.landSizeSqFeet !== undefined 
+        ? LandConverter.format(farmerProfile.farmDetails.landSizeSqFeet || 0, farmerProfile.farmDetails.landSizeCents || 0)
+        : `${landSize.toFixed(4)} ha`;
 
       if (landSize >= minSize && landSize <= maxSize) {
-        const landDisplay = farmerProfile?.farmDetails?.landSizeSqFeet !== undefined 
-          ? LandConverter.format(farmerProfile.farmDetails.landSizeSqFeet || 0, farmerProfile.farmDetails.landSizeCents || 0)
-          : `${landSize} ha`;
         matchedCriteria.push(`Land size (${landDisplay}) within required range`);
+        const rangeText = maxSize === Infinity 
+          ? `at least ${minSize} ha`
+          : `between ${minSize} ha and ${maxSize} ha`;
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'met',
+          requirement: 'Land Size',
+          description: `Your land size (${landDisplay}) meets the requirement (${rangeText}).`,
+          value: landDisplay,
+          required: rangeText
+        });
       } else {
-        const landDisplay = farmerProfile?.farmDetails?.landSizeSqFeet !== undefined 
-          ? LandConverter.format(farmerProfile.farmDetails.landSizeSqFeet || 0, farmerProfile.farmDetails.landSizeCents || 0)
-          : `${landSize} ha`;
+        const rangeText = maxSize === Infinity 
+          ? `at least ${minSize} ha`
+          : `between ${minSize} ha and ${maxSize} ha`;
+        let reason = '';
+        if (landSize < minSize) {
+          reason = `This scheme requires a minimum land size of ${minSize} ha. Your land (${landDisplay}) is below this requirement.`;
+        } else if (landSize > maxSize) {
+          reason = `This scheme has a maximum land size limit of ${maxSize} ha. Your land (${landDisplay}) exceeds this limit.`;
+        }
         rejectionReasons.push(`Land size (${landDisplay}) outside required range`);
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'not_met',
+          requirement: 'Land Size',
+          description: reason,
+          value: landDisplay,
+          required: rangeText
+        });
       }
     }
 
     // Check exclusions
-    if (scheme.eligibility?.exclusions) {
+    if (scheme.eligibility?.exclusions && scheme.eligibility.exclusions.length > 0) {
       const farmerCategory = farmerProfile?.category || '';
       const isExcluded = scheme.eligibility.exclusions.some(exclusion =>
         farmerCategory.toLowerCase().includes(exclusion.toLowerCase())
       );
       if (isExcluded) {
         rejectionReasons.push('Farmer falls under exclusion category');
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'excluded',
+          requirement: 'Exclusion Categories',
+          description: `This scheme excludes certain categories: ${scheme.eligibility.exclusions.join(', ')}. You fall under one of these exclusion categories.`,
+          exclusions: scheme.eligibility.exclusions
+        });
+      } else {
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'met',
+          requirement: 'Exclusion Check',
+          description: 'You do not fall under any exclusion categories for this scheme.',
+          exclusions: scheme.eligibility.exclusions
+        });
       }
     }
 
@@ -588,25 +768,74 @@ class GovernmentSchemeService {
       const incomeLimit = parseInt(eligibility.annualIncome.replace(/[^\d]/g, '')) || Infinity;
       if (farmerIncome <= incomeLimit) {
         matchedCriteria.push('Income within eligible range');
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'met',
+          requirement: 'Annual Income',
+          description: `Your annual income (₹${farmerIncome.toLocaleString()}) is within the eligible limit (${eligibility.annualIncome}).`,
+          value: `₹${farmerIncome.toLocaleString()}`,
+          required: eligibility.annualIncome
+        });
       } else {
         rejectionReasons.push('Income exceeds eligible limit');
+        detailedReasons.push({
+          type: 'eligibility',
+          status: 'not_met',
+          requirement: 'Annual Income',
+          description: `This scheme is for farmers with income ${eligibility.annualIncome}. Your annual income (₹${farmerIncome.toLocaleString()}) exceeds this limit.`,
+          value: `₹${farmerIncome.toLocaleString()}`,
+          required: eligibility.annualIncome
+        });
+      }
+    }
+
+    // If no eligibility requirements are defined, consider eligible by default
+    // If requirements exist, eligible only if no rejections and at least one match
+    const hasRequirements = eligibility.landOwnership !== undefined || 
+                            eligibility.landSizeMin !== undefined || 
+                            eligibility.landSizeMax !== undefined ||
+                            eligibility.annualIncome !== undefined ||
+                            (scheme.eligibility?.exclusions && scheme.eligibility.exclusions.length > 0);
+    
+    const isEligible = hasRequirements 
+      ? (rejectionReasons.length === 0 && matchedCriteria.length > 0)
+      : true; // No requirements = eligible by default
+    
+    // Generate summary message
+    let summaryMessage = '';
+    if (isEligible) {
+      if (matchedCriteria.length > 0) {
+        summaryMessage = `✅ You are eligible! ${matchedCriteria.join(' ')}`;
+      } else {
+        summaryMessage = '✅ You are eligible for this scheme.';
+      }
+    } else {
+      if (rejectionReasons.length > 0) {
+        summaryMessage = `❌ Not eligible: ${rejectionReasons.join('. ')}`;
+      } else {
+        summaryMessage = '❌ You do not meet the eligibility requirements for this scheme.';
       }
     }
 
     return {
-      eligible: rejectionReasons.length === 0 && matchedCriteria.length > 0,
+      eligible: isEligible,
       matchedCriteria: matchedCriteria,
       rejectionReasons: rejectionReasons,
-      confidence: matchedCriteria.length / (matchedCriteria.length + rejectionReasons.length + 1)
+      detailedReasons: detailedReasons,
+      summary: summaryMessage,
+      confidence: matchedCriteria.length > 0 || !hasRequirements 
+        ? (matchedCriteria.length / (matchedCriteria.length + rejectionReasons.length + 1))
+        : 0
     };
   }
 
-  async calculateRelevanceScore(scheme, farmerProfile) {
+  async calculateRelevanceScore(scheme, farmerProfile, eligibilityResult = null) {
     /**Calculate relevance score (0-100) for a scheme*/
     let score = 0;
 
     // Eligibility match (40 points)
-    const eligibility = await this.checkEligibility(scheme, farmerProfile);
+    // Use provided eligibility result if available to avoid duplicate calculation
+    const eligibility = eligibilityResult || await this.checkEligibility(scheme, farmerProfile);
     score += eligibility.confidence * 40;
 
     // Financial benefit (25 points)
@@ -744,8 +973,136 @@ class GovernmentSchemeService {
     return alerts;
   }
 
+  generateRecommendationReasonsForScheme(scheme, farmerProfile, eligibility, relevanceScore) {
+    /**Generate detailed recommendation reasons for a single scheme*/
+    const reasons = [];
+    
+    // Eligibility-based reasons
+    if (eligibility.eligible) {
+      if (eligibility.matchedCriteria && eligibility.matchedCriteria.length > 0) {
+        reasons.push({
+          type: 'eligibility',
+          priority: 'high',
+          title: '✅ You Meet Eligibility Requirements',
+          description: eligibility.summary || 'You are eligible for this scheme.',
+          details: eligibility.matchedCriteria
+        });
+      }
+    } else {
+      if (eligibility.rejectionReasons && eligibility.rejectionReasons.length > 0) {
+        reasons.push({
+          type: 'eligibility',
+          priority: 'low',
+          title: '❌ Eligibility Requirements Not Met',
+          description: eligibility.summary || 'You do not meet the eligibility requirements.',
+          details: eligibility.rejectionReasons
+        });
+      }
+    }
+    
+    // Relevance score-based reasons
+    if (relevanceScore >= 80) {
+      reasons.push({
+        type: 'relevance',
+        priority: 'high',
+        title: '⭐ Highly Recommended',
+        description: `This scheme has a ${relevanceScore}% relevance score, making it highly suitable for your profile.`,
+        score: relevanceScore
+      });
+    } else if (relevanceScore >= 50) {
+      reasons.push({
+        type: 'relevance',
+        priority: 'medium',
+        title: '📋 Moderately Recommended',
+        description: `This scheme has a ${relevanceScore}% relevance score, which is moderately suitable for your profile.`,
+        score: relevanceScore
+      });
+    }
+    
+    // Financial benefit reasons
+    const benefits = scheme.benefits || {};
+    if (benefits.amount) {
+      reasons.push({
+        type: 'benefit',
+        priority: 'high',
+        title: '💰 Financial Benefit',
+        description: `This scheme provides ${benefits.amount} in financial support.`,
+        benefit: benefits.amount
+      });
+    }
+    
+    if (scheme.subsidyPercentage) {
+      reasons.push({
+        type: 'benefit',
+        priority: 'high',
+        title: '💵 Subsidy Available',
+        description: `This scheme offers ${scheme.subsidyPercentage}% subsidy, reducing your costs significantly.`,
+        benefit: `${scheme.subsidyPercentage}% subsidy`
+      });
+    }
+    
+    // Category-based reasons
+    const farmerIncome = farmerProfile?.annualIncome || 0;
+    const landSize = farmerProfile?.farmDetails?.landSize || 0;
+    
+    if (scheme.category === 'financial' && farmerIncome < 100000) {
+      reasons.push({
+        type: 'match',
+        priority: 'high',
+        title: '💼 Income Support Match',
+        description: 'This financial scheme is ideal for farmers with lower income, providing essential support.',
+        match: 'Low income farmer'
+      });
+    }
+    
+    if (scheme.category === 'insurance') {
+      reasons.push({
+        type: 'match',
+        priority: 'high',
+        title: '🛡️ Risk Protection',
+        description: 'Crop insurance protects you from losses due to natural disasters, pests, and diseases.',
+        match: 'Risk management'
+      });
+    }
+    
+    if (scheme.category === 'water' && landSize > 1) {
+      reasons.push({
+        type: 'match',
+        priority: 'medium',
+        title: '💧 Water Management',
+        description: 'Water management schemes help optimize irrigation and reduce water costs for larger farms.',
+        match: 'Large landholding'
+      });
+    }
+    
+    // Location-based reasons
+    if (scheme.level === 'state' && farmerProfile?.location?.state) {
+      reasons.push({
+        type: 'location',
+        priority: 'medium',
+        title: '📍 State-Specific Scheme',
+        description: `This is a state-specific scheme for ${farmerProfile.location.state}, tailored to local agricultural needs.`,
+        match: farmerProfile.location.state
+      });
+    }
+    
+    // Application simplicity
+    const appProcess = scheme.applicationProcess || '';
+    if (appProcess.toLowerCase().includes('online')) {
+      reasons.push({
+        type: 'convenience',
+        priority: 'medium',
+        title: '🖥️ Easy Application',
+        description: 'This scheme can be applied for online, making the process quick and convenient.',
+        benefit: 'Online application'
+      });
+    }
+    
+    return reasons;
+  }
+
   generateRecommendationReasons(schemes, farmerProfile) {
-    /**Generate reasons for recommending each scheme*/
+    /**Generate reasons for recommending each scheme (legacy method for compatibility)*/
     const reasons = [];
 
     schemes.slice(0, 10).forEach(scheme => {
@@ -817,9 +1174,8 @@ class GovernmentSchemeService {
 
   getFallbackRecommendations(farmerProfile = {}) {
     /**Fallback recommendations when service fails*/
-    try {
-      // Return some basic schemes even when service fails
-      const fallbackSchemes = [
+    // Return some basic schemes even when service fails
+    const fallbackSchemes = [
       {
         schemeId: 'CG001',
         name: 'Pradhan Mantri Kisan Samman Nidhi (PM-KISAN)',

@@ -1,10 +1,45 @@
 const express = require('express');
 const router = express.Router();
 const AnalyticsController = require('../controllers/AnalyticsController');
-const { authenticateToken } = require('../middleware/auth');
+const jwt = require('jsonwebtoken');
 
-// All routes require authentication
-router.use(authenticateToken);
+// Optional authentication middleware - doesn't fail if no token
+const optionalAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
+        // Try to get user, but don't fail if User model isn't available
+        try {
+          const User = require('../models/User');
+          const user = await User.findById(decoded.userId).select('-password');
+          if (user) {
+            req.user = user;
+          } else {
+            req.user = { _id: decoded.userId, userId: decoded.userId };
+          }
+        } catch (dbError) {
+          // User model not available or query failed, use decoded token
+          req.user = { _id: decoded.userId, userId: decoded.userId };
+        }
+      } catch (error) {
+        // Invalid token, continue without user
+        req.user = null;
+      }
+    } else {
+      req.user = null;
+    }
+  } catch (error) {
+    req.user = null;
+  }
+  next();
+};
+
+// Use optional authentication
+router.use(optionalAuth);
 
 router.get('/dashboard', AnalyticsController.getDashboard);
 router.get('/historical', AnalyticsController.getHistorical);

@@ -45,9 +45,15 @@ export const ChatProvider = ({ children }) => {
       socket.disconnect();
     }
 
-    const newSocket = io('http://localhost:5001', {
+    const socketUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5001';
+    const newSocket = io(socketUrl, {
       auth: { token },
-      transports: ['websocket']
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5,
+      timeout: 20000
     });
 
     newSocket.on('connect', () => {
@@ -55,9 +61,18 @@ export const ChatProvider = ({ children }) => {
       setIsConnected(true);
     });
 
-    newSocket.on('disconnect', () => {
-      console.log('Socket disconnected');
+    newSocket.on('connect_error', (error) => {
+      console.warn('Socket connection error:', error.message);
       setIsConnected(false);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason);
+      setIsConnected(false);
+      if (reason === 'io server disconnect') {
+        // Server disconnected, reconnect manually
+        newSocket.connect();
+      }
     });
 
     newSocket.on('new-message', (message) => {

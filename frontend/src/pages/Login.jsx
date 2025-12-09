@@ -25,7 +25,6 @@ export default function Login() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token && isAuthenticated && !loading) {
-      console.log('Login page: Already authenticated, redirecting...');
       navigate('/dashboard', { replace: true });
     }
   }, [isAuthenticated, loading, navigate]);
@@ -38,24 +37,17 @@ export default function Login() {
       setError('Please fill in all fields');
       return;
     }
-
-    console.log('🔄 Login form submitted for:', email);
     
     const result = await login(email, password);
     
-    console.log('📥 Login result:', result);
-    
     if (result && result.success) {
-      console.log('✅ Login successful, redirecting...');
       enqueueSnackbar('Login successful!', { variant: 'success' });
       // Small delay to ensure token is stored
       setTimeout(() => {
-        console.log('🚀 Navigating to dashboard...');
         navigate('/dashboard', { replace: true });
       }, 50);
     } else {
       const errorMsg = result?.error || 'Login failed';
-      console.error('❌ Login failed:', errorMsg);
       setError(errorMsg);
       enqueueSnackbar(errorMsg, { variant: 'error' });
     }

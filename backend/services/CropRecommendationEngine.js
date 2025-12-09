@@ -359,15 +359,26 @@ class CropRecommendationEngine {
 
       if (score >= 50) { // Only recommend crops with score >= 50
         const cropDetails = this.getCropDetails(crop.label);
+        const cropName = crop.label.charAt(0).toUpperCase() + crop.label.slice(1);
+        
+        // Generate advantages based on crop type
+        const advantages = this.getCropAdvantages(crop.label);
+        
         recommendations.push({
-          crop: crop.label.charAt(0).toUpperCase() + crop.label.slice(1),
+          crop: cropName,
+          name: cropName,
           score: score,
+          suitabilityScore: score,
           season: cropDetails.season,
           duration: cropDetails.duration,
           yield: cropDetails.yield,
+          expectedYield: cropDetails.yield,
           water_requirements: cropDetails.water,
           reason: reasons.length > 0 ? reasons.join(', ') : 'Suitable for your region',
+          reasons: reasons.length > 0 ? reasons : ['Suitable for your region'],
+          advantages: advantages,
           market_price: this.getCropPrice(crop.label),
+          marketPrice: this.getCropPrice(crop.label),
           requirements: {
             temperature: `${crop.temperature}°C`,
             humidity: `${crop.humidity}%`,
@@ -622,4 +633,5 @@ class CropRecommendationEngine {
 
 // Export singleton instance
 module.exports = new CropRecommendationEngine();
+
 

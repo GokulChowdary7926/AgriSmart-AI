@@ -21,17 +21,6 @@ export default function ProtectedRoute({ children }) {
     }
   }, [loading]);
 
-  // Debug logging
-  useEffect(() => {
-    console.log('ProtectedRoute check:', {
-      hasToken,
-      isAuthenticated,
-      user: !!user,
-      loading,
-      checkingAuth
-    });
-  }, [hasToken, isAuthenticated, user, loading, checkingAuth]);
-
   // Show loading while checking authentication
   if (loading || checkingAuth) {
     return (
@@ -44,18 +33,15 @@ export default function ProtectedRoute({ children }) {
   // If we have a token, allow access (even if user data isn't loaded yet)
   // This prevents redirect loops after login
   if (hasToken) {
-    console.log('ProtectedRoute: Allowing access - token exists');
     return children;
   }
 
   // If authenticated (user exists), allow access
   if (isAuthenticated || user) {
-    console.log('ProtectedRoute: Allowing access - authenticated');
     return children;
   }
 
   // No token and not authenticated - redirect to login
-  console.log('ProtectedRoute: Redirecting to login - no token or user');
   return <Navigate to="/login" replace />;
 }
 

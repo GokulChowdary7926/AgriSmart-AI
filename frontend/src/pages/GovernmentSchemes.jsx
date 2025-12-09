@@ -53,13 +53,25 @@ export default function GovernmentSchemes() {
   const [eligibilityResult, setEligibilityResult] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [schemeFilter, setSchemeFilter] = useState('all'); // 'all' or 'eligible'
+  const [schemeFilter, setSchemeFilter] = useState('all'); // 'all', 'eligible', or 'recommended'
 
   useEffect(() => {
     if (user) {
       loadSchemes();
     }
   }, [user]);
+
+  // Debug: Log schemes changes
+  useEffect(() => {
+    if (schemes) {
+      console.log('Schemes state updated:', {
+        totalSchemesFound: schemes.totalSchemesFound,
+        allSchemes: schemes.allSchemes?.length,
+        eligibleSchemes: schemes.eligibleSchemes,
+        filteredCount: filteredSchemes().length
+      });
+    }
+  }, [schemes, schemeFilter, selectedCategory]);
 
   const loadSchemes = async () => {
     setLoading(true);
@@ -97,45 +109,174 @@ export default function GovernmentSchemes() {
         }
       }, { headers });
 
+      console.log('Government Schemes API Response:', response.data);
+      
       if (response.data.success) {
-        console.log('✅ Schemes loaded:', response.data?.data || response.data);
         // Handle different response structures
         const schemesData = response.data?.data || response.data;
+        console.log('Schemes Data:', schemesData);
+        console.log('Total Schemes Found:', schemesData?.totalSchemesFound);
+        console.log('All Schemes:', schemesData?.allSchemes?.length);
+        
         if (schemesData && typeof schemesData === 'object') {
-          // If it's an object with schemes arrays, extract them
-          if (schemesData.topRecommendations && Array.isArray(schemesData.topRecommendations)) {
-            setSchemes(schemesData.topRecommendations);
-          } else if (schemesData.allSchemes && Array.isArray(schemesData.allSchemes)) {
-            setSchemes(schemesData.allSchemes);
-          } else if (schemesData.eligibleSchemesList && Array.isArray(schemesData.eligibleSchemesList)) {
-            setSchemes(schemesData.eligibleSchemesList);
-          } else if (Array.isArray(schemesData)) {
+          // Check if it's the expected structure with allSchemes, schemesByPriority, etc.
+          if (schemesData.allSchemes || schemesData.schemesByPriority || schemesData.totalSchemesFound !== undefined) {
+            // This is the full response object - use it as is
+            console.log('Setting schemes with full structure:', {
+              totalSchemesFound: schemesData.totalSchemesFound,
+              allSchemesCount: schemesData.allSchemes?.length,
+              eligibleSchemes: schemesData.eligibleSchemes
+            });
             setSchemes(schemesData);
+          } else if (Array.isArray(schemesData)) {
+            // If it's just an array, wrap it in the expected structure
+            setSchemes({
+              totalSchemesFound: schemesData.length,
+              eligibleSchemes: schemesData.length,
+              recommendedSchemes: schemesData.length,
+              allSchemes: schemesData,
+              allSchemesByPriority: {
+                highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+                mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+                lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+              },
+              schemesByPriority: {
+                highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+                mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+                lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+              },
+              schemesByCategory: {},
+              eligibleSchemesList: schemesData,
+              topRecommendations: schemesData.slice(0, 5)
+            });
           } else {
-            // Try to find any array in the response
-            const allSchemes = Object.values(schemesData).find(val => Array.isArray(val) && val.length > 0);
-            setSchemes(allSchemes || []);
+            // Try to find any array in the response and wrap it
+            const allSchemes = Object.values(schemesData).find(val => Array.isArray(val) && val.length > 0) || [];
+            setSchemes({
+              totalSchemesFound: allSchemes.length,
+              eligibleSchemes: allSchemes.length,
+              recommendedSchemes: allSchemes.length,
+              allSchemes: allSchemes,
+              allSchemesByPriority: {
+                highPriority: allSchemes.filter(s => (s.relevanceScore || 0) >= 80),
+                mediumPriority: allSchemes.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+                lowPriority: allSchemes.filter(s => (s.relevanceScore || 0) < 50)
+              },
+              schemesByPriority: {
+                highPriority: allSchemes.filter(s => (s.relevanceScore || 0) >= 80),
+                mediumPriority: allSchemes.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+                lowPriority: allSchemes.filter(s => (s.relevanceScore || 0) < 50)
+              },
+              schemesByCategory: {},
+              eligibleSchemesList: allSchemes,
+              topRecommendations: allSchemes.slice(0, 5)
+            });
           }
         } else if (Array.isArray(schemesData)) {
-          setSchemes(schemesData);
+          // Wrap array in expected structure
+          setSchemes({
+            totalSchemesFound: schemesData.length,
+            eligibleSchemes: schemesData.length,
+            recommendedSchemes: schemesData.length,
+            allSchemes: schemesData,
+            allSchemesByPriority: {
+              highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+              mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+            },
+            schemesByPriority: {
+              highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+              mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+            },
+            schemesByCategory: {},
+            eligibleSchemesList: schemesData,
+            topRecommendations: schemesData.slice(0, 5)
+          });
         } else {
-          setSchemes([]);
+          // Empty state
+          setSchemes({
+            totalSchemesFound: 0,
+            eligibleSchemes: 0,
+            recommendedSchemes: 0,
+            allSchemes: [],
+            allSchemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+            schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+            schemesByCategory: {},
+            eligibleSchemesList: [],
+            topRecommendations: []
+          });
         }
         setError(null);
       } else {
         setError(response.data.error || 'Failed to load schemes');
-        setSchemes([]);
+        setSchemes({
+          totalSchemesFound: 0,
+          eligibleSchemes: 0,
+          recommendedSchemes: 0,
+          allSchemes: [],
+          allSchemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+          schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+          schemesByCategory: {},
+          eligibleSchemesList: [],
+          topRecommendations: []
+        });
       }
     } catch (err) {
-      console.error('❌ Error loading schemes:', err);
-      console.error('Error details:', err.response?.data);
       // Don't show error if we get an empty array - just show empty state
-      if (err.response?.data?.success === true && Array.isArray(err.response?.data?.data)) {
-        setSchemes(err.response.data.data);
+      if (err.response?.data?.success === true) {
+        const schemesData = err.response?.data?.data || err.response?.data;
+        if (schemesData && typeof schemesData === 'object' && (schemesData.allSchemes || schemesData.schemesByPriority)) {
+          // Full response object
+          setSchemes(schemesData);
+        } else if (Array.isArray(schemesData)) {
+          // Wrap array in expected structure
+          setSchemes({
+            totalSchemesFound: schemesData.length,
+            eligibleSchemes: schemesData.length,
+            recommendedSchemes: schemesData.length,
+            allSchemes: schemesData,
+            allSchemesByPriority: {
+              highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+              mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+            },
+            schemesByPriority: {
+              highPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 80),
+              mediumPriority: schemesData.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: schemesData.filter(s => (s.relevanceScore || 0) < 50)
+            },
+            schemesByCategory: {},
+            eligibleSchemesList: schemesData,
+            topRecommendations: schemesData.slice(0, 5)
+          });
+        } else {
+          setSchemes({
+            totalSchemesFound: 0,
+            eligibleSchemes: 0,
+            recommendedSchemes: 0,
+            allSchemes: [],
+            allSchemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+            schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+            schemesByCategory: {},
+            eligibleSchemesList: [],
+            topRecommendations: []
+          });
+        }
         setError(null);
       } else {
         setError(err.response?.data?.error || err.message || t('governmentSchemes.loadError') || 'Failed to load schemes. Please try again.');
-        setSchemes([]);
+        setSchemes({
+          totalSchemesFound: 0,
+          eligibleSchemes: 0,
+          recommendedSchemes: 0,
+          allSchemes: [],
+          allSchemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+          schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+          schemesByCategory: {},
+          eligibleSchemesList: [],
+          topRecommendations: []
+        });
       }
     } finally {
       setLoading(false);
@@ -167,7 +308,6 @@ export default function GovernmentSchemes() {
         setDialogOpen(true);
       }
     } catch (err) {
-      console.error('Error checking eligibility:', err);
       setError(err.response?.data?.error || 'Failed to check eligibility');
     }
   };
@@ -179,7 +319,7 @@ export default function GovernmentSchemes() {
         return response.data?.data || response.data || null;
       }
     } catch (err) {
-      console.error('Error getting scheme details:', err);
+      // Error handled by snackbar
     }
     return null;
   };
@@ -210,9 +350,19 @@ export default function GovernmentSchemes() {
   };
 
   const filteredSchemes = () => {
-    if (!schemes) return [];
+    if (!schemes) {
+      console.log('No schemes data available');
+      return [];
+    }
     
-    // Get schemes based on filter (all or eligible)
+    console.log('Filtering schemes. Current schemes state:', {
+      totalSchemesFound: schemes.totalSchemesFound,
+      allSchemesCount: schemes.allSchemes?.length,
+      schemeFilter: schemeFilter,
+      selectedCategory: selectedCategory
+    });
+    
+    // Get schemes based on filter (all, eligible, or recommended)
     let schemeList = [];
     
     if (schemeFilter === 'eligible') {
@@ -222,16 +372,34 @@ export default function GovernmentSchemes() {
         ...(schemes.schemesByPriority?.mediumPriority || []),
         ...(schemes.schemesByPriority?.lowPriority || [])
       ];
+      console.log('Using eligible schemes:', schemeList.length);
+    } else if (schemeFilter === 'recommended') {
+      // Show recommended schemes (high relevance score, eligible, top recommendations)
+      // Priority: topRecommendations > highPriority eligible > schemes with relevanceScore >= 70
+      if (schemes.topRecommendations && schemes.topRecommendations.length > 0) {
+        schemeList = schemes.topRecommendations;
+        console.log('Using topRecommendations:', schemeList.length);
+      } else {
+        // Fallback: get eligible schemes with high relevance score
+        const allSchemesList = schemes.allSchemes || schemes.eligibleSchemesList || [];
+        schemeList = allSchemesList
+          .filter(s => s.isEligible && (s.relevanceScore || 0) >= 70)
+          .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
+          .slice(0, 10); // Top 10 recommended
+        console.log('Using high-scoring eligible schemes:', schemeList.length);
+      }
     } else {
       // Show ALL schemes (default)
-      if (schemes.allSchemes && schemes.allSchemes.length > 0) {
+      if (schemes.allSchemes && Array.isArray(schemes.allSchemes) && schemes.allSchemes.length > 0) {
         schemeList = schemes.allSchemes;
+        console.log('Using allSchemes:', schemeList.length);
       } else if (schemes.allSchemesByPriority) {
         schemeList = [
           ...(schemes.allSchemesByPriority?.highPriority || []),
           ...(schemes.allSchemesByPriority?.mediumPriority || []),
           ...(schemes.allSchemesByPriority?.lowPriority || [])
         ];
+        console.log('Using allSchemesByPriority:', schemeList.length);
       } else {
         // Fallback to eligible schemes if allSchemes not available
         schemeList = [
@@ -239,15 +407,21 @@ export default function GovernmentSchemes() {
           ...(schemes.schemesByPriority?.mediumPriority || []),
           ...(schemes.schemesByPriority?.lowPriority || [])
         ];
+        console.log('Using schemesByPriority as fallback:', schemeList.length);
       }
     }
 
+    console.log('Scheme list before category filter:', schemeList.length);
+
     // Apply category filter
     if (selectedCategory === 'all') {
+      console.log('Returning all schemes:', schemeList.length);
       return schemeList;
     }
 
-    return schemeList.filter(s => s.category === selectedCategory);
+    const filtered = schemeList.filter(s => s.category === selectedCategory);
+    console.log('Returning filtered schemes by category:', filtered.length);
+    return filtered;
   };
 
   return (
@@ -297,6 +471,15 @@ export default function GovernmentSchemes() {
               {t('governmentSchemes.loading') || 'Loading schemes...'}
             </Typography>
           </Box>
+        )}
+
+        {/* Empty State - No schemes loaded */}
+        {!schemes && !loading && (
+          <Alert severity="info" sx={{ mb: 3 }}>
+            <Typography variant="body1">
+              {t('governmentSchemes.noSchemes') || 'No schemes available. Please try refreshing the page.'}
+            </Typography>
+          </Alert>
         )}
 
         {/* Schemes Display */}
@@ -358,14 +541,29 @@ export default function GovernmentSchemes() {
               </Card>
             </Grid>
             <Grid item xs={12} md={4}>
-              <Card sx={{ bgcolor: 'background.paper', mb: 2 }}>
+              <Card 
+                sx={{ 
+                  bgcolor: 'background.paper', 
+                  mb: 2,
+                  cursor: 'pointer',
+                  border: schemeFilter === 'recommended' ? '2px solid' : '1px solid',
+                  borderColor: schemeFilter === 'recommended' ? 'warning.main' : 'divider',
+                  '&:hover': { boxShadow: 4, transform: 'translateY(-2px)', transition: 'all 0.2s' }
+                }}
+                onClick={() => setSchemeFilter('recommended')}
+              >
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
                     {t('governmentSchemes.recommendedSchemes') || 'Recommended'}
                   </Typography>
                   <Typography variant="h4" color="warning.main">
-                    {schemes.recommendedSchemes || 0}
+                    {schemes.recommendedSchemes || schemes.topRecommendations?.length || 0}
                   </Typography>
+                  {schemeFilter === 'recommended' && (
+                    <Typography variant="caption" color="warning.main" sx={{ mt: 1, display: 'block' }}>
+                      ✓ Showing recommended schemes
+                    </Typography>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -393,11 +591,21 @@ export default function GovernmentSchemes() {
                   <Typography variant="h5" gutterBottom>
                     {schemeFilter === 'eligible' 
                       ? (t('governmentSchemes.eligibleSchemes') || 'Eligible Schemes')
+                      : schemeFilter === 'recommended'
+                      ? (t('governmentSchemes.recommendedSchemes') || 'Recommended Schemes')
                       : (t('governmentSchemes.allSchemes') || 'All Schemes')}
                   </Typography>
                   <Chip 
-                    label={schemeFilter === 'eligible' ? 'Eligible Only' : 'All Schemes'} 
-                    color={schemeFilter === 'eligible' ? 'success' : 'primary'}
+                    label={
+                      schemeFilter === 'eligible' ? 'Eligible Only' : 
+                      schemeFilter === 'recommended' ? 'Recommended' : 
+                      'All Schemes'
+                    } 
+                    color={
+                      schemeFilter === 'eligible' ? 'success' : 
+                      schemeFilter === 'recommended' ? 'warning' : 
+                      'primary'
+                    }
                     size="small"
                   />
                 </Box>
@@ -406,12 +614,21 @@ export default function GovernmentSchemes() {
                   <Alert severity="info">
                     {schemeFilter === 'eligible' 
                       ? (t('governmentSchemes.noEligibleSchemes') || 'No eligible schemes found for your profile. Click "Total Schemes" to see all available schemes.')
+                      : schemeFilter === 'recommended'
+                      ? (t('governmentSchemes.noRecommendedSchemes') || 'No recommended schemes found. Click "Total Schemes" to see all available schemes.')
                       : (t('governmentSchemes.noSchemes') || 'No schemes found. Please try again later.')}
                   </Alert>
                 ) : (
                   <>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Showing {filteredSchemes().length} {schemeFilter === 'eligible' ? 'eligible' : ''} scheme{filteredSchemes().length !== 1 ? 's' : ''}
+                      Showing {filteredSchemes().length} {
+                        schemeFilter === 'eligible' ? 'eligible' : 
+                        schemeFilter === 'recommended' ? 'recommended' : 
+                        ''
+                      } scheme{filteredSchemes().length !== 1 ? 's' : ''}
+                      {schemeFilter === 'recommended' && (
+                        <span> (sorted by relevance score)</span>
+                      )}
                     </Typography>
                   <Grid container spacing={2}>
                     {filteredSchemes().map((scheme, index) => (
@@ -439,7 +656,7 @@ export default function GovernmentSchemes() {
                                   <Chip
                                     label={scheme.category || 'General'}
                                     size="small"
-                                    sx={{ bgcolor: getCategoryColor(scheme.category), color: 'white' }}
+                                    sx={{ bgcolor: getCategoryColor(scheme.category), color: 'primary.contrastText' }}
                                   />
                                   {scheme.isEligible !== undefined && (
                                     <Chip
@@ -474,6 +691,64 @@ export default function GovernmentSchemes() {
                           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                             {scheme.description}
                           </Typography>
+
+                          {/* Eligibility Status with Reasons */}
+                          {scheme.eligibilityDetails && (
+                            <Box mb={2}>
+                              <Alert 
+                                severity={scheme.isEligible ? 'success' : 'warning'} 
+                                sx={{ mb: 1 }}
+                              >
+                                <Typography variant="subtitle2" gutterBottom>
+                                  {scheme.eligibilityDetails.summary || 
+                                    (scheme.isEligible ? '✅ Eligible' : '❌ Not Eligible')}
+                                </Typography>
+                                {scheme.eligibilityDetails.matchedCriteria && scheme.eligibilityDetails.matchedCriteria.length > 0 && (
+                                  <Box sx={{ mt: 1 }}>
+                                    <Typography variant="caption" color="success.main" sx={{ fontWeight: 'bold' }}>
+                                      Why Eligible:
+                                    </Typography>
+                                    {scheme.eligibilityDetails.matchedCriteria.map((criteria, idx) => (
+                                      <Typography key={idx} variant="caption" display="block" sx={{ ml: 1 }}>
+                                        ✓ {criteria}
+                                      </Typography>
+                                    ))}
+                                  </Box>
+                                )}
+                                {scheme.eligibilityDetails.rejectionReasons && scheme.eligibilityDetails.rejectionReasons.length > 0 && (
+                                  <Box sx={{ mt: 1 }}>
+                                    <Typography variant="caption" color="error.main" sx={{ fontWeight: 'bold' }}>
+                                      Why Not Eligible:
+                                    </Typography>
+                                    {scheme.eligibilityDetails.rejectionReasons.map((reason, idx) => (
+                                      <Typography key={idx} variant="caption" display="block" sx={{ ml: 1 }}>
+                                        ✗ {reason}
+                                      </Typography>
+                                    ))}
+                                  </Box>
+                                )}
+                              </Alert>
+                            </Box>
+                          )}
+
+                          {/* Recommendation Reasons */}
+                          {scheme.recommendationReasons && scheme.recommendationReasons.length > 0 && (
+                            <Box mb={2}>
+                              <Typography variant="subtitle2" color="primary" gutterBottom>
+                                {t('governmentSchemes.whyRecommended') || 'Why Recommended'}:
+                              </Typography>
+                              {scheme.recommendationReasons.slice(0, 3).map((reason, idx) => (
+                                <Box key={idx} sx={{ mb: 1, p: 1, bgcolor: 'background.default', borderRadius: 1 }}>
+                                  <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
+                                    {reason.title}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {reason.description}
+                                  </Typography>
+                                </Box>
+                              ))}
+                            </Box>
+                          )}
 
                             {scheme.benefits && (
                               <Box mb={2}>
@@ -542,47 +817,135 @@ export default function GovernmentSchemes() {
                   {selectedScheme.description}
                 </Typography>
 
-                {eligibilityResult && (
-                  <Box mb={2}>
-                    {eligibilityResult.eligible ? (
-                      <Alert severity="success" sx={{ mb: 2 }}>
-                        <Typography variant="h6">
-                          {t('governmentSchemes.eligible') || '✅ You are eligible for this scheme!'}
-                        </Typography>
-                        {eligibilityResult.eligibilityDetails?.matchedCriteria && (
+                {/* Eligibility Details with Reasons */}
+                {selectedScheme.eligibilityDetails && (
+                  <Box mb={3}>
+                    <Alert 
+                      severity={selectedScheme.isEligible ? 'success' : 'warning'} 
+                      sx={{ mb: 2 }}
+                    >
+                      <Typography variant="h6" gutterBottom>
+                        {selectedScheme.eligibilityDetails.summary || 
+                          (selectedScheme.isEligible 
+                            ? t('governmentSchemes.eligible') || '✅ You are eligible for this scheme!'
+                            : t('governmentSchemes.notEligible') || '❌ Not Eligible')}
+                      </Typography>
+                      
+                      {/* Why Eligible */}
+                      {selectedScheme.eligibilityDetails.matchedCriteria && selectedScheme.eligibilityDetails.matchedCriteria.length > 0 && (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="subtitle2" color="success.main" gutterBottom>
+                            ✓ Why You Are Eligible:
+                          </Typography>
                           <List dense>
-                            {eligibilityResult.eligibilityDetails.matchedCriteria.map((criteria, idx) => (
-                              <ListItem key={idx}>
-                                <ListItemIcon>
-                                  <CheckCircle color="success" />
+                            {selectedScheme.eligibilityDetails.matchedCriteria.map((criteria, idx) => (
+                              <ListItem key={idx} sx={{ py: 0.5 }}>
+                                <ListItemIcon sx={{ minWidth: 32 }}>
+                                  <CheckCircle color="success" fontSize="small" />
                                 </ListItemIcon>
-                                <ListItemText primary={criteria} />
+                                <ListItemText 
+                                  primary={criteria}
+                                  primaryTypographyProps={{ variant: 'body2' }}
+                                />
                               </ListItem>
                             ))}
                           </List>
-                        )}
-                      </Alert>
-                    ) : (
-                      <Alert severity="warning" sx={{ mb: 2 }}>
-                        <Typography variant="h6">
-                          {t('governmentSchemes.notEligible') || 'Not Eligible'}
-                        </Typography>
-                        {eligibilityResult.eligibilityDetails?.rejectionReasons && (
+                        </Box>
+                      )}
+                      
+                      {/* Why Not Eligible */}
+                      {selectedScheme.eligibilityDetails.rejectionReasons && selectedScheme.eligibilityDetails.rejectionReasons.length > 0 && (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="subtitle2" color="error.main" gutterBottom>
+                            ✗ Why You Are Not Eligible:
+                          </Typography>
                           <List dense>
-                            {eligibilityResult.eligibilityDetails.rejectionReasons.map((reason, idx) => (
-                              <ListItem key={idx}>
-                                <ListItemIcon>
-                                  <Warning color="warning" />
+                            {selectedScheme.eligibilityDetails.rejectionReasons.map((reason, idx) => (
+                              <ListItem key={idx} sx={{ py: 0.5 }}>
+                                <ListItemIcon sx={{ minWidth: 32 }}>
+                                  <Warning color="warning" fontSize="small" />
                                 </ListItemIcon>
-                                <ListItemText primary={reason} />
+                                <ListItemText 
+                                  primary={reason}
+                                  primaryTypographyProps={{ variant: 'body2' }}
+                                />
                               </ListItem>
                             ))}
                           </List>
-                        )}
-                      </Alert>
-                    )}
+                        </Box>
+                      )}
+                      
+                      {/* Detailed Reasons */}
+                      {selectedScheme.eligibilityDetails.detailedReasons && selectedScheme.eligibilityDetails.detailedReasons.length > 0 && (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Detailed Eligibility Check:
+                          </Typography>
+                          {selectedScheme.eligibilityDetails.detailedReasons.map((detail, idx) => (
+                            <Box key={idx} sx={{ mb: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                              <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
+                                {detail.requirement}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {detail.description}
+                              </Typography>
+                              {detail.value && (
+                                <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'primary.main' }}>
+                                  Your value: {detail.value}
+                                  {detail.required && ` | Required: ${detail.required}`}
+                                </Typography>
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      )}
+                    </Alert>
                   </Box>
                 )}
+
+                {/* Recommendation Reasons */}
+                {selectedScheme.recommendationReasons && selectedScheme.recommendationReasons.length > 0 && (
+                  <Box mb={3}>
+                    <Typography variant="h6" gutterBottom>
+                      {t('governmentSchemes.whyRecommended') || '⭐ Why This Scheme is Recommended'}
+                    </Typography>
+                    {selectedScheme.recommendationReasons.map((reason, idx) => (
+                      <Box 
+                        key={idx} 
+                        sx={{ 
+                          mb: 2, 
+                          p: 2, 
+                          bgcolor: 'background.paper', 
+                          borderRadius: 2,
+                          borderLeft: `4px solid ${
+                            reason.priority === 'high' ? '#4caf50' : 
+                            reason.priority === 'medium' ? '#ff9800' : '#9e9e9e'
+                          }`
+                        }}
+                      >
+                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                          {reason.title}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {reason.description}
+                        </Typography>
+                        {reason.details && reason.details.length > 0 && (
+                          <List dense sx={{ mt: 1 }}>
+                            {reason.details.map((detail, detailIdx) => (
+                              <ListItem key={detailIdx} sx={{ py: 0 }}>
+                                <ListItemText 
+                                  primary={detail}
+                                  primaryTypographyProps={{ variant: 'caption' }}
+                                />
+                              </ListItem>
+                            ))}
+                          </List>
+                        )}
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+
 
                 {selectedScheme.benefits && (
                   <Accordion sx={{ mb: 2, bgcolor: 'background.paper' }}>

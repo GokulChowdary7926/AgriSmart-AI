@@ -69,7 +69,14 @@ class ChatbotController {
     try {
       const { sessionId } = req.params || {};
       const { content, attachments = [], sessionId: bodySessionId } = req.body;
-      const userId = req.user._id;
+      const userId = req.user?._id || req.user?.userId || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: 'User authentication required'
+        });
+      }
       
       // Support both URL param and body sessionId
       const actualSessionId = sessionId || bodySessionId;

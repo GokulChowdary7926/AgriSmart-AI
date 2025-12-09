@@ -16,8 +16,6 @@ class DiseaseService {
       // Response includes both detection and medication
       return response.data.data || response.data;
     } catch (error) {
-      console.error('Disease detection error:', error);
-      
       // Return fallback data if API fails
       if (error.response?.status === 404 || error.code === 'ECONNREFUSED') {
         return {

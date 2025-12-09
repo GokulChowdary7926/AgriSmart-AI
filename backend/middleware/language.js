@@ -76,7 +76,7 @@ class LanguageMiddleware {
         data: formatted
       });
     } catch (error) {
-      console.error('Get languages error:', error);
+      logger.error('Get languages error:', error);
       res.status(500).json({
         success: false,
         error: 'Failed to fetch languages'
@@ -109,7 +109,7 @@ class LanguageMiddleware {
       
       return this.replaceVariables(text, variables);
     } catch (error) {
-      console.error('Translation error:', error);
+      logger.error('Translation error:', error);
       return key;
     }
   }
@@ -148,7 +148,7 @@ class LanguageMiddleware {
       
       return result;
     } catch (error) {
-      console.error('Batch translation error:', error);
+      logger.error('Batch translation error:', error);
       return keys.reduce((acc, key) => {
         acc[key] = key;
         return acc;
@@ -179,7 +179,7 @@ class LanguageMiddleware {
       
       return result;
     } catch (error) {
-      console.error('Module translations error:', error);
+      logger.error('Module translations error:', error);
       return {};
     }
   }

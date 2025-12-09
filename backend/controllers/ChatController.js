@@ -47,7 +47,14 @@ class ChatController {
   static async sendMessage(req, res) {
     try {
       const { sessionId, message, metadata } = req.body;
-      const userId = req.user._id;
+      const userId = req.user?._id || req.user?.userId || req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: 'User authentication required'
+        });
+      }
       
       let session = await ChatSession.findOne({
         sessionId,

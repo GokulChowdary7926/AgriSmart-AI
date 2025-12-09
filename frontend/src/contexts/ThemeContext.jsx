@@ -12,15 +12,12 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
-  const [mode, setMode] = useState(() => {
-    const savedMode = localStorage.getItem('themeMode');
-    return savedMode || 'dark'; // Default to dark theme
-  });
+  // Always use dark theme - no toggle
+  const [mode] = useState('dark');
 
   const toggleTheme = () => {
-    const newMode = mode === 'light' ? 'dark' : 'light';
-    setMode(newMode);
-    localStorage.setItem('themeMode', newMode);
+    // Theme toggle disabled - always dark
+    console.log('Dark theme is always enabled');
   };
 
   const theme = useMemo(
@@ -39,8 +36,8 @@ export const ThemeProvider = ({ children }) => {
             dark: '#c43e00',
           },
           background: {
-            default: mode === 'dark' ? '#121212' : '#f5f5f5',
-            paper: mode === 'dark' ? '#1e1e1e' : '#ffffff',
+            default: '#121212', // Always dark
+            paper: '#1e1e1e', // Always dark
           },
           success: {
             main: '#2e7d32',
@@ -87,9 +84,8 @@ export const ThemeProvider = ({ children }) => {
             styleOverrides: {
               root: {
                 borderRadius: 12,
-                boxShadow: mode === 'dark' 
-                  ? '0 2px 8px rgba(0,0,0,0.3)' 
-                  : '0 2px 8px rgba(0,0,0,0.1)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                bgcolor: 'background.paper',
               },
             },
           },
@@ -97,16 +93,13 @@ export const ThemeProvider = ({ children }) => {
             styleOverrides: {
               root: {
                 backgroundImage: 'none',
+                bgcolor: 'background.paper',
               },
               elevation1: {
-                boxShadow: mode === 'dark' 
-                  ? '0 1px 3px rgba(0,0,0,0.3)' 
-                  : '0 1px 3px rgba(0,0,0,0.12)',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
               },
               elevation3: {
-                boxShadow: mode === 'dark' 
-                  ? '0 2px 8px rgba(0,0,0,0.3)' 
-                  : '0 2px 8px rgba(0,0,0,0.1)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
               },
             },
           },

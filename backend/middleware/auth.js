@@ -77,8 +77,13 @@ const authorize = (...roles) => {
   };
 };
 
+// Alias for backward compatibility
+const authenticate = authenticateToken;
+
 module.exports = {
   authenticateToken,
+  authenticate, // Alias
   authorize
 };
+
 

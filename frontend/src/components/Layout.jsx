@@ -16,7 +16,8 @@ import {
   Menu,
   MenuItem,
   Divider,
-  Badge
+  Badge,
+  useTheme as useMUITheme
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -48,6 +49,7 @@ export default function Layout({ children }) {
   const { language, t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
+  const muiTheme = useMUITheme();
   
   // Force re-render on language change
   const [, forceUpdate] = useState(0);
@@ -85,6 +87,7 @@ export default function Layout({ children }) {
     { textKey: 'nav.market', icon: <MarketIcon />, path: '/market' },
     { textKey: 'nav.governmentSchemes', icon: <GovernmentSchemesIcon />, path: '/government-schemes' },
     { textKey: 'nav.chatbot', icon: <ChatIcon />, path: '/chat' },
+    { textKey: 'nav.agriChat', icon: <ChatIcon />, path: '/agri-chat' },
     { textKey: 'nav.analytics', icon: <AnalyticsIcon />, path: '/analytics' },
     { textKey: 'nav.map', icon: <MapIcon />, path: '/agri-map' },
   ];
@@ -162,6 +165,7 @@ export default function Layout({ children }) {
         sx={{
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           ml: { sm: `${drawerWidth}px` },
+          bgcolor: muiTheme.palette.mode === 'dark' ? 'background.paper' : 'primary.main',
         }}
       >
         <Toolbar>
@@ -221,7 +225,11 @@ export default function Layout({ children }) {
           }}
           sx={{
             display: { xs: 'block', sm: 'none' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+            '& .MuiDrawer-paper': {
+              boxSizing: 'border-box',
+              width: drawerWidth,
+              bgcolor: muiTheme.palette.mode === 'dark' ? 'background.paper' : 'background.default',
+            },
           }}
         >
           {drawer}
@@ -230,7 +238,11 @@ export default function Layout({ children }) {
           variant="permanent"
           sx={{
             display: { xs: 'none', sm: 'block' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+            '& .MuiDrawer-paper': {
+              boxSizing: 'border-box',
+              width: drawerWidth,
+              bgcolor: muiTheme.palette.mode === 'dark' ? 'background.paper' : 'background.default',
+            },
           }}
           open
         >

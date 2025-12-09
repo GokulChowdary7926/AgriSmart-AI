@@ -19,13 +19,6 @@ api.interceptors.request.use(
     // If token exists, add to headers
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      if (process.env.NODE_ENV === 'development') {
-        // API Request logged
-          method: config.method?.toUpperCase(),
-          url: config.url,
-          hasToken: !!token
-        });
-      }
     }
     
     // Add language header if available
@@ -43,26 +36,13 @@ api.interceptors.request.use(
 // Response interceptor
 api.interceptors.response.use(
   (response) => {
-    if (process.env.NODE_ENV === 'development') {
-      // API Response logged
-        status: response.status,
-        url: response.config.url
-      });
-    }
     // Return successful response
     return response;
   },
   (error) => {
     const originalRequest = error.config;
     
-    if (process.env.NODE_ENV === 'development') {
-      console.error('❌ API Error:', {
-        status: error.response?.status,
-        url: error.config?.url,
-        message: error.message,
-        response: error.response?.data
-      });
-    }
+    // Error details available in error object for debugging
     
     // Handle 401 Unauthorized errors (token expired)
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -81,7 +61,7 @@ api.interceptors.response.use(
     
     // Handle network errors
     if (!error.response) {
-      console.error('🌐 Network error:', error.message);
+      // Network error - connection issue
       return Promise.reject({
         success: false,
         error: 'Network error. Please check your connection.',
@@ -91,7 +71,7 @@ api.interceptors.response.use(
     
     // Handle server errors
     if (error.response.status >= 500) {
-      console.error('🔥 Server error:', error.response.data);
+      // Server error - 500+ status code
       return Promise.reject({
         success: false,
         error: 'Server error. Please try again later.',

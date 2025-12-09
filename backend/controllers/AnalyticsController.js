@@ -138,11 +138,13 @@ class AnalyticsController {
   // Get dashboard data - with real-time analytics
   static async getDashboard(req, res) {
     try {
-      const userId = req.user?._id || req.user?.userId;
+      const userId = req.user?._id || req.user?.userId || null;
       
       // Use real-time analytics service
       const analyticsService = require('../services/analyticsService');
-      const dashboardData = await analyticsService.getDashboardAnalytics(userId);
+      const dashboardData = userId 
+        ? await analyticsService.getDashboardAnalytics(userId)
+        : analyticsService.getFallbackAnalytics();
       
       // Get user's farmer profile for farm info
       const User = require('../models/User');
@@ -227,19 +229,21 @@ class AnalyticsController {
   // Get historical data
   static async getHistorical(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = req.user?._id || req.user?.userId || null;
       const { startDate, endDate } = req.query;
       
       // Return empty array for now - can be populated with actual historical data
       res.json({
         success: true,
-        data: []
+        data: [],
+        message: 'Historical data feature coming soon',
+        userId: userId || 'anonymous'
       });
     } catch (error) {
       logger.error('Error fetching historical data:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: error.message || 'Failed to fetch historical data'
       });
     }
   }
@@ -247,18 +251,20 @@ class AnalyticsController {
   // Get insights
   static async getInsights(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = req.user?._id || req.user?.userId || null;
       
       // Return empty array for now - can be populated with actual insights
       res.json({
         success: true,
-        data: []
+        data: [],
+        message: 'Insights feature coming soon',
+        userId: userId || 'anonymous'
       });
     } catch (error) {
       logger.error('Error fetching insights:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: error.message || 'Failed to fetch insights'
       });
     }
   }

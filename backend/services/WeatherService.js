@@ -174,14 +174,17 @@ class WeatherService {
    * Parse forecast data
    */
   parseForecastData(data) {
-    return data.list.slice(0, 7).map(item => ({
+    if (!data || !data.list || !Array.isArray(data.list)) {
+      return [];
+    }
+    return data.list.slice(0, 10).map(item => ({
       date: new Date(item.dt * 1000).toISOString(),
-      temperature: item.main.temp,
-      min_temp: item.main.temp_min,
-      max_temp: item.main.temp_max,
-      humidity: item.main.humidity,
-      weather: item.weather[0].main,
-      description: item.weather[0].description,
+      temperature: item.main?.temp || 25,
+      min_temp: item.main?.temp_min || 20,
+      max_temp: item.main?.temp_max || 30,
+      humidity: item.main?.humidity || 60,
+      weather: item.weather?.[0]?.main || 'Clear',
+      description: item.weather?.[0]?.description || 'Clear sky',
       rainfall: item.rain?.['3h'] || 0
     }));
   }
