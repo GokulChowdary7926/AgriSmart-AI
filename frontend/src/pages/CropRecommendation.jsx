@@ -531,26 +531,167 @@ export default function CropRecommendation() {
                       )}
                     </Box>
 
-                    {/* Reasons for Recommendation */}
-                    {crop.reasons && crop.reasons.length > 0 && (
+                    {/* Detailed Scoring Breakdown */}
+                    {crop.scoringBreakdown && (
                       <Accordion sx={{ mb: 2, bgcolor: 'background.default' }}>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <CheckIcon color="success" fontSize="small" />
                             <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                              Why Recommended ({crop.reasons.length})
+                              📊 Detailed Reasons for Recommendation
+                            </Typography>
+                          </Box>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                            {/* Soil Compatibility */}
+                            {crop.scoringBreakdown.soilCompatibility && (
+                              <Box sx={{ mb: 2 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    Soil Compatibility
+                                  </Typography>
+                                  <Chip
+                                    label={`${crop.scoringBreakdown.soilCompatibility.score}/${crop.scoringBreakdown.soilCompatibility.maxScore}`}
+                                    size="small"
+                                    color={crop.scoringBreakdown.soilCompatibility.score >= 20 ? 'success' : 'default'}
+                                  />
+                                </Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                  {crop.scoringBreakdown.soilCompatibility.details?.description || ''}
+                                </Typography>
+                                {crop.scoringBreakdown.soilCompatibility.details?.details && (
+                                  <List dense>
+                                    {crop.scoringBreakdown.soilCompatibility.details.details.map((detail, idx) => (
+                                      <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
+                                        <ListItemText
+                                          primary={detail}
+                                          primaryTypographyProps={{ variant: 'caption' }}
+                                        />
+                                      </ListItem>
+                                    ))}
+                                  </List>
+                                )}
+                              </Box>
+                            )}
+
+                            {/* Weather Alignment */}
+                            {crop.scoringBreakdown.weatherAlignment && (
+                              <Box sx={{ mb: 2 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    Weather Alignment
+                                  </Typography>
+                                  <Chip
+                                    label={`${crop.scoringBreakdown.weatherAlignment.score}/${crop.scoringBreakdown.weatherAlignment.maxScore}`}
+                                    size="small"
+                                    color={crop.scoringBreakdown.weatherAlignment.score >= 25 ? 'success' : 'default'}
+                                  />
+                                </Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                  {crop.scoringBreakdown.weatherAlignment.details?.description || ''}
+                                </Typography>
+                                {crop.scoringBreakdown.weatherAlignment.details?.details && (
+                                  <List dense>
+                                    {crop.scoringBreakdown.weatherAlignment.details.details.map((detail, idx) => (
+                                      <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
+                                        <ListItemText
+                                          primary={detail}
+                                          primaryTypographyProps={{ variant: 'caption' }}
+                                        />
+                                      </ListItem>
+                                    ))}
+                                  </List>
+                                )}
+                              </Box>
+                            )}
+
+                            {/* Economic Viability */}
+                            {crop.scoringBreakdown.economicViability && (
+                              <Box sx={{ mb: 2 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    Economic Viability
+                                  </Typography>
+                                  <Chip
+                                    label={`${crop.scoringBreakdown.economicViability.score}/${crop.scoringBreakdown.economicViability.maxScore}`}
+                                    size="small"
+                                    color={crop.scoringBreakdown.economicViability.score >= 20 ? 'success' : 'default'}
+                                  />
+                                </Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                  {crop.scoringBreakdown.economicViability.details?.description || ''}
+                                </Typography>
+                                {crop.scoringBreakdown.economicViability.details?.details && (
+                                  <List dense>
+                                    {crop.scoringBreakdown.economicViability.details.details.map((detail, idx) => (
+                                      <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
+                                        <ListItemText
+                                          primary={detail}
+                                          primaryTypographyProps={{ variant: 'caption' }}
+                                        />
+                                      </ListItem>
+                                    ))}
+                                  </List>
+                                )}
+                              </Box>
+                            )}
+
+                            {/* Risk Factor */}
+                            {crop.scoringBreakdown.riskFactor && (
+                              <Box sx={{ mb: 2 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    Risk Factor
+                                  </Typography>
+                                  <Chip
+                                    label={`${crop.scoringBreakdown.riskFactor.score}/${crop.scoringBreakdown.riskFactor.maxScore}`}
+                                    size="small"
+                                    color={crop.scoringBreakdown.riskFactor.score >= 15 ? 'success' : crop.scoringBreakdown.riskFactor.score >= 10 ? 'warning' : 'error'}
+                                  />
+                                </Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                                  {crop.scoringBreakdown.riskFactor.details?.description || ''}
+                                </Typography>
+                                {crop.scoringBreakdown.riskFactor.details?.details && (
+                                  <List dense>
+                                    {crop.scoringBreakdown.riskFactor.details.details.map((detail, idx) => (
+                                      <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
+                                        <ListItemText
+                                          primary={detail}
+                                          primaryTypographyProps={{ variant: 'caption' }}
+                                        />
+                                      </ListItem>
+                                    ))}
+                                  </List>
+                                )}
+                              </Box>
+                            )}
+                          </Box>
+                        </AccordionDetails>
+                      </Accordion>
+                    )}
+
+                    {/* Reasons for Recommendation (Fallback) */}
+                    {!crop.scoringBreakdown && crop.reasons && (Array.isArray(crop.reasons) ? crop.reasons : [crop.reasons]).length > 0 && (
+                      <Accordion sx={{ mb: 2, bgcolor: 'background.default' }}>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <CheckIcon color="success" fontSize="small" />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                              Why Recommended
                             </Typography>
                           </Box>
                         </AccordionSummary>
                         <AccordionDetails>
                           <List dense>
-                            {crop.reasons.map((reason, idx) => (
+                            {(Array.isArray(crop.reasons) ? crop.reasons : [crop.reasons]).map((reason, idx) => (
                               <ListItem key={idx} sx={{ py: 0.5, px: 0 }}>
                                 <ListItemIcon sx={{ minWidth: 32 }}>
                                   <CheckIcon fontSize="small" color="success" />
                                 </ListItemIcon>
                                 <ListItemText
-                                  primary={reason}
+                                  primary={typeof reason === 'string' ? reason : reason.description || reason}
                                   primaryTypographyProps={{ variant: 'body2' }}
                                 />
                               </ListItem>
@@ -617,7 +758,40 @@ export default function CropRecommendation() {
                         <Grid item xs={12}>
                           <Typography variant="caption" color="text.secondary">Market Price</Typography>
                           <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                            ₹{crop.marketPrice} / {crop.priceUnit || 'quintal'}
+                            {crop.marketPrice}
+                          </Typography>
+                          {crop.priceTrend && (
+                            <Chip
+                              label={`Price Trend: ${crop.priceTrend}`}
+                              size="small"
+                              color={crop.priceTrend === 'increasing' ? 'success' : crop.priceTrend === 'stable' ? 'default' : 'error'}
+                              sx={{ mt: 0.5 }}
+                            />
+                          )}
+                        </Grid>
+                      )}
+                      {crop.potentialRevenue && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">Potential Revenue (per hectare)</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: 'success.main', mt: 0.5 }}>
+                            ₹{crop.potentialRevenue.min?.toLocaleString()} - ₹{crop.potentialRevenue.max?.toLocaleString()}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {crop.profitMargin && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">Estimated Profit Margin</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                            {crop.profitMargin.percentage || crop.profitMargin}
+                            {crop.profitMargin.min && ` (₹${crop.profitMargin.min.toLocaleString()} - ₹${crop.profitMargin.max.toLocaleString()})`}
+                          </Typography>
+                        </Grid>
+                      )}
+                      {crop.plantingWindow && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">Planting Window</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                            {crop.plantingWindow}
                           </Typography>
                         </Grid>
                       )}

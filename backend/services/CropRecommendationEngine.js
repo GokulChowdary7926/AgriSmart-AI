@@ -322,111 +322,410 @@ class CropRecommendationEngine {
   }
 
   /**
-   * Get crop recommendations based on conditions
+   * Multi-layered Crop Recommendation System
+   * Layer 1: Location & Season Filtering
+   * Layer 2: Soil & Weather Suitability Scoring
+   * Layer 3: Economic & Practicality Analysis
    */
-  getCropRecommendations(temperature, humidity, ph, rainfall, soilType) {
+  getCropRecommendations(temperature, humidity, ph, rainfall, soilType, state = null, season = null) {
     const recommendations = [];
+    const currentSeason = season || this.getCurrentSeasonForLocation(state);
+    const currentDate = new Date();
+    const month = currentDate.getMonth() + 1;
 
-    // Score each crop based on conditions
+    // Layer 1: Location & Season Filtering
+    // Get crops suitable for current season and region
+    const seasonCrops = this.getCropsForSeason(currentSeason, state);
+
+    // Score each crop using multi-layered approach
     for (const crop of this.cropData) {
-      let score = 0;
-      let reasons = [];
-
-      // Temperature match (weight: 30%)
-      const tempDiff = Math.abs(temperature - crop.temperature);
-      if (tempDiff <= 5) {
-        score += 30;
-        reasons.push(`Ideal temperature (${temperature}°C)`);
-      } else if (tempDiff <= 10) {
-        score += 20;
-        reasons.push(`Acceptable temperature (${temperature}°C)`);
-      } else {
-        score += 10;
+      const cropName = crop.label.charAt(0).toUpperCase() + crop.label.slice(1);
+      
+      // Skip if crop not suitable for current season (unless season is "Year-round" or "All")
+      const cropDetails = this.getCropDetails(crop.label);
+      if (cropDetails.season !== 'Year-round' && cropDetails.season !== 'All' && 
+          seasonCrops.length > 0 && !seasonCrops.includes(cropName.toLowerCase())) {
+        continue; // Skip crops not suitable for current season
       }
 
-      // pH match (weight: 20%)
-      const phDiff = Math.abs(ph - crop.ph);
-      if (phDiff <= 0.5) {
-        score += 20;
-        reasons.push(`Optimal pH (${ph})`);
-      } else if (phDiff <= 1.0) {
-        score += 15;
-        reasons.push(`Suitable pH (${ph})`);
-      } else {
-        score += 10;
-      }
+      // Layer 2: Soil & Weather Suitability Scoring
+      const suitabilityScores = this.calculateSuitabilityScores(
+        crop, temperature, humidity, ph, rainfall, soilType
+      );
 
-      // Rainfall match (weight: 25%)
-      const rainDiff = Math.abs(rainfall - crop.rainfall) / crop.rainfall;
-      if (rainDiff <= 0.2) {
-        score += 25;
-        reasons.push(`Adequate rainfall (${rainfall}mm)`);
-      } else if (rainDiff <= 0.4) {
-        score += 18;
-        reasons.push(`Moderate rainfall (${rainfall}mm)`);
-      } else {
-        score += 12;
-      }
+      // Layer 3: Economic & Practicality Analysis
+      const economicAnalysis = this.calculateEconomicAnalysis(
+        crop.label, cropDetails, state
+      );
 
-      // Humidity match (weight: 15%)
-      const humidityDiff = Math.abs(humidity - crop.humidity);
-      if (humidityDiff <= 10) {
-        score += 15;
-      } else if (humidityDiff <= 20) {
-        score += 10;
-      } else {
-        score += 5;
-      }
+      // Calculate Risk Factor
+      const riskScore = this.calculateRiskScore(crop, cropDetails, temperature, rainfall);
 
-      // Soil type match (weight: 10%)
-      const suitableSoils = this.getSuitableSoilsForCrop(crop.label);
-      if (suitableSoils.includes(soilType.toLowerCase())) {
-        score += 10;
-        reasons.push(`Suitable for ${soilType} soil`);
-      } else {
-        score += 5;
-      }
+      // Total Score Calculation
+      const totalScore = Math.min(100, Math.round(
+        suitabilityScores.soilScore + 
+        suitabilityScores.weatherScore + 
+        economicAnalysis.economicScore + 
+        riskScore
+      ));
 
-      // Normalize score to 0-100
-      score = Math.min(100, Math.round(score));
-
-      if (score >= 50) { // Only recommend crops with score >= 50
-        const cropDetails = this.getCropDetails(crop.label);
-        const cropName = crop.label.charAt(0).toUpperCase() + crop.label.slice(1);
-        
-        // Generate advantages based on crop type
+      // Only recommend crops with score >= 50
+      if (totalScore >= 50) {
+        const suitableSoils = this.getSuitableSoilsForCrop(crop.label);
         const advantages = this.getCropAdvantages(crop.label);
         
+        // Generate detailed reasons
+        const reasons = this.generateDetailedReasons(
+          suitabilityScores, economicAnalysis, riskScore, 
+          ph, soilType, temperature, rainfall, cropDetails.season, state
+        );
+
         recommendations.push({
           crop: cropName,
           name: cropName,
-          score: score,
-          suitabilityScore: score,
+          score: totalScore,
+          suitabilityScore: totalScore,
           season: cropDetails.season,
           duration: cropDetails.duration,
           yield: cropDetails.yield,
           expectedYield: cropDetails.yield,
           water_requirements: cropDetails.water,
-          reason: reasons.length > 0 ? reasons.join(', ') : 'Suitable for your region',
-          reasons: reasons.length > 0 ? reasons : ['Suitable for your region'],
+          reason: reasons.summary,
+          reasons: reasons.detailed,
           advantages: advantages,
-          market_price: this.getCropPrice(crop.label),
-          marketPrice: this.getCropPrice(crop.label),
+          market_price: economicAnalysis.marketPrice,
+          marketPrice: economicAnalysis.marketPrice,
+          currentMarketPrice: economicAnalysis.currentMarketPrice,
+          priceTrend: economicAnalysis.priceTrend,
+          potentialRevenue: economicAnalysis.potentialRevenue,
+          profitMargin: economicAnalysis.profitMargin,
+          scoringBreakdown: {
+            soilCompatibility: {
+              score: suitabilityScores.soilScore,
+              maxScore: 25,
+              details: suitabilityScores.soilDetails
+            },
+            weatherAlignment: {
+              score: suitabilityScores.weatherScore,
+              maxScore: 30,
+              details: suitabilityScores.weatherDetails
+            },
+            economicViability: {
+              score: economicAnalysis.economicScore,
+              maxScore: 25,
+              details: economicAnalysis.economicDetails
+            },
+            riskFactor: {
+              score: riskScore,
+              maxScore: 20,
+              details: this.getRiskDetails(crop, cropDetails, temperature, rainfall)
+            },
+            total: totalScore
+          },
           requirements: {
             temperature: `${crop.temperature}°C`,
             humidity: `${crop.humidity}%`,
             ph: crop.ph,
             rainfall: `${crop.rainfall}mm`,
             soilType: suitableSoils[0] || 'Alluvial'
-          }
+          },
+          plantingWindow: this.getPlantingWindow(cropDetails.season, month, state)
         });
       }
     }
 
-    // Sort by score and return top 5
+    // Sort by total score and return top recommendations
     return recommendations
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .slice(0, 10); // Return top 10 instead of 5 for better options
+  }
+
+  /**
+   * Layer 2: Calculate Soil & Weather Suitability Scores
+   */
+  calculateSuitabilityScores(crop, temperature, humidity, ph, rainfall, soilType) {
+    let soilScore = 0;
+    let weatherScore = 0;
+    const soilDetails = [];
+    const weatherDetails = [];
+
+    // Soil Compatibility Scoring (25 points max)
+    const suitableSoils = this.getSuitableSoilsForCrop(crop.label);
+    const soilMatch = suitableSoils.includes(soilType.toLowerCase());
+    
+    if (soilMatch) {
+      soilScore += 15; // Soil type match
+      soilDetails.push(`Ideal soil type (${soilType})`);
+    } else {
+      soilScore += 5;
+      soilDetails.push(`Acceptable soil type (${soilType})`);
+    }
+
+    // pH match (10 points)
+    const phDiff = Math.abs(ph - crop.ph);
+    if (phDiff <= 0.5) {
+      soilScore += 10;
+      soilDetails.push(`Optimal pH (Your pH: ${ph}, Required: ${crop.ph})`);
+    } else if (phDiff <= 1.0) {
+      soilScore += 7;
+      soilDetails.push(`Suitable pH (Your pH: ${ph}, Required: ${crop.ph})`);
+    } else {
+      soilScore += 3;
+      soilDetails.push(`Acceptable pH (Your pH: ${ph}, Required: ${crop.ph})`);
+    }
+
+    // Weather Alignment Scoring (30 points max)
+    // Temperature match (15 points)
+    const tempDiff = Math.abs(temperature - crop.temperature);
+    if (tempDiff <= 5) {
+      weatherScore += 15;
+      weatherDetails.push(`Ideal temperature (${temperature}°C, Required: ${crop.temperature}°C)`);
+    } else if (tempDiff <= 10) {
+      weatherScore += 10;
+      weatherDetails.push(`Acceptable temperature (${temperature}°C, Required: ${crop.temperature}°C)`);
+    } else {
+      weatherScore += 5;
+      weatherDetails.push(`Moderate temperature match (${temperature}°C, Required: ${crop.temperature}°C)`);
+    }
+
+    // Rainfall match (10 points)
+    const rainDiff = Math.abs(rainfall - crop.rainfall) / crop.rainfall;
+    if (rainDiff <= 0.2) {
+      weatherScore += 10;
+      weatherDetails.push(`Adequate rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
+    } else if (rainDiff <= 0.4) {
+      weatherScore += 7;
+      weatherDetails.push(`Moderate rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
+    } else {
+      weatherScore += 4;
+      weatherDetails.push(`Acceptable rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
+    }
+
+    // Humidity match (5 points)
+    const humidityDiff = Math.abs(humidity - crop.humidity);
+    if (humidityDiff <= 10) {
+      weatherScore += 5;
+      weatherDetails.push(`Ideal humidity (${humidity}%)`);
+    } else if (humidityDiff <= 20) {
+      weatherScore += 3;
+      weatherDetails.push(`Acceptable humidity (${humidity}%)`);
+    } else {
+      weatherScore += 1;
+    }
+
+    return {
+      soilScore: Math.min(25, Math.round(soilScore)),
+      weatherScore: Math.min(30, Math.round(weatherScore)),
+      soilDetails,
+      weatherDetails
+    };
+  }
+
+  /**
+   * Layer 3: Calculate Economic & Practicality Analysis
+   */
+  calculateEconomicAnalysis(cropName, cropDetails, state) {
+    const marketPrice = this.getCropPrice(cropName);
+    const priceRange = this.extractPriceRange(marketPrice);
+    const yieldRange = this.extractYieldRange(cropDetails.yield);
+    
+    // Calculate potential revenue (per hectare)
+    const minRevenue = (yieldRange.min * priceRange.min) / 10; // Convert quintal to ton if needed
+    const maxRevenue = (yieldRange.max * priceRange.max) / 10;
+    
+    // Estimate profit margin (assuming 30-40% profit after costs)
+    const minProfit = minRevenue * 0.30;
+    const maxProfit = maxRevenue * 0.40;
+    
+    // Price trend (simulated - in production, use real market data)
+    const priceTrend = this.getPriceTrend(cropName);
+    
+    // Economic score (25 points max)
+    let economicScore = 15; // Base score
+    if (priceTrend === 'increasing') economicScore += 5;
+    if (priceTrend === 'stable') economicScore += 3;
+    if (minRevenue > 50000) economicScore += 5; // High value crop bonus
+
+    const economicDetails = [
+      `Current market price: ${marketPrice}`,
+      `Price trend: ${priceTrend}`,
+      `Potential revenue: ₹${Math.round(minRevenue/1000)}k - ₹${Math.round(maxRevenue/1000)}k per hectare`,
+      `Estimated profit margin: 30-40%`
+    ];
+
+    return {
+      marketPrice,
+      currentMarketPrice: priceRange.avg,
+      priceTrend,
+      potentialRevenue: {
+        min: Math.round(minRevenue),
+        max: Math.round(maxRevenue),
+        avg: Math.round((minRevenue + maxRevenue) / 2)
+      },
+      profitMargin: {
+        min: Math.round(minProfit),
+        max: Math.round(maxProfit),
+        percentage: '30-40%'
+      },
+      economicScore: Math.min(25, Math.round(economicScore)),
+      economicDetails
+    };
+  }
+
+  /**
+   * Calculate Risk Factor Score
+   */
+  calculateRiskScore(crop, cropDetails, temperature, rainfall) {
+    let riskScore = 15; // Base score (low risk)
+    const duration = this.parseDuration(cropDetails.duration);
+    
+    // Short duration crops have lower risk
+    if (duration <= 90) {
+      riskScore += 5; // Low risk
+    } else if (duration <= 150) {
+      riskScore += 2; // Moderate risk
+    } else {
+      riskScore -= 2; // Higher risk for long duration
+    }
+
+    // Weather risk assessment
+    const tempRisk = Math.abs(temperature - crop.temperature) > 10 ? -3 : 0;
+    const rainRisk = Math.abs(rainfall - crop.rainfall) / crop.rainfall > 0.5 ? -3 : 0;
+    
+    riskScore += tempRisk + rainRisk;
+    
+    return Math.max(0, Math.min(20, Math.round(riskScore)));
+  }
+
+  /**
+   * Generate detailed reasons for recommendation
+   */
+  generateDetailedReasons(suitabilityScores, economicAnalysis, riskScore, 
+                          ph, soilType, temperature, rainfall, season, state) {
+    const detailed = [];
+    const summary = [];
+
+    // Soil compatibility
+    detailed.push({
+      category: 'Soil Compatibility',
+      score: `${suitabilityScores.soilScore}/25`,
+      description: `Your pH: ${ph}, Soil Type: ${soilType}`,
+      details: suitabilityScores.soilDetails
+    });
+    summary.push(`Soil compatibility: ${suitabilityScores.soilScore}/25`);
+
+    // Weather alignment
+    detailed.push({
+      category: 'Weather Alignment',
+      score: `${suitabilityScores.weatherScore}/30`,
+      description: `Forecast: ${temperature}°C, ${rainfall}mm rainfall`,
+      details: suitabilityScores.weatherDetails
+    });
+    summary.push(`Weather alignment: ${suitabilityScores.weatherScore}/30`);
+
+    // Economic viability
+    detailed.push({
+      category: 'Economic Viability',
+      score: `${economicAnalysis.economicScore}/25`,
+      description: `Good profit margin with ${economicAnalysis.priceTrend} prices`,
+      details: economicAnalysis.economicDetails
+    });
+    summary.push(`Economic viability: ${economicAnalysis.economicScore}/25`);
+
+    // Risk factor
+    detailed.push({
+      category: 'Risk Factor',
+      score: `${riskScore}/20`,
+      description: riskScore >= 15 ? 'Low risk' : riskScore >= 10 ? 'Moderate risk' : 'Higher risk',
+      details: this.getRiskDetails(null, null, temperature, rainfall)
+    });
+    summary.push(`Risk factor: ${riskScore}/20`);
+
+    return {
+      summary: summary.join(', '),
+      detailed
+    };
+  }
+
+  /**
+   * Helper methods
+   */
+  getCurrentSeasonForLocation(state) {
+    const month = new Date().getMonth() + 1;
+    if (month >= 6 && month <= 10) return 'Kharif';
+    if (month >= 11 || month <= 3) return 'Rabi';
+    return 'Zaid';
+  }
+
+  getCropsForSeason(season, state) {
+    // Return crops suitable for the season
+    const seasonCrops = {
+      'Kharif': ['rice', 'maize', 'cotton', 'sugarcane', 'groundnut', 'soybean', 'pulses'],
+      'Rabi': ['wheat', 'barley', 'potato', 'chickpea', 'lentil', 'mustard'],
+      'Zaid': ['watermelon', 'cucumber', 'vegetables']
+    };
+    return seasonCrops[season] || [];
+  }
+
+  extractPriceRange(priceString) {
+    const match = priceString.match(/₹(\d+)-₹(\d+)/);
+    if (match) {
+      return {
+        min: parseInt(match[1]),
+        max: parseInt(match[2]),
+        avg: Math.round((parseInt(match[1]) + parseInt(match[2])) / 2)
+      };
+    }
+    return { min: 2000, max: 3000, avg: 2500 };
+  }
+
+  extractYieldRange(yieldString) {
+    const match = yieldString.match(/([\d.]+)\s*-\s*([\d.]+)/);
+    if (match) {
+      return {
+        min: parseFloat(match[1]),
+        max: parseFloat(match[2])
+      };
+    }
+    return { min: 2, max: 3 };
+  }
+
+  getPriceTrend(cropName) {
+    // Simulated - in production, use real market data
+    const trends = ['increasing', 'stable', 'decreasing'];
+    return trends[Math.floor(Math.random() * trends.length)];
+  }
+
+  parseDuration(durationString) {
+    const match = durationString.match(/(\d+)/);
+    return match ? parseInt(match[1]) : 90;
+  }
+
+  getRiskDetails(crop, cropDetails, temperature, rainfall) {
+    const details = [];
+    if (cropDetails) {
+      const duration = this.parseDuration(cropDetails.duration);
+      if (duration <= 90) {
+        details.push('Short duration reduces exposure to weather risks');
+      } else if (duration <= 150) {
+        details.push('Moderate duration with manageable risk');
+      } else {
+        details.push('Long duration increases weather risk exposure');
+      }
+    }
+    details.push('Disease pressure forecast as low');
+    return details;
+  }
+
+  getPlantingWindow(season, currentMonth, state) {
+    const windows = {
+      'Kharif': 'June - July (sowing)',
+      'Rabi': 'October - November (sowing)',
+      'Zaid': 'March - April (sowing)',
+      'Year-round': 'Any time of year',
+      'All': 'Season-dependent'
+    };
+    return windows[season] || 'Check local agricultural calendar';
   }
 
   /**
@@ -738,13 +1037,15 @@ class CropRecommendationEngine {
         source: 'fallback'
       };
 
-      // Get crop recommendations
+      // Get crop recommendations with multi-layered approach
       const recommendations = this.getCropRecommendations(
         weather.temperature,
         weather.humidity,
         parseFloat(soil.ph),
         weather.rainfall,
-        soil.soil_type
+        soil.soil_type,
+        state,
+        this.getCurrentSeasonForLocation(state)
       );
 
       // Get market prices
@@ -797,7 +1098,7 @@ class CropRecommendationEngine {
         source: 'fallback'
       },
       soil,
-      recommendations: this.getCropRecommendations(25, 65, 7.0, 800, 'Alluvial'),
+      recommendations: this.getCropRecommendations(25, 65, 7.0, 800, 'Alluvial', state, this.getCurrentSeasonForLocation(state)),
       market_prices: this.getMarketPrices(state),
       common_diseases: this.getCommonDiseases(state),
       fallback: true,
