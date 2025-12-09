@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+const { LocationAwareCropEngine } = require('./LocationAwareCropEngine');
 
 /**
  * Comprehensive Crop Recommendation Engine
@@ -329,7 +330,7 @@ class CropRecommendationEngine {
    */
   getCropRecommendations(temperature, humidity, ph, rainfall, soilType, state = null, season = null) {
     try {
-      const recommendations = [];
+    const recommendations = [];
       const currentSeason = season || this.getCurrentSeasonForLocation(state || 'Punjab');
       const currentDate = new Date();
       const month = currentDate.getMonth() + 1;
@@ -498,20 +499,20 @@ class CropRecommendationEngine {
     if (soilMatch) {
       soilScore += 15; // Soil type match
       soilDetails.push(`Ideal soil type (${soilType})`);
-    } else {
+      } else {
       soilScore += 5;
       soilDetails.push(`Acceptable soil type (${soilType})`);
-    }
+      }
 
     // pH match (10 points)
-    const phDiff = Math.abs(ph - crop.ph);
-    if (phDiff <= 0.5) {
+      const phDiff = Math.abs(ph - crop.ph);
+      if (phDiff <= 0.5) {
       soilScore += 10;
       soilDetails.push(`Optimal pH (Your pH: ${ph}, Required: ${crop.ph})`);
-    } else if (phDiff <= 1.0) {
+      } else if (phDiff <= 1.0) {
       soilScore += 7;
       soilDetails.push(`Suitable pH (Your pH: ${ph}, Required: ${crop.ph})`);
-    } else {
+      } else {
       soilScore += 3;
       soilDetails.push(`Acceptable pH (Your pH: ${ph}, Required: ${crop.ph})`);
     }
@@ -531,27 +532,27 @@ class CropRecommendationEngine {
     }
 
     // Rainfall match (10 points)
-    const rainDiff = Math.abs(rainfall - crop.rainfall) / crop.rainfall;
-    if (rainDiff <= 0.2) {
+      const rainDiff = Math.abs(rainfall - crop.rainfall) / crop.rainfall;
+      if (rainDiff <= 0.2) {
       weatherScore += 10;
       weatherDetails.push(`Adequate rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
-    } else if (rainDiff <= 0.4) {
+      } else if (rainDiff <= 0.4) {
       weatherScore += 7;
       weatherDetails.push(`Moderate rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
-    } else {
+      } else {
       weatherScore += 4;
       weatherDetails.push(`Acceptable rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
-    }
+      }
 
     // Humidity match (5 points)
-    const humidityDiff = Math.abs(humidity - crop.humidity);
-    if (humidityDiff <= 10) {
+      const humidityDiff = Math.abs(humidity - crop.humidity);
+      if (humidityDiff <= 10) {
       weatherScore += 5;
       weatherDetails.push(`Ideal humidity (${humidity}%)`);
-    } else if (humidityDiff <= 20) {
+      } else if (humidityDiff <= 20) {
       weatherScore += 3;
       weatherDetails.push(`Acceptable humidity (${humidity}%)`);
-    } else {
+      } else {
       weatherScore += 1;
     }
 
@@ -626,7 +627,7 @@ class CropRecommendationEngine {
       riskScore += 5; // Low risk
     } else if (duration <= 150) {
       riskScore += 2; // Moderate risk
-    } else {
+      } else {
       riskScore -= 2; // Higher risk for long duration
     }
 
@@ -1060,12 +1061,14 @@ class CropRecommendationEngine {
   }
 
   /**
-   * Get complete location data with recommendations
+   * Get complete location data with recommendations (enhanced with location-aware engine)
    */
-  async getLocationData(latitude, longitude, weatherData = null) {
+  async getLocationData(latitude, longitude, weatherData = null, state = null, region = null, country = 'India') {
     try {
-      // Get state from coordinates
-      const state = this.getStateFromCoords(latitude, longitude);
+      // Get state from coordinates if not provided
+      if (!state) {
+        state = this.getStateFromCoords(latitude, longitude);
+      }
 
       // Get soil data
       const soil = this.getSoilData(state);
@@ -1079,16 +1082,49 @@ class CropRecommendationEngine {
         source: 'fallback'
       };
 
-      // Get crop recommendations with multi-layered approach
-      const recommendations = this.getCropRecommendations(
-        weather.temperature,
-        weather.humidity,
-        parseFloat(soil.ph),
-        weather.rainfall,
-        soil.soil_type,
-        state,
-        this.getCurrentSeasonForLocation(state)
-      );
+      // Try location-aware recommendations first
+      let recommendations = [];
+      if (this.locationAwareEngine) {
+        try {
+          // Analyze location context
+          const locationContext = this.locationAwareEngine.analyzeLocation(
+            latitude, longitude, state, region || state, country
+          );
+
+          // Get location-specific recommendations
+          recommendations = this.locationAwareEngine.generateRecommendations(
+            locationContext,
+            soil,
+            weather,
+            null // marketData would be passed here
+          );
+
+          logger.info(`✅ Location-aware engine returned ${recommendations.length} recommendations for ${locationContext.region || state || 'unknown'}`);
+        } catch (locationError) {
+          logger.warn('Location-aware engine failed, using fallback:', locationError.message);
+          // Fallback to original method
+          recommendations = this.getCropRecommendations(
+            weather.temperature,
+            weather.humidity,
+            parseFloat(soil.ph),
+            weather.rainfall,
+            soil.soil_type,
+            state,
+            this.getCurrentSeasonForLocation(state)
+          );
+        }
+      } else {
+        // Use original method if location-aware engine not available
+        recommendations = this.getCropRecommendations(
+          weather.temperature,
+          weather.humidity,
+          parseFloat(soil.ph),
+          weather.rainfall,
+          soil.soil_type,
+          state,
+          this.getCurrentSeasonForLocation(state)
+        );
+      }
 
       // Get market prices
       const marketPrices = this.getMarketPrices(state);
