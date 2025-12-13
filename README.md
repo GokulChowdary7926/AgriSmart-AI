@@ -92,7 +92,7 @@ If you don't have these installed, you can download Node.js from [nodejs.org](ht
    ```bash
    ./START_SERVICES.sh
    ```
-   
+
    **Option B - Manual startup (two terminals):**
    
    Terminal 1 (Backend):
@@ -100,7 +100,7 @@ If you don't have these installed, you can download Node.js from [nodejs.org](ht
    cd backend
    npm start
    ```
-   
+
    Terminal 2 (Frontend):
    ```bash
    cd frontend
@@ -162,7 +162,7 @@ If you see "Can't connect to server" in your browser:
 If you're getting MongoDB connection errors:
 
 1. **Confirm MongoDB is installed and running:**
-   ```bash
+```bash
    mongosh --eval "db.version()"
    ```
    This should return a version number if MongoDB is working.
@@ -208,6 +208,312 @@ All application logs are stored in the `backend/logs/` directory:
 - **`api.log`:** Detailed logs of all API requests and responses
 
 These logs are helpful when debugging issues or understanding how the application is behaving. In production, you can configure log rotation to prevent these files from growing too large.
+
+## Machine Learning Models
+
+The platform uses several machine learning models to provide intelligent recommendations and predictions. These models are trained on agricultural datasets and can be updated or retrained as needed.
+
+### Disease Detection Model
+
+**Type:** Convolutional Neural Network (CNN) using TensorFlow.js  
+**Purpose:** Identifies plant diseases from uploaded images
+
+**Architecture:**
+- **Input:** 224x224x3 RGB images (preprocessed and normalized)
+- **Layers:**
+  - Convolutional layers with 32, 64, and 128 filters
+  - Batch normalization and max pooling
+  - Dropout layers (0.25-0.5) to prevent overfitting
+  - Dense layers (512 and 256 neurons)
+  - Output layer with softmax activation for multi-class classification
+- **Output:** Probability distribution over 50+ disease classes
+
+**Training:**
+- Uses comprehensive disease dataset with images of various crop diseases
+- Supports both TensorFlow (primary) and scikit-learn Random Forest (fallback)
+- Model files stored in `ml-models/disease-detection/trained/`
+- Can detect diseases in crops like Rice, Wheat, Maize, Tomato, Potato, Cotton, Sugarcane, Mango, and more
+
+**Usage:**
+The model processes uploaded images through preprocessing (resize, normalize), extracts features using CNN layers, and classifies the disease. Results include confidence scores, disease details, and treatment recommendations.
+
+### Crop Recommendation Model
+
+**Type:** XGBoost Classifier (with Random Forest fallback)  
+**Purpose:** Suggests optimal crops based on location, soil, and weather conditions
+
+**Features Used:**
+- Soil nutrients (Nitrogen, Phosphorus, Potassium)
+- Temperature and humidity
+- Soil pH level
+- Rainfall data
+- Location-specific factors (state, district, season)
+
+**Model Details:**
+- **Algorithm:** XGBoost with 100 estimators, max depth 6, learning rate 0.1
+- **Fallback:** Random Forest Classifier (100 trees, max depth 20)
+- **Preprocessing:** StandardScaler for feature normalization, LabelEncoder for crop names
+- **Output:** Ranked list of recommended crops with confidence scores
+
+**Training Data:**
+- Historical crop data with soil and weather conditions
+- Regional farming practices and seasonal patterns
+- Market demand and profitability factors
+
+**Location:** Model files in `backend/services/ml/` and `ml-models/scripts/`
+
+### Market Price Prediction Model
+
+**Type:** Time Series Forecasting Model  
+**Purpose:** Predicts future commodity prices based on historical trends
+
+**Features:**
+- Historical price data
+- Seasonal patterns
+- Market arrival quantities
+- Regional variations
+- Government procurement data
+
+**Usage:** Helps farmers decide the best time to sell their produce by predicting price trends.
+
+### Weather Prediction Model
+
+**Type:** Time Series and Regression Model  
+**Purpose:** Provides accurate weather forecasts for farming decisions
+
+**Features:**
+- Historical weather patterns
+- Seasonal variations
+- Regional climate data
+- Short-term and long-term forecasts
+
+**Integration:** Works with OpenWeatherMap API to provide real-time and forecasted weather data.
+
+### Model Registry System
+
+The application includes a **Model Registry Service** that manages all ML models:
+
+- **Automatic Discovery:** Scans common model directories
+- **Validation:** Checks model integrity and file structure
+- **Versioning:** Tracks model versions and metadata
+- **Fallback Support:** Automatically switches to fallback models if primary models fail
+- **Model Types Supported:**
+  - TensorFlow.js models (`.json` + weight files)
+  - PyTorch models (`.pth`, `.pt` files)
+  - XGBoost models (`.joblib`, `.pkl` files)
+  - Scikit-learn models (`.joblib`, `.pkl` files)
+
+**Model Storage:**
+- Primary location: `ml-models/disease-detection/trained/`
+- Registry file: `backend/models/registry.json`
+- Models can be loaded dynamically at runtime
+
+### Training Your Own Models
+
+To train or retrain models:
+
+1. **Disease Detection:**
+   ```bash
+   cd ml-models/disease-detection
+   python train_comprehensive.py
+   ```
+
+2. **Crop Recommendation:**
+   ```bash
+   cd ml-models/scripts
+   python train_crop_recommendation.py
+   ```
+
+3. **Market Prediction:**
+   ```bash
+   python train_market_prediction.py
+   ```
+
+4. **Weather Prediction:**
+   ```bash
+   python train_weather_prediction.py
+   ```
+
+**Requirements:** Python 3.8+, TensorFlow, scikit-learn, XGBoost, pandas, numpy
+
+## Database Structure
+
+The application uses **MongoDB** as its primary database, storing all user data, agricultural information, and application state. The database is designed to be scalable and efficient for handling large amounts of agricultural data.
+
+### Core Collections
+
+#### Users Collection
+Stores user accounts and authentication information:
+
+**Schema Fields:**
+- `name` - User's full name
+- `username` - Unique username (lowercase, alphanumeric)
+- `email` - Unique email address
+- `phone` - Unique phone number (10 digits, Indian format)
+- `password` - Hashed password (bcrypt)
+- `role` - User role: 'farmer', 'expert', 'admin', 'agent', 'seller', 'dealer'
+- `farmerProfile` - Detailed farmer information:
+  - Location (state, district, village, pincode, coordinates)
+  - Farm size (in acres/hectares)
+  - Soil type and characteristics
+  - Irrigation type
+  - Crops grown
+- `language` - Preferred language (en, hi, te, ta, mr, bn, gu, kn, ml, pa)
+- `isVerified` - Email/phone verification status
+- `createdAt`, `updatedAt` - Timestamps
+
+**Indexes:** Created on `email`, `username`, `phone` for fast lookups
+
+#### Crops Collection
+Comprehensive database of agricultural crops:
+
+**Schema Fields:**
+- `name` - Crop name
+- `type` - Category: 'cereal', 'vegetable', 'fruit', 'legume', 'tuber', 'cash-crop', 'fodder'
+- `variety` - Specific variety name
+- `scientificName` - Botanical name
+- `plantingDate` - Recommended planting date
+- `area` - Area information (value and unit)
+- `status` - Growth stage: 'planned', 'planted', 'growing', 'flowering', 'fruiting', 'harvested', 'failed'
+- `healthScore` - Health rating (0-100)
+- `location` - Geographic information
+- `cultivationDetails` - Growing instructions, requirements
+- `season` - Suitable seasons: 'kharif', 'rabi', 'zaid'
+
+**Contains:** Information on 75+ crops including Rice, Wheat, Maize, Tomato, Potato, Cotton, Sugarcane, Mango, and many more
+
+#### Diseases Collection
+Database of plant diseases and pests:
+
+**Schema Fields:**
+- `name` - Disease/pest name
+- `crop` - Associated crop
+- `type` - 'disease', 'pest', or 'deficiency'
+- `symptoms` - Array of symptoms
+- `causes` - Root causes
+- `organicControl` - Organic treatment methods
+- `chemicalControl` - Chemical treatment options
+- `prevention` - Preventive measures
+- `severity` - 'low', 'medium', 'high', 'critical'
+- `images` - Reference images
+- `treatmentPlan` - Detailed treatment instructions
+
+**Coverage:** 50+ common crop diseases with comprehensive treatment information
+
+#### Chat Sessions Collection
+Stores user chat conversations with the AI assistant:
+
+**Schema Fields:**
+- `sessionId` - Unique session identifier
+- `userId` - Reference to user
+- `title` - Session title (auto-generated from first message)
+- `messageCount` - Number of messages
+- `lastMessage` - Preview of last message
+- `createdAt`, `updatedAt` - Timestamps
+
+#### Chat Messages Collection
+Individual messages within chat sessions:
+
+**Schema Fields:**
+- `sessionId` - Reference to chat session
+- `userId` - Message sender
+- `role` - 'user' or 'assistant'
+- `content` - Message text
+- `intent` - Detected intent (crop_advice, disease_diagnosis, etc.)
+- `data` - Additional metadata (disease detection results, crop recommendations, etc.)
+- `timestamp` - Message creation time
+
+#### Market Prices Collection
+Real-time and historical commodity prices:
+
+**Schema Fields:**
+- `crop` - Crop name
+- `market` - Market name
+- `district` - District name
+- `state` - State name
+- `minPrice`, `maxPrice`, `modalPrice` - Price range
+- `arrivalQuantity` - Quantity arrived at market
+- `date` - Price date
+- `source` - Data source
+
+**Indexes:** On `crop`, `state`, `district`, `date` for efficient queries
+
+#### Weather Data Collection
+Stores weather information and forecasts:
+
+**Schema Fields:**
+- `location` - Geographic coordinates and address
+- `temperature` - Current temperature
+- `humidity` - Humidity percentage
+- `rainfall` - Rainfall amount
+- `windSpeed` - Wind speed
+- `condition` - Weather condition description
+- `forecast` - Forecast data (array of future predictions)
+- `date` - Date of record
+- `source` - Data source
+
+#### Government Schemes Collection
+Information about agricultural government schemes:
+
+**Schema Fields:**
+- `schemeId` - Unique scheme identifier
+- `name` - Scheme name (multi-language)
+- `description` - Detailed description
+- `benefits` - Benefits provided
+- `eligibility` - Eligibility criteria
+- `applicationProcess` - How to apply
+- `documentsRequired` - Required documents
+- `websiteUrl` - Official website
+- `helpline` - Contact information
+- `status` - 'active' or 'inactive'
+- `startDate`, `endDate` - Scheme duration
+
+#### Analytics Collection
+User analytics and insights:
+
+**Schema Fields:**
+- `userId` - User reference
+- `date` - Analytics date
+- `metrics` - Various metrics (crops viewed, diseases detected, etc.)
+- `insights` - Generated insights
+- `recommendations` - Personalized recommendations
+
+### Database Relationships
+
+The database uses MongoDB's document references to establish relationships:
+
+- **Users → Farms → Fields → Crops:** Hierarchical structure for managing user farms
+- **Users → Chat Sessions → Chat Messages:** One-to-many relationship for conversations
+- **Crops → Diseases:** Many-to-many relationship (crops can have multiple diseases)
+- **Users → Disease Detections:** Tracks user's disease detection history
+- **Crops → Market Prices:** Links crops to their market prices
+
+### Data Storage Strategy
+
+- **JSON Documents:** Flexible schema allows storing complex nested data
+- **Indexes:** Strategic indexes on frequently queried fields for performance
+- **Embedded vs Referenced:** 
+  - Small, frequently accessed data is embedded (e.g., user profile)
+  - Large or shared data is referenced (e.g., crop details, disease information)
+- **Timestamps:** Automatic `createdAt` and `updatedAt` fields on most collections
+
+### Database Connection
+
+**Connection String Format:**
+```
+mongodb://localhost:27017/agrismart
+```
+
+**Configuration:**
+- Default database name: `agrismart`
+- Connection pooling enabled
+- Automatic reconnection on connection loss
+- Connection timeout: 30 seconds
+
+**Backup Recommendations:**
+- Regular MongoDB backups recommended for production
+- Use `mongodump` for creating backups
+- Store backups securely, especially user data
 
 ## Technology Stack
 
