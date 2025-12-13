@@ -5,7 +5,6 @@ const Crop = require('../models/Crop');
 const Disease = require('../models/Disease');
 const logger = require('../utils/logger');
 
-// GET /api/alerts - Fixed 404 error (public route)
 router.get('/', async (req, res) => {
   try {
     const userId = req.user?._id || req.user?.id;
@@ -19,7 +18,6 @@ router.get('/', async (req, res) => {
     });
   } catch (error) {
     logger.error('Alerts error:', error);
-    // Return empty alerts array instead of error for better UX
     res.json({
       success: true,
       data: [
@@ -41,21 +39,17 @@ async function generateAlerts(userId, state, district) {
   const alerts = [];
   const now = new Date();
   
-  // Weather-based alerts
   const weatherAlerts = await getWeatherAlerts(state, district);
   alerts.push(...weatherAlerts);
   
-  // Disease outbreak alerts
   const diseaseAlerts = await getDiseaseAlerts(state, district);
   alerts.push(...diseaseAlerts);
   
-  // Crop-specific alerts
   if (userId) {
     const userCropAlerts = await getUserCropAlerts(userId);
     alerts.push(...userCropAlerts);
   }
   
-  // Market price alerts
   const marketAlerts = await getMarketAlerts();
   alerts.push(...marketAlerts);
   
@@ -65,7 +59,6 @@ async function generateAlerts(userId, state, district) {
 async function getWeatherAlerts(state, district) {
   const alerts = [];
   
-  // Mock weather data - integrate with actual weather API
   alerts.push({
     id: 'weather_1',
     type: 'weather',
@@ -94,7 +87,6 @@ async function getWeatherAlerts(state, district) {
 async function getDiseaseAlerts(state, district) {
   const alerts = [];
   
-  // Check for common diseases in the region
   try {
     const commonDiseases = await Disease.find({ 
       severityLevel: { $gte: 4 } 
@@ -123,8 +115,6 @@ async function getDiseaseAlerts(state, district) {
 async function getUserCropAlerts(userId) {
   const alerts = [];
   
-  // Get user's crops and generate alerts
-  // This would require User model integration
   alerts.push({
     id: 'crop_1',
     type: 'crop',

@@ -48,6 +48,9 @@ import {
   CalendarToday as CalendarIcon
 } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import logger from '../services/logger';
+import DataQualityIndicator from '../components/common/DataQualityIndicator';
+import LoadingState from '../components/common/LoadingState';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../services/api';
 
@@ -58,7 +61,6 @@ export default function Market() {
   const [tabValue, setTabValue] = useState(0);
   const [expandedUpdates, setExpandedUpdates] = useState({});
   
-  // Filter states
   const [selectedState, setSelectedState] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [timePeriod, setTimePeriod] = useState('all'); // 'all', '7days', '30days', 'custom'
@@ -66,7 +68,6 @@ export default function Market() {
   const [comparePeriod, setComparePeriod] = useState('7days'); // Period to compare with
   const [showFilters, setShowFilters] = useState(false);
 
-  // Read commodity from URL params on mount
   useEffect(() => {
     const commodityParam = searchParams.get('commodity');
     if (commodityParam) {
@@ -83,7 +84,6 @@ export default function Market() {
     }
   });
 
-  // Get unique states from prices for filter dropdown
   const { data: allPricesData } = useQuery({
     queryKey: ['market', 'prices', 'all'],
     queryFn: async () => {
@@ -99,9 +99,7 @@ export default function Market() {
     staleTime: 10 * 60 * 1000 // Cache for 10 minutes
   });
 
-  // All Indian States and Union Territories
   const allIndianStates = [
-    // States
     'Andhra Pradesh',
     'Arunachal Pradesh',
     'Assam',
@@ -130,7 +128,6 @@ export default function Market() {
     'Uttar Pradesh',
     'Uttarakhand',
     'West Bengal',
-    // Union Territories
     'Andaman and Nicobar Islands',
     'Chandigarh',
     'Dadra and Nagar Haveli and Daman and Diu',
@@ -141,7 +138,6 @@ export default function Market() {
     'Puducherry'
   ];
 
-  // Extract unique states from price data and combine with all Indian states
   const availableStates = useMemo(() => {
     const statesFromData = new Set();
     if (allPricesData) {
@@ -153,23 +149,17 @@ export default function Market() {
       });
     }
     
-    // Combine states from data with all Indian states, prioritizing data states
     const combinedStates = new Set([...allIndianStates, ...statesFromData]);
     return Array.from(combinedStates).sort();
   }, [allPricesData]);
 
-  // Fetch prices with filters
   const { data: prices, isLoading: pricesLoading } = useQuery({
     queryKey: ['market', 'prices', commodity, selectedState, selectedDate, timePeriod],
     queryFn: async () => {
       try {
-        // Use a high limit to ensure we get prices for all daily-use commodities
-        // With 70+ commodities and multiple markets per commodity, we need at least 5000 entries
         const params = { limit: 5000 };
         if (commodity) {
           params.commodity = commodity;
-          // When commodity is selected without state, show prices from all states
-          // Only filter by state if explicitly selected
           if (selectedState) params.state = selectedState;
         } else if (selectedState) {
           params.state = selectedState;
@@ -185,7 +175,6 @@ export default function Market() {
           return false;
         });
 
-        // Apply time period filter
         let filteredPrices = actualPrices;
         if (timePeriod !== 'all') {
           const now = new Date();
@@ -202,11 +191,9 @@ export default function Market() {
           }
         }
 
-        // Apply state filter on frontend (always apply as backup, even if API filtered)
         if (selectedState) {
           filteredPrices = filteredPrices.filter(item => {
             const itemState = item.state || item.market?.state || item.market?.location || '';
-            // Match exact state name or partial match
             const stateLower = selectedState.toLowerCase();
             const itemStateLower = itemState.toLowerCase();
             return itemStateLower === stateLower || 
@@ -215,10 +202,18 @@ export default function Market() {
           });
         }
 
-        console.log(`Fetched ${filteredPrices.length} prices (filtered from ${actualPrices.length})`);
+        logger.info('Market prices fetched', { 
+          total: actualPrices.length, 
+          filtered: filteredPrices.length,
+          state: selectedState,
+          district: selectedDistrict
+        });
         return filteredPrices;
       } catch (error) {
-        console.error('Error fetching prices:', error);
+        logger.error('Error fetching market prices', error, { 
+          state: selectedState,
+          district: selectedDistrict
+        });
         return [];
       }
     },
@@ -227,17 +222,13 @@ export default function Market() {
     staleTime: 2 * 60 * 1000
   });
 
-  // Aggregate prices by commodity when no state filter is applied
   const aggregatedPrices = useMemo(() => {
     if (!prices || prices.length === 0) return [];
     
-    // If state filter is applied, return empty (we'll use prices directly)
-    // If commodity is selected but no state, show detailed prices from all states (don't aggregate)
     if (selectedState || commodity) {
       return [];
     }
     
-    // Aggregate by commodity: calculate average price per commodity
     const commodityMap = new Map();
     
     prices.forEach(price => {
@@ -270,7 +261,6 @@ export default function Market() {
       }
     });
     
-    // Convert to array with calculated averages
     return Array.from(commodityMap.values()).map(data => {
       const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length;
       const avgChange = data.priceChanges.length > 0
@@ -292,31 +282,27 @@ export default function Market() {
     }).sort((a, b) => a.commodity.localeCompare(b.commodity));
   }, [prices, selectedState]);
 
-  // Fetch comparison data if compare mode is enabled (must be defined before aggregatedComparePrices)
   const { data: comparePrices } = useQuery({
     queryKey: ['market', 'prices', 'compare', commodity, selectedState, comparePeriod],
     queryFn: async () => {
       if (!compareMode) return null;
       
       try {
-        // Use a high limit to ensure we get prices for all commodities
         const params = { limit: 5000 };
         if (commodity) params.commodity = commodity;
-        // Don't filter by state when commodity is selected - show all states
-        // Only filter by state if explicitly selected
         if (selectedState) params.state = selectedState;
         
       const response = await api.get('/market/prices', { params });
         const data = response.data.data || [];
         const actualPrices = data.filter(item => item.price || (item.commodity && item.market));
 
-        // For comparison, we'll use all available prices and aggregate by commodity
-        // The date filtering is less strict since we're comparing averages
-        // If period is specified, we can optionally filter, but for now use all data
-        // This ensures we have comparison data even if exact date matching fails
         return actualPrices;
       } catch (error) {
-        console.error('Error fetching compare prices:', error);
+        logger.error('Error fetching compare prices', error, { 
+          commodity,
+          state: selectedState,
+          period: comparePeriod
+        });
         return [];
       }
     },
@@ -324,13 +310,11 @@ export default function Market() {
     staleTime: 5 * 60 * 1000
   });
 
-  // Aggregate compare prices by commodity (same logic as aggregatedPrices)
   const aggregatedComparePrices = useMemo(() => {
     if (!comparePrices || !Array.isArray(comparePrices) || comparePrices.length === 0) {
       return new Map();
     }
     
-    // Aggregate by commodity: calculate average price per commodity
     const commodityMap = new Map();
     
     comparePrices.forEach(price => {
@@ -339,7 +323,6 @@ export default function Market() {
       
       if (!priceValue || isNaN(priceValue)) return;
       
-      // Convert from quintal to kg if needed
       let normalizedPrice = priceValue;
       if (typeof price.price === 'object' && price.price.unit === 'quintal') {
         normalizedPrice = priceValue / 100;
@@ -356,7 +339,6 @@ export default function Market() {
       commodityData.prices.push(normalizedPrice);
     });
     
-    // Convert to Map with calculated averages
     const aggregatedMap = new Map();
     commodityMap.forEach((data, commodityName) => {
       const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length;
@@ -378,21 +360,17 @@ export default function Market() {
     enabled: !!selectedCommodity
   });
 
-  // Fetch market updates
   const { data: marketUpdates, isLoading: marketUpdatesLoading } = useQuery({
     queryKey: ['market', 'updates'],
     queryFn: async () => {
       try {
-        // Try to get market-specific alerts/updates
         const response = await api.get('/alerts');
         const allAlerts = response.data.data || [];
-        // Filter for market-related updates
         const marketAlerts = allAlerts.filter(alert => {
           const type = (alert.type || '').toLowerCase();
           const title = (alert.title || alert.message || '').toLowerCase();
           const message = (alert.message || '').toLowerCase();
           
-          // Market-related keywords
           const marketKeywords = ['market', 'price', 'commodity', 'mandi', 'trading', 'export', 'import', 'demand', 'supply', 'harvest', 'procurement', 'msp', 'minimum support price'];
           
           return type === 'market' || 
@@ -402,17 +380,15 @@ export default function Market() {
                  );
         });
         
-        // Always return mock updates as fallback/primary source
         const mockUpdates = getMockMarketUpdates();
         
-        // Combine real alerts with mock updates if real alerts exist
         if (marketAlerts.length > 0) {
           return [...marketAlerts, ...mockUpdates].slice(0, 10); // Limit to 10 updates
         }
         
         return mockUpdates;
       } catch (error) {
-        console.error('Error fetching market updates:', error);
+        logger.error('Error fetching market updates', error);
         return getMockMarketUpdates();
       }
     },
@@ -473,7 +449,6 @@ export default function Market() {
   const handleCommoditySelect = (comm) => {
     setCommodity(comm);
     setSelectedCommodity(comm);
-    // Update URL params when commodity is selected
     if (comm) {
       setSearchParams({ commodity: comm });
     } else {
@@ -524,7 +499,6 @@ export default function Market() {
         Track commodity prices, market trends, and latest updates
       </Typography>
 
-      {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
         <Tabs 
           value={tabValue} 
@@ -536,7 +510,6 @@ export default function Market() {
         </Tabs>
       </Paper>
 
-      {/* Prices & Trends Tab */}
       {tabValue === 0 && (
         <>
       <Paper sx={{ p: 3, mb: 3 }}>
@@ -717,6 +690,17 @@ export default function Market() {
                 />
               )}
             </Box>
+            
+            {/* Data Quality Indicator */}
+            {prices && prices._quality && (
+              <Box sx={{ mt: 2 }}>
+                <DataQualityIndicator 
+                  data={prices}
+                  showDetails={true}
+                  onRefresh={() => window.location.reload()}
+                />
+              </Box>
+            )}
       </Paper>
 
       {selectedCommodity && trends && (
@@ -801,11 +785,15 @@ export default function Market() {
         </Paper>
       )}
 
-      {pricesLoading ? (
-        <Box display="flex" justifyContent="center" py={4}>
-          <CircularProgress />
-        </Box>
-          ) : ((selectedState || commodity) ? prices : aggregatedPrices) && ((selectedState || commodity) ? prices.length > 0 : aggregatedPrices.length > 0) ? (
+      <LoadingState
+        isLoading={pricesLoading}
+        error={null}
+        retry={() => window.location.reload()}
+        dataLength={((selectedState || commodity) ? prices : aggregatedPrices)?.length || 0}
+        type="table"
+        emptyMessage="No market prices available for the selected filters"
+      >
+      {((selectedState || commodity) ? prices : aggregatedPrices) && ((selectedState || commodity) ? prices.length > 0 : aggregatedPrices.length > 0) ? (
             <>
               <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                 <Box>
@@ -842,7 +830,6 @@ export default function Market() {
                 />
               </Box>
               
-              {/* Comparison Summary */}
               {compareMode && comparePrices && prices && (
                 <Paper sx={{ p: 2, mb: 2, bgcolor: 'background.paper' }}>
                   <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
@@ -951,7 +938,6 @@ export default function Market() {
             </TableHead>
             <TableBody>
                     {(() => {
-                      // Get the data to display
                       const dataToShow = (selectedState || commodity) ? (prices || []) : (aggregatedPrices || []);
                       
                       if (!dataToShow || dataToShow.length === 0) {
@@ -966,19 +952,13 @@ export default function Market() {
                         );
                       }
                       
-                      // Filter the data
                       let filteredData = dataToShow.filter(item => {
-                        // Filter out invalid entries
                         if (!item || (!item.commodity && !item.name)) return false;
-                        // If commodity is selected, only show prices for that commodity from all states
-                        // Backend already filters by commodity, but we do a case-insensitive check here as backup
                         if (commodity && !selectedState) {
                           const itemCommodity = item.commodity || item.name || '';
                           if (!itemCommodity) return false;
-                          // Use case-insensitive matching - backend should have already filtered, but be lenient
                           const itemCommodityLower = itemCommodity.toLowerCase().trim();
                           const commodityLower = commodity.toLowerCase().trim();
-                          // Match exact or if commodity name contains the search term
                           return itemCommodityLower === commodityLower || 
                                  itemCommodityLower.includes(commodityLower) ||
                                  commodityLower.includes(itemCommodityLower);
@@ -986,15 +966,6 @@ export default function Market() {
                         return true;
                       });
                       
-                      // Debug: Log filtered data when commodity is selected
-                      if (commodity && !selectedState) {
-                        console.log(`[Market] Commodity: ${commodity}, Filtered data: ${filteredData.length} items`);
-                        if (filteredData.length > 0) {
-                          console.log(`[Market] First item:`, filteredData[0]);
-                        }
-                      }
-                      
-                      // Sort by state, then by market for better organization
                       if (commodity && !selectedState && filteredData.length > 0) {
                         filteredData.sort((a, b) => {
                           const stateA = (a.state || a.market?.state || '').toLowerCase();
@@ -1019,33 +990,44 @@ export default function Market() {
                       }
                       
                       return filteredData.map((item, index) => {
-                        // If state filter or commodity is selected, show detailed prices from all states
                         if (selectedState || commodity) {
                           const price = item;
-                          // Handle different data structures
                           const itemCommodity = price.commodity || price.name || 'Unknown';
                           const marketName = price.market?.name || price.market || price.location?.name || '-';
                           const marketLocation = price.market?.location || price.location?.city || price.state || '-';
                           
-                          // Handle price - could be object with value or direct number
                           let priceValue = null;
                           let priceUnit = 'kg';
+                          let pricePerKg = null;
+                          let pricePerTon = null;
+                          
                           if (price.price) {
                             if (typeof price.price === 'object') {
-                              priceValue = price.price.value || price.price;
+                              pricePerKg = price.price.perKg || price.price.value || price.price;
+                              pricePerTon = price.price.perTon || (pricePerKg ? pricePerKg * 1000 : null);
+                              priceValue = pricePerKg;
                               priceUnit = price.price.unit || 'kg';
                             } else {
                               priceValue = price.price;
+                              pricePerKg = priceValue;
+                              pricePerTon = priceValue * 1000;
                             }
                           }
                           
-                          // Convert from quintal to kg if needed
                           if (priceUnit === 'quintal' && priceValue) {
                             priceValue = priceValue / 100;
+                            pricePerKg = priceValue;
+                            pricePerTon = priceValue * 1000;
                             priceUnit = 'kg';
                           }
                           
-                          // Find matching price in comparison data
+                          if (pricePerKg && !pricePerTon) {
+                            pricePerTon = pricePerKg * 1000;
+                          }
+                          if (pricePerTon && !pricePerKg) {
+                            pricePerKg = pricePerTon / 1000;
+                          }
+                          
                           let comparePriceValue = null;
                           if (compareMode && comparePrices) {
                             const match = comparePrices.find(cp => 
@@ -1066,7 +1048,6 @@ export default function Market() {
                             }
                           }
                           
-                          // Calculate price difference
                           const priceDifference = (priceValue && comparePriceValue !== null) 
                             ? priceValue - comparePriceValue 
                             : null;
@@ -1074,7 +1055,6 @@ export default function Market() {
                             ? ((priceDifference / comparePriceValue) * 100)
                             : null;
                           
-                          // Handle price change - ensure it's always a number
                           let priceChange = 0;
                           if (price.priceChange) {
                             if (typeof price.priceChange === 'object') {
@@ -1083,10 +1063,8 @@ export default function Market() {
                               priceChange = price.priceChange;
                             }
                           }
-                          // Ensure it's a number
                           priceChange = typeof priceChange === 'number' ? priceChange : 0;
                           
-                          // Handle date
                           const dateStr = price.date || price.recordedAt || price.timestamp || new Date().toISOString();
                           const displayDate = new Date(dateStr).toLocaleDateString();
                           
@@ -1118,22 +1096,25 @@ export default function Market() {
                               </TableCell>
                             <TableCell>{marketName}</TableCell>
                   <TableCell>
-                              {priceValue && typeof priceValue === 'number' && !isNaN(priceValue) ? (
+                              {pricePerKg && typeof pricePerKg === 'number' && !isNaN(pricePerKg) ? (
                                 <>
                                   <Typography variant="body1" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                                    ₹{priceValue.toFixed(2)} / {priceUnit}
+                                    ₹{pricePerKg.toFixed(2)} / kg
                                   </Typography>
-                                  {price.price?.originalValue && price.price?.originalUnit && price.price?.originalUnit !== priceUnit && (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                                      (₹{typeof price.price.originalValue === 'number' ? price.price.originalValue.toFixed(2) : price.price.originalValue} / {price.price.originalUnit})
+                                  <Typography variant="body2" sx={{ fontWeight: 500, color: 'success.main', mt: 0.5 }}>
+                                    ₹{pricePerTon ? pricePerTon.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (pricePerKg * 1000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} / ton
+                                  </Typography>
+                                  {price.price?.originalValue && price.price?.originalUnit && price.price?.originalUnit !== 'kg' && (
+                                    <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: 'italic', mt: 0.5 }}>
+                                      (Original: ₹{typeof price.price.originalValue === 'number' ? price.price.originalValue.toFixed(2) : price.price.originalValue} / {price.price.originalUnit})
                                     </Typography>
                                   )}
                                 </>
                               ) : (
                                 <Typography variant="body2" color="text.secondary">
                                   N/A
-                      </Typography>
-                    )}
+                                </Typography>
+                              )}
                   </TableCell>
                             {compareMode && (
                               <TableCell>
@@ -1206,15 +1187,12 @@ export default function Market() {
                 </TableRow>
                         );
                         } else {
-                          // Show aggregated data (no state filter)
                           const aggregated = item;
                           
-                          // Get compare price for this commodity
                           const comparePriceValue = compareMode && aggregatedComparePrices.has(aggregated.commodity)
                             ? aggregatedComparePrices.get(aggregated.commodity)
                             : null;
                           
-                          // Calculate price difference
                           const priceDifference = (aggregated.averagePrice && comparePriceValue !== null) 
                             ? aggregated.averagePrice - comparePriceValue 
                             : null;
@@ -1323,15 +1301,11 @@ export default function Market() {
           </Table>
         </TableContainer>
             </>
-      ) : (
-        <Alert severity="info">
-              No market prices available at the moment. Please try again later.
-        </Alert>
-          )}
+      ) : null}
+      </LoadingState>
         </>
       )}
 
-      {/* Market Updates Tab */}
       {tabValue === 1 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}

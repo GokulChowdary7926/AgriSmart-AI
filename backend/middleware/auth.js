@@ -2,10 +2,8 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 
-// Authenticate token middleware
 const authenticateToken = async (req, res, next) => {
   try {
-    // Get token from header
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -16,10 +14,8 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
 
-    // Get user from database
     const user = await User.findById(decoded.userId).select('-password');
     
     if (!user) {
@@ -29,7 +25,6 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    // Attach user to request
     req.user = user;
     next();
   } catch (error) {
@@ -56,7 +51,6 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// Authorize middleware (check user role)
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -77,7 +71,6 @@ const authorize = (...roles) => {
   };
 };
 
-// Alias for backward compatibility
 const authenticate = authenticateToken;
 
 module.exports = {

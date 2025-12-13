@@ -5,7 +5,6 @@ const cache = require('../utils/cache').getInstance();
 const logger = require('../utils/logger');
 
 class LanguageController {
-  // Initialize languages (admin only)
   static async initializeLanguages(req, res) {
     try {
       if (req.user.role !== 'admin') {
@@ -18,7 +17,6 @@ class LanguageController {
       await Language.initializeLanguages();
       await Translation.initializeCommonTranslations();
       
-      // Clear cache
       await cache.del('supported_languages');
       
       res.json({
@@ -34,7 +32,6 @@ class LanguageController {
     }
   }
   
-  // Get all translations (paginated)
   static async getTranslations(req, res) {
     try {
       const { 
@@ -85,7 +82,6 @@ class LanguageController {
     }
   }
   
-  // Create or update translation
   static async updateTranslation(req, res) {
     try {
       if (req.user.role !== 'admin') {
@@ -120,7 +116,6 @@ class LanguageController {
         { upsert: true, new: true, runValidators: true }
       );
       
-      // Clear relevant cache
       await cache.delPattern(`translation:${key}:*`);
       await cache.delPattern(`module_translations:${module}:*`);
       
@@ -138,7 +133,6 @@ class LanguageController {
     }
   }
   
-  // Delete translation
   static async deleteTranslation(req, res) {
     try {
       if (req.user.role !== 'admin') {
@@ -168,7 +162,6 @@ class LanguageController {
       
       await translation.deleteOne();
       
-      // Clear cache
       await cache.delPattern(`translation:${translation.key}:*`);
       await cache.delPattern(`module_translations:${translation.module}:*`);
       
@@ -185,7 +178,6 @@ class LanguageController {
     }
   }
   
-  // Get missing translations
   static async getMissingTranslations(req, res) {
     try {
       const { language } = req.query;
@@ -220,7 +212,6 @@ class LanguageController {
     }
   }
   
-  // Get module translations for frontend
   static async getModuleTranslations(req, res) {
     try {
       const { module } = req.params;

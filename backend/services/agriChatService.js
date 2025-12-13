@@ -4,16 +4,11 @@ const Message = require('../models/Message');
 const logger = require('../utils/logger');
 
 class AgriChatService {
-  /**
-   * Find nearby sellers and dealers based on user's location
-   */
   async findNearbySellersDealers(userId, radius = 50000, limit = 50) {
     try {
-      // Handle both string and ObjectId
       const user = await User.findById(userId);
       if (!user) {
         logger.warn(`User ${userId} not found`);
-        // Return empty array instead of throwing error
         return [];
       }
 
@@ -21,17 +16,14 @@ class AgriChatService {
 
       let userCoords = user.farmerProfile?.location?.coordinates;
       
-      // If user doesn't have location, use default location (New Delhi) or try to get from state
       if (!userCoords || !Array.isArray(userCoords) || userCoords.length !== 2) {
         logger.warn(`User ${userId} doesn't have valid coordinates, using fallback`);
         
-        // Try to use state-based default coordinates
         const state = user.farmerProfile?.location?.state;
         const defaultCoords = this.getDefaultCoordinatesForState(state);
         userCoords = defaultCoords;
       }
 
-      // Ensure coordinates are in correct format [longitude, latitude]
       if (!Array.isArray(userCoords) || userCoords.length !== 2) {
         userCoords = [77.2090, 28.6139]; // Default: New Delhi
       }
@@ -39,7 +31,6 @@ class AgriChatService {
       let nearbyUsers = [];
       
       try {
-        // Try geospatial query first
         nearbyUsers = await User.find({
           _id: { $ne: userId },
           role: { $in: ['seller', 'dealer', 'agent'] },
@@ -57,10 +48,8 @@ class AgriChatService {
         .select('name email phone role farmerProfile.location')
         .lean();
       } catch (geoError) {
-        // If geospatial query fails (e.g., no index), fallback to regular query
         logger.warn('Geospatial query failed, using fallback:', geoError.message);
         
-        // Fallback: Get all sellers/dealers without location filter
         nearbyUsers = await User.find({
           _id: { $ne: userId },
           role: { $in: ['seller', 'dealer', 'agent'] }
@@ -70,7 +59,6 @@ class AgriChatService {
         .lean();
       }
 
-      // If no users found with geospatial query, try fallback
       if (nearbyUsers.length === 0) {
         logger.info('No nearby users found, trying fallback search');
         nearbyUsers = await User.find({
@@ -82,7 +70,6 @@ class AgriChatService {
         .lean();
       }
 
-      // Calculate distance for each user
       const usersWithDistance = nearbyUsers.map(nearbyUser => {
         let distance = 0;
         let distanceKm = 0;
@@ -98,7 +85,6 @@ class AgriChatService {
           );
           distanceKm = Math.round(distance / 1000);
         } else {
-          // If user doesn't have location, show as "Location unknown"
           distanceKm = null;
         }
 
@@ -110,7 +96,6 @@ class AgriChatService {
         };
       });
 
-      // Sort by distance (null distances go to end)
       usersWithDistance.sort((a, b) => {
         if (a.distance === null && b.distance === null) return 0;
         if (a.distance === null) return 1;
@@ -122,14 +107,10 @@ class AgriChatService {
       return usersWithDistance;
     } catch (error) {
       logger.error('Error finding nearby sellers/dealers:', error);
-      // Return empty array instead of throwing to prevent frontend crash
       return [];
     }
   }
 
-  /**
-   * Get default coordinates for a state
-   */
   getDefaultCoordinatesForState(state) {
     const stateCoordinates = {
       'Punjab': [75.3412, 30.7333], // Ludhiana
@@ -154,13 +135,9 @@ class AgriChatService {
       return stateCoordinates[state];
     }
 
-    // Default: New Delhi
     return [77.2090, 28.6139];
   }
 
-  /**
-   * Calculate distance between two coordinates using Haversine formula
-   */
   calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 6371000; // Earth radius in meters
     const dLat = this.toRad(lat2 - lat1);
@@ -178,9 +155,6 @@ class AgriChatService {
     return degrees * (Math.PI / 180);
   }
 
-  /**
-   * Get or create a conversation between two users
-   */
   async getOrCreateConversation(userId1, userId2) {
     try {
       const conversation = await Conversation.findOrCreateConversation(userId1, userId2);
@@ -191,12 +165,8 @@ class AgriChatService {
     }
   }
 
-  /**
-   * Send a message
-   */
   async sendMessage(conversationId, senderId, recipientId, content, type = 'text', attachments = [], product = null, location = null, replyTo = null) {
     try {
-      // Create message
       const message = await Message.create({
         conversation: conversationId,
         sender: senderId,
@@ -210,15 +180,12 @@ class AgriChatService {
         status: 'sent'
       });
 
-      // Populate sender and recipient
       await message.populate('sender', 'name email role');
       await message.populate('recipient', 'name email role');
 
-      // Update conversation's last message
       const conversation = await Conversation.findById(conversationId);
       if (conversation) {
         await conversation.updateLastMessage(content, senderId);
-        // Increment unread count for recipient
         await conversation.incrementUnread(recipientId);
       }
 
@@ -230,14 +197,10 @@ class AgriChatService {
     }
   }
 
-  /**
-   * Get conversation messages
-   */
   async getConversationMessages(conversationId, userId, limit = 50, before = null) {
     try {
       const messages = await Message.getConversationMessages(conversationId, limit, before);
       
-      // Mark messages as read
       const unreadMessages = messages.filter(
         msg => msg.recipient._id.toString() === userId.toString() && msg.status !== 'read'
       );
@@ -249,7 +212,6 @@ class AgriChatService {
         );
       }
 
-      // Reset unread count for this user
       const conversation = await Conversation.findById(conversationId);
       if (conversation) {
         await conversation.resetUnread(userId);
@@ -262,12 +224,8 @@ class AgriChatService {
     }
   }
 
-  /**
-   * Get user's conversations
-   */
   async getUserConversations(userId, limit = 50) {
     try {
-      // Handle both string and ObjectId
       const conversations = await Conversation.find({
         participants: userId,
         isArchived: false
@@ -278,7 +236,6 @@ class AgriChatService {
       .limit(limit)
       .lean();
 
-      // Format conversations with unread count for current user
       const userIdStr = userId?.toString ? userId.toString() : String(userId);
       const formattedConversations = conversations.map(conv => {
         const otherParticipant = conv.participants?.find(
@@ -305,14 +262,10 @@ class AgriChatService {
       return formattedConversations;
     } catch (error) {
       logger.error('Error getting user conversations:', error);
-      // Return empty array instead of throwing to prevent 500 errors
       return [];
     }
   }
 
-  /**
-   * Search for users (sellers/dealers) by name or location
-   */
   async searchUsers(userId, query, role = null) {
     try {
       const searchQuery = {

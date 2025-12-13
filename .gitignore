@@ -56,8 +56,11 @@ ENV/
 *.h5
 *.pb
 *.onnx
+*.joblib
 models/*.pkl
 models/*.h5
+models/*.joblib
+ml-models/**/*.joblib
 
 # Database
 *.db
@@ -71,5 +74,18 @@ logs/
 # Cache
 .cache/
 .parcel-cache/
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

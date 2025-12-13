@@ -90,7 +90,6 @@ export default function Settings() {
       )}
 
       <Grid container spacing={3}>
-        {/* Notification Settings */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -144,7 +143,6 @@ export default function Settings() {
           </Card>
         </Grid>
 
-        {/* Communication Settings */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -186,7 +184,6 @@ export default function Settings() {
           </Card>
         </Grid>
 
-        {/* Appearance Settings */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -211,7 +208,6 @@ export default function Settings() {
           </Card>
         </Grid>
 
-        {/* Language Settings */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -235,7 +231,6 @@ export default function Settings() {
           </Card>
         </Grid>
 
-        {/* Save Button */}
         <Grid item xs={12}>
           <Box display="flex" justifyContent="flex-end">
             <Button
@@ -253,6 +248,19 @@ export default function Settings() {
     </Container>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

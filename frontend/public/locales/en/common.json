@@ -39,7 +39,10 @@
     "analytics": "Analytics",
     "settings": "Settings",
     "profile": "Profile",
-    "agriMap": "Map"
+    "agriMap": "Map",
+    "map": "Agricultural Map",
+    "chat": "Agri-GPT Assistant",
+    "agriChat": "Agri Chat"
   },
   "auth": {
     "login": "Login",
@@ -621,7 +624,24 @@
     "createApplication": "Create New Application",
     "viewDetails": "View Details",
     "editApplication": "Edit Application",
-    "withdrawApplication": "Withdraw Application"
+    "withdrawApplication": "Withdraw Application",
+    "allSchemes": "All Schemes"
+  },
+  "map": {
+    "subtitle": "Interactive agricultural map with real-time data",
+    "clickForAddress": "Click on map to get address",
+    "searchAddress": "Search address, city, district...",
+    "search": "Search",
+    "addressLookup": "Address Lookup",
+    "findAddress": "Click on map to get address",
+    "locationSet": "Location set successfully",
+    "locationFound": "Location found",
+    "searchFailed": "Search failed",
+    "clickedLocation": "Clicked Location",
+    "fetchingAddress": "Fetching address...",
+    "clickMapForAddress": "Click on the map to get address information",
+    "close": "Close",
+    "useThisLocation": "Use This Location"
   },
   "mobile": {
     "title": "Mobile App",

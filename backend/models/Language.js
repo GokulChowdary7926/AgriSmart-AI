@@ -35,7 +35,6 @@ const languageSchema = new mongoose.Schema({
   }
 });
 
-// Predefined Indian languages
 languageSchema.statics.initializeLanguages = async function() {
   const languages = [
     {

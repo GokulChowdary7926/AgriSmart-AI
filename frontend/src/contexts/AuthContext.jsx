@@ -1,12 +1,12 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
+import logger from '../services/logger';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
-// Export hook separately to fix Fast Refresh
 const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
+  if (context === null || !context._isProvider) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
@@ -20,7 +20,6 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Check for existing token on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
@@ -29,7 +28,6 @@ export const AuthProvider = ({ children }) => {
     } else {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchUserData = async () => {
@@ -40,45 +38,38 @@ export const AuthProvider = ({ children }) => {
         setFarmer(response.data.farmer || null);
         setError(null);
       } else {
-        // If response doesn't have user, clear token
         localStorage.removeItem('token');
         setUser(null);
         setFarmer(null);
       }
     } catch (err) {
-      // Failed to fetch user data - error handled below
-      // Only logout if it's an auth error (401/403)
       if (err.response?.status === 401 || err.response?.status === 403) {
         localStorage.removeItem('token');
         setUser(null);
         setFarmer(null);
       }
-      // For other errors, keep the token but don't set user
-      // This allows the app to work even if /auth/me fails
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (identifier, password) => {
     setLoading(true);
     setError(null);
     
     try {
-      // Trim and normalize inputs
-      const normalizedEmail = email?.trim().toLowerCase() || '';
+      const trimmedIdentifier = identifier?.trim() || '';
       const normalizedPassword = password?.trim() || '';
       
-      if (!normalizedEmail || !normalizedPassword) {
-        throw new Error('Email and password are required');
+      if (!trimmedIdentifier || !normalizedPassword) {
+        throw new Error('Email/Phone/User ID and password are required');
       }
       
       const response = await api.post('/auth/login', { 
-        email: normalizedEmail, 
+        identifier: trimmedIdentifier,
         password: normalizedPassword 
       });
       
-      // Handle both success: true and direct token/user response
       const token = response.data.token || response.data.access_token;
       const user = response.data.user || response.data;
       const farmer = response.data.farmer || null;
@@ -87,18 +78,14 @@ export const AuthProvider = ({ children }) => {
         throw new Error('Invalid login response');
       }
       
-      // Store token first - this is synchronous and immediate
       localStorage.setItem('token', token);
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       
-      // Update state immediately
       setUser(user);
       setFarmer(farmer);
       
-      // Set loading to false
       setLoading(false);
       
-      // Return success
       return { success: true, user };
     } catch (err) {
       const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Login failed';
@@ -118,11 +105,9 @@ export const AuthProvider = ({ children }) => {
       if (response.data.success) {
         const { token, user } = response.data;
         
-        // Store token
         localStorage.setItem('token', token);
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         
-        // Update state
         setUser(user);
         
         return { success: true, user };
@@ -132,21 +117,18 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: errorMessage };
       }
     } catch (err) {
-      // Extract error message from response
       let errorMessage = 'Registration failed. Please check your information and try again.';
       
-      console.error('Registration error:', err);
-      console.error('Error response:', err.response);
-      console.error('Error response data:', err.response?.data);
+      logger.error('Registration error', err, { 
+        response: err.response, 
+        responseData: err.response?.data 
+      });
       
       if (err.response?.data) {
-        // Backend returned an error
         errorMessage = err.response.data.error || err.response.data.message || errorMessage;
       } else if (err.error) {
-        // Error from axios interceptor
         errorMessage = err.error || errorMessage;
       } else if (err.message) {
-        // Network or other error
         if (err.message.includes('Network Error') || err.code === 'ECONNREFUSED') {
           errorMessage = 'Cannot connect to server. Please check your internet connection.';
         } else {
@@ -162,16 +144,13 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
-    // Clear token
     localStorage.removeItem('token');
     delete api.defaults.headers.common['Authorization'];
     
-    // Clear state
     setUser(null);
     setFarmer(null);
     setError(null);
     
-    // Redirect to login - use window.location to avoid hook dependency
     window.location.href = '/login';
   };
 
@@ -198,10 +177,9 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Calculate isAuthenticated - user exists and not loading
   const isAuthenticated = !!user && !loading;
 
-  const value = {
+  const value = useMemo(() => ({
     user,
     farmer,
     loading,
@@ -210,8 +188,9 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     updateProfile,
-    isAuthenticated
-  };
+    isAuthenticated,
+    _isProvider: true // Flag to identify if we're inside a provider
+  }), [user, farmer, loading, error, isAuthenticated]);
 
   return (
     <AuthContext.Provider value={value}>

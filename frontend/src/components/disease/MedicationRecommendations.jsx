@@ -55,7 +55,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
   }
 
   const medData = medication || {};
-  // Extract disease name from various possible locations
   const diseaseName = medData.disease_info?.name || 
                       diseaseInfo?.name || 
                       detectionResult?.disease || 
@@ -183,7 +182,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 2, mt: 4 }}>
-      {/* Header */}
       <Paper sx={{ p: 3, mb: 3, bgcolor: 'primary.main', color: 'white' }}>
         <Typography variant="h4" gutterBottom>
           💊 {t('diseases.medicationRecommendations') || 'Treatment Recommendations'} - {diseaseName}
@@ -207,7 +205,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
         </Box>
       </Paper>
 
-      {/* Emergency Alert */}
       {severity === 'critical' && (
         <Alert severity="error" sx={{ mb: 3 }}>
           <Typography variant="h6">
@@ -220,9 +217,7 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
       )}
 
       <Grid container spacing={3}>
-        {/* Left Column - Treatment Options */}
         <Grid item xs={12} md={8}>
-          {/* Immediate Actions */}
           {medData.immediate_actions && medData.immediate_actions.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -247,7 +242,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Chemical Treatments */}
           {medData.chemical_treatments && medData.chemical_treatments.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -262,7 +256,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Organic Treatments */}
           {medData.organic_treatments && medData.organic_treatments.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -277,7 +270,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Biological Treatments */}
           {medData.biological_treatments && medData.biological_treatments.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -292,7 +284,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Application Schedule */}
           {medData.schedule && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -322,7 +313,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Cultural Practices */}
           {medData.cultural_practices && medData.cultural_practices.length > 0 && (
             <Paper sx={{ p: 3, mb: 3 }}>
               <Typography variant="h6" gutterBottom>
@@ -342,9 +332,7 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
           )}
         </Grid>
 
-        {/* Right Column - Sidebar */}
         <Grid item xs={12} md={4}>
-          {/* Quick Actions */}
           <Paper sx={{ p: 2, mb: 3 }}>
             <Typography variant="h6" gutterBottom>
               ⚡ {t('diseases.quickActions') || 'Quick Actions'}
@@ -365,7 +353,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Box>
           </Paper>
 
-          {/* Cost Estimation */}
           {medData.cost_estimation && (
             <Paper sx={{ p: 2, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -392,7 +379,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Safety Precautions */}
           {medData.safety_precautions && (
             <Paper sx={{ p: 2, mb: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -421,7 +407,6 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
             </Paper>
           )}
 
-          {/* Emergency Contacts */}
           {medData.emergency_contacts && (
             <Paper sx={{ p: 2, mb: 3 }}>
               <Typography variant="h6" gutterBottom color="error">

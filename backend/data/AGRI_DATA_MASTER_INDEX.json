@@ -1,0 +1,175 @@
+{
+  "datasets": [
+    {
+      "id": "ICRISAT-001",
+      "name": "District-Level Climate-Yield Data (ICRISAT)",
+      "source": "Mendeley Data",
+      "url": "https://data.mendeley.com/datasets/ywp3y5j9vv/1",
+      "description": "District-level climate data + crop yields (1990-2015) across India",
+      "features": {
+        "spatial": "District level (major districts)",
+        "temporal": "1990-2015 (annual)",
+        "climate": ["temperature", "rainfall", "humidity"],
+        "crops": ["Rice", "Wheat", "Maize", "Sugarcane", "Cotton"],
+        "yield": "Yes",
+        "soil": "No",
+        "weather_events": "No"
+      },
+      "size": "~50MB",
+      "format": "CSV",
+      "license": "CC BY 4.0",
+      "best_for": ["Climate-yield correlation", "District-level analysis", "Historical trends"]
+    },
+    {
+      "id": "KAGGLE-001",
+      "name": "Indian Agriculture and Climate Dataset (1961-2018)",
+      "source": "Kaggle",
+      "url": "https://www.kaggle.com/datasets/swarooprangle/indian-agriculture-and-climate-dataset-1961-2018",
+      "description": "Long-term agricultural output + climate variables across decades",
+      "features": {
+        "spatial": "State level",
+        "temporal": "1961-2018 (annual)",
+        "climate": ["temp_mean", "rainfall", "sunshine_hours"],
+        "crops": ["Cereals", "Pulses", "Oilseeds", "Sugarcane", "Cotton"],
+        "yield": "Yes",
+        "soil": "No",
+        "weather_events": "No"
+      },
+      "size": "~10MB",
+      "format": "CSV",
+      "license": "CC0: Public Domain",
+      "best_for": ["Long-term trend analysis", "State-level modeling", "Climate impact studies"]
+    },
+    {
+      "id": "KAGGLE-002",
+      "name": "Indian Historical Crop Yield and Weather Data",
+      "source": "Kaggle",
+      "url": "https://www.kaggle.com/datasets/zoya77/indian-historical-crop-yield-and-weather-data",
+      "description": "Historical crop yield + weather parameters at district/regional level",
+      "features": {
+        "spatial": "District level",
+        "temporal": "1997-2015 (annual)",
+        "climate": ["temperature", "rainfall"],
+        "crops": ["Rice", "Wheat", "Maize", "Gram", "Sugarcane"],
+        "yield": "Yes",
+        "soil": "No",
+        "weather_events": "No"
+      },
+      "size": "~5MB",
+      "format": "CSV",
+      "license": "CC0: Public Domain",
+      "best_for": ["Yield forecasting", "District-specific models", "Historical analysis"]
+    },
+    {
+      "id": "KAGGLE-003",
+      "name": "Crop Recommendation Dataset",
+      "source": "Kaggle",
+      "url": "https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset",
+      "description": "Soil nutrients + weather + crop labels for recommendation systems",
+      "features": {
+        "spatial": "Not specified (likely aggregated)",
+        "temporal": "Not time-series",
+        "climate": ["temperature", "humidity", "ph", "rainfall"],
+        "crops": ["Rice", "Wheat", "Maize", "Cotton", "Millet", "Pulses", "Fruits", "Vegetables"],
+        "yield": "No",
+        "soil": ["N", "P", "K", "pH", "moisture"],
+        "weather_events": "No"
+      },
+      "size": "~200KB",
+      "format": "CSV",
+      "license": "CC0: Public Domain",
+      "best_for": ["Crop recommendation ML models", "Soil-crop correlation", "Classification tasks"]
+    },
+    {
+      "id": "KAGGLE-004",
+      "name": "India Agriculture Crop Production (District-wise, 1997-2021)",
+      "source": "Kaggle",
+      "url": "https://www.kaggle.com/datasets/pyatakov/india-agriculture-crop-production",
+      "description": "Detailed district-level crop production & area statistics",
+      "features": {
+        "spatial": "District level",
+        "temporal": "1997-2021 (annual)",
+        "climate": "No",
+        "crops": ["Rice", "Wheat", "Maize", "Cotton", "Sugarcane", "Pulses", "Oilseeds"],
+        "yield": "Yes (derivable)",
+        "soil": "No",
+        "weather_events": "No"
+      },
+      "size": "~10MB",
+      "format": "CSV",
+      "license": "CC0: Public Domain",
+      "best_for": ["Production analysis", "Area-yield calculations", "District benchmarking"]
+    },
+    {
+      "id": "SOIL-001",
+      "name": "SoilGrids India (FAO/ISRIC)",
+      "source": "ISRIC World Soil Information",
+      "url": "https://soilgrids.org/",
+      "description": "High-resolution soil property maps for India",
+      "features": {
+        "spatial": "Gridded (250m)",
+        "temporal": "Current (static)",
+        "climate": "No",
+        "crops": "No",
+        "yield": "No",
+        "soil": ["pH", "organic_carbon", "clay_silt_sand", "bulk_density", "CEC", "nitrogen"],
+        "weather_events": "No"
+      },
+      "size": "~2GB",
+      "format": "GeoTIFF, WCS",
+      "license": "Creative Commons",
+      "best_for": ["Soil property mapping", "Spatial soil analysis", "Farm-level precision"]
+    },
+    {
+      "id": "WEATHER-001",
+      "name": "IMD Gridded Daily Weather Data",
+      "source": "India Meteorological Department",
+      "url": "https://www.imdpune.gov.in/Clim_Pred_LRF_New/Grided_Data_Download.html",
+      "description": "Official IMD gridded weather data for India",
+      "features": {
+        "spatial": "Gridded (0.25°×0.25°)",
+        "temporal": "1951-present (daily)",
+        "climate": ["rainfall", "temperature_max", "temperature_min"],
+        "crops": "No",
+        "yield": "No",
+        "soil": "No",
+        "weather_events": "No"
+      },
+      "size": "~10GB",
+      "format": "ASCII Grid, NetCDF",
+      "license": "Government Open Data",
+      "best_for": ["Official weather data", "Historical analysis", "Climate studies"]
+    }
+  ],
+  "metadata": {
+    "total_datasets": 7,
+    "last_updated": "2024-12-09",
+    "coverage": {
+      "climate": 5,
+      "soil": 2,
+      "crop_yield": 4,
+      "spatial_granularity": ["district", "state", "gridded"],
+      "temporal_granularity": ["daily", "annual", "multi-decadal"]
+    },
+    "recommended_combinations": {
+      "crop_recommendation": ["KAGGLE-003", "SOIL-001", "WEATHER-001"],
+      "yield_prediction": ["ICRISAT-001", "KAGGLE-002", "WEATHER-001"],
+      "precision_agriculture": ["SOIL-001", "WEATHER-001"],
+      "climate_impact": ["KAGGLE-001", "WEATHER-001", "ICRISAT-001"]
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

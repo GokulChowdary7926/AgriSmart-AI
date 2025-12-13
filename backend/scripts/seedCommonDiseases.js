@@ -443,20 +443,16 @@ async function seedDiseases() {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/agrismart');
     console.log('✅ Connected to MongoDB');
 
-    // Clear existing common diseases
     const diseaseNames = commonDiseases.map(d => d.name);
     await Disease.deleteMany({ name: { $in: diseaseNames } });
     console.log('✅ Cleared existing common diseases');
 
-    // Insert new diseases
     const inserted = await Disease.insertMany(commonDiseases);
     console.log(`✅ Seeded ${inserted.length} common diseases`);
 
-    // Create indexes
     await Disease.createIndexes();
     console.log('✅ Indexes created');
 
-    // Verify
     const count = await Disease.countDocuments();
     console.log(`✅ Total diseases in database: ${count}`);
 

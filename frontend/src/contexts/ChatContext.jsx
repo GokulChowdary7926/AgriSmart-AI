@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import api from '../services/api';
+import logger from '../services/logger';
 
 const ChatContext = createContext();
 
@@ -13,8 +14,6 @@ export const useChat = () => {
 };
 
 export const ChatProvider = ({ children }) => {
-  // Get language from localStorage to avoid circular dependency with LanguageContext
-  // Use a function to get current language when needed instead of storing in state
   const getLanguage = useCallback(() => {
     return localStorage.getItem('language') || 'en';
   }, []);
@@ -24,7 +23,6 @@ export const ChatProvider = ({ children }) => {
   const [messages, setMessages] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Auto-connect socket when token is available
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token && !socket) {
@@ -36,10 +34,8 @@ export const ChatProvider = ({ children }) => {
         socket.disconnect();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize socket connection
   const connectSocket = useCallback((token) => {
     if (socket) {
       socket.disconnect();
@@ -51,26 +47,27 @@ export const ChatProvider = ({ children }) => {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5,
-      timeout: 20000
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: Infinity, // Keep trying to reconnect
+      timeout: 60000, // Increase timeout to 60 seconds
+      pingTimeout: 60000, // Increase ping timeout
+      pingInterval: 25000 // Ping every 25 seconds
     });
 
     newSocket.on('connect', () => {
-      console.log('Socket connected');
+      logger.info('Socket connected');
       setIsConnected(true);
     });
 
     newSocket.on('connect_error', (error) => {
-      console.warn('Socket connection error:', error.message);
+      logger.warn('Socket connection error', { message: error.message });
       setIsConnected(false);
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
+      logger.info('Socket disconnected', { reason });
       setIsConnected(false);
       if (reason === 'io server disconnect') {
-        // Server disconnected, reconnect manually
         newSocket.connect();
       }
     });
@@ -83,15 +80,13 @@ export const ChatProvider = ({ children }) => {
     });
 
     newSocket.on('weather-alert', (alert) => {
-      // Handle weather alerts
-      console.log('Weather alert:', alert);
+      logger.info('Weather alert received', { alert });
     });
 
     setSocket(newSocket);
     return newSocket;
   }, [socket, activeSession]);
 
-  // Start new chat session
   const startChat = async (context = {}) => {
     try {
       const response = await api.post('/chatbot/start', { 
@@ -115,7 +110,6 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
-  // Send message
   const sendMessage = async (content, attachments = []) => {
     if (!activeSession) {
       throw new Error('No active chat session');
@@ -134,12 +128,11 @@ export const ChatProvider = ({ children }) => {
       
       return { userMessage, aiResponse };
     } catch (error) {
-      console.error('Failed to send message:', error);
+      logger.error('Failed to send message', error);
       throw error;
     }
   };
 
-  // Load chat history
   const loadChatHistory = async (sessionId) => {
     try {
       const response = await api.get(`/chatbot/${sessionId}/history`);
@@ -155,34 +148,31 @@ export const ChatProvider = ({ children }) => {
       
       return historyMessages;
     } catch (error) {
-      console.error('Failed to load chat history:', error);
+      logger.error('Failed to load chat history', error);
       throw error;
     }
   };
 
-  // List chat sessions
   const listChatSessions = async (params = {}) => {
     try {
       const response = await api.get('/chatbot/sessions', { params });
       return response.data.data;
     } catch (error) {
-      console.error('Failed to list chat sessions:', error);
+      logger.error('Failed to list chat sessions', error);
       throw error;
     }
   };
 
-  // Update chat session
   const updateChatSession = async (sessionId, updates) => {
     try {
       const response = await api.put(`/chatbot/${sessionId}`, updates);
       return response.data.data;
     } catch (error) {
-      console.error('Failed to update chat session:', error);
+      logger.error('Failed to update chat session', error);
       throw error;
     }
   };
 
-  // Delete chat session
   const deleteChatSession = async (sessionId) => {
     try {
       await api.delete(`/chatbot/${sessionId}`);
@@ -191,19 +181,17 @@ export const ChatProvider = ({ children }) => {
         setMessages([]);
       }
     } catch (error) {
-      console.error('Failed to delete chat session:', error);
+      logger.error('Failed to delete chat session', error);
       throw error;
     }
   };
 
-  // Join farm room for real-time updates
   const joinFarmRoom = (farmId) => {
     if (socket && isConnected) {
       socket.emit('join-farm', farmId);
     }
   };
 
-  // Send farm chat message
   const sendFarmMessage = (farmId, message) => {
     if (socket && isConnected) {
       socket.emit('chat-message', { farmId, message });

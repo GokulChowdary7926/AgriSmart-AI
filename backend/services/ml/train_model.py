@@ -19,7 +19,6 @@ warnings.filterwarnings('ignore')
 def train_model():
     """Train the crop recommendation model"""
     try:
-        # Load dataset
         dataset_path = os.path.join(os.path.dirname(__file__), '../../data/crop_data.json')
         
         if os.path.exists(dataset_path):
@@ -28,32 +27,26 @@ def train_model():
                 data = json.load(f)
             df = pd.DataFrame(data)
         else:
-            # Create sample dataset
             print("Creating sample dataset...")
             df = create_sample_dataset()
         
         print(f"📊 Dataset loaded: {len(df)} samples, {df['label'].nunique()} crops")
         
-        # Prepare features and labels
         feature_columns = ['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall']
         X = df[feature_columns]
         y = df['label']
         
-        # Encode labels
         label_encoder = LabelEncoder()
         y_encoded = label_encoder.fit_transform(y)
         
-        # Split data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y_encoded, test_size=0.2, random_state=42
         )
         
-        # Scale features
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         
-        # Train XGBoost model
         print("🤖 Training XGBoost model...")
         model = xgb.XGBClassifier(
             n_estimators=100,
@@ -64,7 +57,6 @@ def train_model():
         
         model.fit(X_train_scaled, y_train)
         
-        # Evaluate
         y_pred = model.predict(X_test_scaled)
         accuracy = accuracy_score(y_test, y_pred)
         
@@ -72,7 +64,6 @@ def train_model():
         print("\nClassification Report:")
         print(classification_report(y_test, y_pred, target_names=label_encoder.classes_))
         
-        # Save models
         models_dir = os.path.join(os.path.dirname(__file__), '../../models')
         os.makedirs(models_dir, exist_ok=True)
         
@@ -123,5 +114,18 @@ if __name__ == "__main__":
     else:
         print("\n❌ Model training failed!")
         exit(1)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

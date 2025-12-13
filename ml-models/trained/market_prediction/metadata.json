@@ -1,0 +1,7 @@
+{
+  "training_id": "training_29772",
+  "model_type": "random_forest",
+  "mae": 0.17549379403626117,
+  "r2": -0.09028184460163269,
+  "tensorflow_available": false
+}

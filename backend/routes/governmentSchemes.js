@@ -1,7 +1,3 @@
-/**
- * Government Schemes Routes
- * API endpoints for government scheme recommendations
- */
 
 const express = require('express');
 const router = express.Router();
@@ -10,13 +6,8 @@ const { authenticateToken } = require('../middleware/auth');
 const LandConverter = require('../utils/landConverter');
 const logger = require('../utils/logger');
 
-/**
- * GET /api/government-schemes/recommend
- * Get recommended government schemes for a farmer (GET version for easier access)
- */
 router.get('/recommend', async (req, res) => {
   try {
-    // Extract farmer profile from query params or use defaults
     const farmerProfile = {
       location: {
         state: req.query.state || 'Punjab',
@@ -43,7 +34,6 @@ router.get('/recommend', async (req, res) => {
   } catch (error) {
     logger.error('Error recommending schemes (GET):', error);
     logger.error('Error stack:', error.stack);
-    // Return empty array instead of error to prevent frontend crashes
     res.json({
       success: true,
       data: []
@@ -51,10 +41,6 @@ router.get('/recommend', async (req, res) => {
   }
 });
 
-/**
- * POST /api/government-schemes/recommend
- * Get recommended government schemes for a farmer
- */
 router.post('/recommend', async (req, res) => {
   try {
     logger.info('=== POST /government-schemes/recommend called ===');
@@ -62,9 +48,7 @@ router.post('/recommend', async (req, res) => {
     
     let { farmerProfile, filters } = req.body;
 
-    // If no farmer profile provided, use default or try to get from authenticated user
     if (!farmerProfile) {
-      // Try to get from authenticated user
       if (req.headers.authorization) {
         try {
           const token = req.headers.authorization.replace('Bearer ', '');
@@ -85,13 +69,10 @@ router.post('/recommend', async (req, res) => {
             };
           }
         } catch (authError) {
-          // Auth failed, use default
         }
       }
       
-      // Default profile if still not set
       if (!farmerProfile) {
-        // Default: 1 sq ft (minimum)
         farmerProfile = {
           location: { state: 'Punjab', district: 'Ludhiana' },
           farmDetails: {
@@ -106,24 +87,18 @@ router.post('/recommend', async (req, res) => {
         };
       }
     } else {
-      // Fill in missing fields with defaults
       farmerProfile.location = farmerProfile.location || { state: 'Punjab', district: 'Ludhiana' };
       
-      // Handle land size conversion
       if (farmerProfile.farmDetails) {
-        // If land size is provided in sq feet/cents, convert to hectares
         if (farmerProfile.farmDetails.landSizeSqFeet !== undefined || farmerProfile.farmDetails.landSizeCents !== undefined) {
           const sqFeet = farmerProfile.farmDetails.landSizeSqFeet || 0;
           const cents = farmerProfile.farmDetails.landSizeCents || 0;
           farmerProfile.farmDetails.landSize = LandConverter.toHectares(sqFeet, cents);
         } else if (!farmerProfile.farmDetails.landSize) {
-          // Default to 1 sq ft if no land size specified
           farmerProfile.farmDetails.landSize = LandConverter.toHectares(1, 0);
           farmerProfile.farmDetails.landSizeSqFeet = 1;
           farmerProfile.farmDetails.landSizeCents = 0;
         } else {
-          // If landSize is already in hectares, calculate sq feet/cents for display
-          // 1 hectare = 107639.104 sq feet = 247.105 cents
           const hectares = farmerProfile.farmDetails.landSize;
           farmerProfile.farmDetails.landSizeSqFeet = hectares * 107639.104;
           farmerProfile.farmDetails.landSizeCents = hectares * 247.105;
@@ -143,8 +118,40 @@ router.post('/recommend', async (req, res) => {
 
     let recommendations;
     try {
-      logger.info('Calling governmentSchemeService.recommendSchemes...');
-      recommendations = await governmentSchemeService.recommendSchemes(farmerProfile, filters);
+      try {
+        const RealTimeGovernmentSchemeService = require('../services/RealTimeGovernmentSchemeService');
+        logger.info('Trying RealTimeGovernmentSchemeService...');
+        const realTimeResult = await RealTimeGovernmentSchemeService.getRealTimeSchemes(farmerProfile);
+        if (realTimeResult.success && realTimeResult.schemes && realTimeResult.schemes.length > 0) {
+          recommendations = {
+            totalSchemesFound: realTimeResult.totalSchemes || realTimeResult.schemes.length,
+            eligibleSchemes: realTimeResult.schemes.filter(s => s.isEligible !== false).length,
+            recommendedSchemes: realTimeResult.schemes.filter(s => (s.relevanceScore || 0) >= 70).length,
+            allSchemes: realTimeResult.schemes,
+            allSchemesByPriority: {
+              highPriority: realTimeResult.schemes.filter(s => (s.relevanceScore || 0) >= 80),
+              mediumPriority: realTimeResult.schemes.filter(s => (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: realTimeResult.schemes.filter(s => (s.relevanceScore || 0) < 50)
+            },
+            schemesByPriority: {
+              highPriority: realTimeResult.schemes.filter(s => s.isEligible && (s.relevanceScore || 0) >= 80),
+              mediumPriority: realTimeResult.schemes.filter(s => s.isEligible && (s.relevanceScore || 0) >= 50 && (s.relevanceScore || 0) < 80),
+              lowPriority: realTimeResult.schemes.filter(s => s.isEligible && (s.relevanceScore || 0) < 50)
+            },
+            eligibleSchemesList: realTimeResult.schemes.filter(s => s.isEligible !== false),
+            topRecommendations: realTimeResult.recommendations || realTimeResult.schemes.slice(0, 5),
+            schemesByCategory: {},
+            timestamp: realTimeResult.timestamp
+          };
+          logger.info('Real-time service returned schemes:', recommendations.totalSchemesFound);
+        } else {
+          throw new Error('Real-time service returned empty result');
+        }
+      } catch (realtimeError) {
+        logger.warn('Real-time service unavailable, using standard service:', realtimeError.message);
+        logger.info('Calling governmentSchemeService.recommendSchemes...');
+        recommendations = await governmentSchemeService.recommendSchemes(farmerProfile, filters);
+      }
       logger.info('Service returned recommendations:', {
         totalSchemesFound: recommendations?.totalSchemesFound,
         allSchemesCount: recommendations?.allSchemes?.length,
@@ -154,15 +161,12 @@ router.post('/recommend', async (req, res) => {
       logger.error('Service error recommending schemes:', serviceError);
       logger.error('Service error stack:', serviceError.stack);
       
-      // Try fallback
       try {
         const fallbackData = governmentSchemeService.getFallbackRecommendations(farmerProfile || {});
-        // getFallbackRecommendations already returns the correct structure
         recommendations = fallbackData;
         logger.info('Using fallback recommendations:', recommendations.totalSchemesFound);
       } catch (fallbackError) {
         logger.error('Fallback also failed:', fallbackError);
-        // Return minimal fallback
         recommendations = {
           totalSchemesFound: 0,
           eligibleSchemes: 0,
@@ -192,7 +196,6 @@ router.post('/recommend', async (req, res) => {
     logger.error('Unexpected error in recommend route:', error);
     logger.error('Error stack:', error.stack);
     
-    // Final fallback - return empty but valid structure
     res.json({
       success: true,
       data: {
@@ -211,10 +214,6 @@ router.post('/recommend', async (req, res) => {
   }
 });
 
-/**
- * GET /api/government-schemes/:schemeId
- * Get details of a specific scheme
- */
 router.get('/:schemeId', async (req, res) => {
   try {
     const { schemeId } = req.params;
@@ -241,10 +240,6 @@ router.get('/:schemeId', async (req, res) => {
   }
 });
 
-/**
- * POST /api/government-schemes/:schemeId/eligibility
- * Check eligibility for a specific scheme
- */
 router.post('/:schemeId/eligibility', authenticateToken, async (req, res) => {
   try {
     const { schemeId } = req.params;
@@ -272,10 +267,6 @@ router.post('/:schemeId/eligibility', authenticateToken, async (req, res) => {
   }
 });
 
-/**
- * GET /api/government-schemes/test
- * Test endpoint to verify schemes database is loaded
- */
 router.get('/test', async (req, res) => {
   try {
     logger.info('=== TEST ENDPOINT CALLED ===');
@@ -285,7 +276,6 @@ router.get('/test', async (req, res) => {
       annualIncome: 80000
     });
     
-    // Also test the full recommendSchemes
     const recommendations = await governmentSchemeService.recommendSchemes({
       location: { state: 'Punjab', district: 'Ludhiana' },
       farmDetails: { landSize: 2.5, landSizeSqFeet: 269097, landSizeCents: 617, landOwnership: true },
@@ -319,10 +309,6 @@ router.get('/test', async (req, res) => {
   }
 });
 
-/**
- * GET /api/government-schemes/categories/list
- * Get list of all scheme categories
- */
 router.get('/categories/list', async (req, res) => {
   try {
     const categories = [
@@ -354,10 +340,6 @@ router.get('/categories/list', async (req, res) => {
   }
 });
 
-/**
- * POST /api/government-schemes/:schemeId/apply
- * Apply for a government scheme
- */
 router.post('/:schemeId/apply', authenticateToken, async (req, res) => {
   try {
     const { schemeId } = req.params;
@@ -370,7 +352,6 @@ router.post('/:schemeId/apply', authenticateToken, async (req, res) => {
       });
     }
 
-    // Add farmer ID from authenticated user
     if (!farmerProfile.farmerId && req.user) {
       farmerProfile.farmerId = req.user.userId;
       farmerProfile.userId = req.user.userId;
@@ -391,10 +372,6 @@ router.post('/:schemeId/apply', authenticateToken, async (req, res) => {
   }
 });
 
-/**
- * GET /api/government-schemes/applications/:applicationId
- * Track application status
- */
 router.get('/applications/:applicationId', authenticateToken, async (req, res) => {
   try {
     const { applicationId } = req.params;
@@ -414,10 +391,6 @@ router.get('/applications/:applicationId', authenticateToken, async (req, res) =
   }
 });
 
-/**
- * GET /api/government-schemes/applications
- * Get all applications for the authenticated farmer
- */
 router.get('/applications', authenticateToken, async (req, res) => {
   try {
     const farmerId = req.user.userId;
@@ -437,15 +410,10 @@ router.get('/applications', authenticateToken, async (req, res) => {
   }
 });
 
-/**
- * POST /api/government-schemes/calendar
- * Get scheme calendar for farmer
- */
 router.post('/calendar', authenticateToken, async (req, res) => {
   try {
     const { farmerProfile } = req.body;
 
-    // Use authenticated user's profile if not provided
     if (!farmerProfile && req.user) {
       const User = require('../models/User');
       const user = await User.findById(req.user.userId);

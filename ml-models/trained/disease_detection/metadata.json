@@ -1,0 +1,7 @@
+{
+  "training_id": "training_72864",
+  "model_type": "random_forest",
+  "num_classes": 38,
+  "accuracy": 0.0375,
+  "tensorflow_available": false
+}

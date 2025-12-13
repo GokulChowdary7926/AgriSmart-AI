@@ -5,8 +5,8 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import Backend from 'i18next-http-backend';
 import { indianLanguages, languagePreferences } from '../config/languages';
 import api from '../services/api';
+import logger from '../services/logger';
 
-// Initialize i18n only if not already initialized
 if (!i18n.isInitialized) {
   i18n
     .use(Backend)
@@ -48,20 +48,16 @@ export const LanguageProvider = ({ children }) => {
   });
 
   useEffect(() => {
-    // Update i18n when language changes
     i18n.changeLanguage(language);
     localStorage.setItem('language', language);
     
-    // Update language info
     const info = indianLanguages[language] || indianLanguages[languagePreferences.defaultLanguage];
     setLanguageInfo(info);
     
-    // Set document direction for RTL languages
     const rtlLanguages = ['ur', 'ar', 'he'];
     document.documentElement.setAttribute('dir', rtlLanguages.includes(language) ? 'rtl' : 'ltr');
     document.documentElement.setAttribute('lang', language);
     
-    // Update font family
     if (info.fontFamily) {
       document.body.style.fontFamily = info.fontFamily;
     }
@@ -70,20 +66,16 @@ export const LanguageProvider = ({ children }) => {
   const changeLanguage = useCallback(async (newLanguage) => {
     if (newLanguage === language) return;
     
-    console.log('🌐 Changing language to:', newLanguage);
+    logger.info('Changing language', { language: newLanguage });
     setLanguage(newLanguage);
     
-    // Change i18n language and wait for it to load
     await i18n.changeLanguage(newLanguage);
     
-    // Update localStorage
     localStorage.setItem('language', newLanguage);
     
-    // Update language info immediately
     const info = indianLanguages[newLanguage] || indianLanguages[languagePreferences.defaultLanguage];
     setLanguageInfo(info);
     
-    // Force a re-render by updating document
     document.documentElement.setAttribute('lang', newLanguage);
     document.documentElement.setAttribute('dir', info.direction || 'ltr');
     
@@ -91,18 +83,15 @@ export const LanguageProvider = ({ children }) => {
       document.body.style.fontFamily = info.fontFamily;
     }
     
-    // Notify backend of language change
     try {
       await api.post('/language/preference', { language: newLanguage });
     } catch (err) {
-      console.warn('Failed to update language preference on server:', err);
+      logger.warn('Failed to update language preference on server', err);
     }
     
-    // Force component re-render - dispatch multiple events to ensure all components update
     window.dispatchEvent(new Event('languagechange'));
     window.dispatchEvent(new CustomEvent('i18n:languageChanged', { detail: { language: newLanguage } }));
     
-    // Also trigger i18n's own event
     i18n.emit('languageChanged', newLanguage);
   }, [language]);
 

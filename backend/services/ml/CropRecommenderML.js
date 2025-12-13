@@ -3,10 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const logger = require('../../utils/logger');
 
-/**
- * ML-based Crop Recommendation Service
- * Uses Python ML models for accurate predictions
- */
 class CropRecommenderML {
   constructor() {
     this.modelPath = path.join(__dirname, '../../models');
@@ -14,9 +10,6 @@ class CropRecommenderML {
     this.isPythonAvailable = this.checkPythonAvailability();
   }
 
-  /**
-   * Check if Python is available
-   */
   checkPythonAvailability() {
     try {
       const { execSync } = require('child_process');
@@ -33,9 +26,6 @@ class CropRecommenderML {
     }
   }
 
-  /**
-   * Predict crops using ML model
-   */
   async predict(features) {
     try {
       if (this.isPythonAvailable && fs.existsSync(this.pythonScriptPath)) {
@@ -49,10 +39,53 @@ class CropRecommenderML {
     }
   }
 
-  /**
-   * Predict using Python ML model
-   */
+  async predictWithEnhancedModel(features, scriptPath) {
+    return new Promise((resolve, reject) => {
+      const pythonProcess = spawn('python3', [scriptPath, JSON.stringify(features)], {
+        cwd: path.dirname(scriptPath),
+        env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      });
+      
+      let stdout = '';
+      let stderr = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code === 0 && stdout.trim()) {
+          try {
+            const result = JSON.parse(stdout.trim());
+            logger.info('✅ Enhanced ML model prediction successful');
+            resolve(result);
+          } catch (e) {
+            logger.warn('Failed to parse enhanced ML model output, using fallback');
+            resolve(this.predictWithJavaScript(features));
+          }
+        } else {
+          logger.warn(`Enhanced ML model script exited with code ${code}: ${stderr.substring(0, 200)}`);
+          resolve(this.predictWithJavaScript(features));
+        }
+      });
+      
+      pythonProcess.on('error', (error) => {
+        logger.warn(`Failed to run enhanced ML model script: ${error.message}`);
+        resolve(this.predictWithJavaScript(features));
+      });
+    });
+  }
+
   async predictWithPython(features) {
+    const enhancedScriptPath = path.join(__dirname, 'predict_crop_enhanced.py');
+    if (fs.existsSync(enhancedScriptPath)) {
+      return await this.predictWithEnhancedModel(features, enhancedScriptPath);
+    }
+    
     return new Promise((resolve, reject) => {
       const pythonProcess = spawn('python3', [
         this.pythonScriptPath,
@@ -94,13 +127,9 @@ class CropRecommenderML {
     });
   }
 
-  /**
-   * Predict using JavaScript fallback (rule-based + ML-like scoring)
-   */
   predictWithJavaScript(features) {
     const { temperature, rainfall, ph, humidity, soil_type, state } = features;
     
-    // Crop database with requirements
     const cropDatabase = [
       {
         name: 'Rice',
@@ -184,12 +213,10 @@ class CropRecommenderML {
       }
     ];
 
-    // Score each crop
     const recommendations = cropDatabase.map(crop => {
       let score = crop.baseScore;
       let reasons = [];
 
-      // Temperature match (30% weight)
       if (temperature >= crop.tempRange[0] && temperature <= crop.tempRange[1]) {
         const tempScore = 30;
         score += tempScore;
@@ -203,7 +230,6 @@ class CropRecommenderML {
         score += tempScore;
       }
 
-      // Rainfall match (25% weight)
       if (rainfall >= crop.rainfallRange[0] && rainfall <= crop.rainfallRange[1]) {
         const rainScore = 25;
         score += rainScore;
@@ -217,7 +243,6 @@ class CropRecommenderML {
         score += rainScore;
       }
 
-      // pH match (20% weight)
       if (ph >= crop.phRange[0] && ph <= crop.phRange[1]) {
         const phScore = 20;
         score += phScore;
@@ -231,7 +256,6 @@ class CropRecommenderML {
         score += phScore;
       }
 
-      // Soil type match (15% weight)
       if (crop.suitableSoils.includes('all types') || 
           crop.suitableSoils.some(s => soil_type?.toLowerCase().includes(s.toLowerCase()))) {
         const soilScore = 15;
@@ -241,7 +265,6 @@ class CropRecommenderML {
         score += 5;
       }
 
-      // Humidity match (10% weight)
       if (humidity >= crop.humidityRange[0] && humidity <= crop.humidityRange[1]) {
         score += 10;
       } else {
@@ -253,7 +276,6 @@ class CropRecommenderML {
         score += humidityScore;
       }
 
-      // Normalize score to 0-100
       score = Math.min(100, Math.max(0, Math.round(score)));
 
       return {
@@ -265,15 +287,11 @@ class CropRecommenderML {
       };
     });
 
-    // Sort by confidence and return top 5
     return recommendations
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 5);
   }
 
-  /**
-   * Get feature importance (mock for JS implementation)
-   */
   getFeatureImportance() {
     return {
       temperature: 0.30,

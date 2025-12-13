@@ -3,7 +3,6 @@ const router = express.Router();
 const locationService = require('../services/locationService');
 const { authenticateToken } = require('../middleware/auth');
 
-// Get location data from coordinates
 router.get('/location', async (req, res) => {
   try {
     const { latitude, longitude } = req.query;
@@ -32,7 +31,6 @@ router.get('/location', async (req, res) => {
   }
 });
 
-// Detect soil type from location
 router.get('/soil/detect', async (req, res) => {
   try {
     const { latitude, longitude, state } = req.query;
@@ -62,7 +60,6 @@ router.get('/soil/detect', async (req, res) => {
   }
 });
 
-// Get weather for location
 router.get('/weather', async (req, res) => {
   try {
     const { latitude, longitude } = req.query;
@@ -91,7 +88,6 @@ router.get('/weather', async (req, res) => {
   }
 });
 
-// Get comprehensive location data (location + soil + weather)
 router.get('/complete', async (req, res) => {
   try {
     const { latitude, longitude } = req.query;

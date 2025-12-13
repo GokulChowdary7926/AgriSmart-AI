@@ -1,18 +1,6 @@
-/**
- * Location-Aware Crop Recommendation Engine
- * Implements dynamic, location-specific crop recommendations based on:
- * - Agro-climatic zone classification
- * - Region-specific crop mapping
- * - Elevation-based filtering
- * - Seasonal filtering
- * - Location-specific scoring adjustments
- */
 
 const logger = require('../utils/logger');
 
-/**
- * Agro-climatic zones
- */
 const AgroClimaticZone = {
   TROPICAL_HOT_HUMID: 'tropical_hot_humid',
   TROPICAL_HOT_DRY: 'tropical_hot_dry',
@@ -25,9 +13,6 @@ const AgroClimaticZone = {
   MOUNTAIN: 'mountain'
 };
 
-/**
- * Agricultural seasons
- */
 const Season = {
   KHARIF: 'kharif',      // Monsoon season (Jun-Oct) - India
   RABI: 'rabi',          // Winter season (Nov-Apr) - India
@@ -38,9 +23,6 @@ const Season = {
   WINTER: 'winter'
 };
 
-/**
- * Dynamic Crop Database with Location Intelligence
- */
 class DynamicCropDatabase {
   constructor() {
     this.crops = this._initializeCropDatabase();
@@ -49,7 +31,6 @@ class DynamicCropDatabase {
 
   _initializeCropDatabase() {
     return {
-      // Tropical crops (hot humid)
       'rice': {
         crop_id: 'rice_001',
         name: 'Rice',
@@ -82,7 +63,6 @@ class DynamicCropDatabase {
         }
       },
 
-      // Temperate crops
       'wheat': {
         crop_id: 'wheat_001',
         name: 'Wheat',
@@ -116,7 +96,6 @@ class DynamicCropDatabase {
         }
       },
 
-      // Arid/semi-arid crops
       'millet': {
         crop_id: 'millet_001',
         name: 'Pearl Millet',
@@ -150,7 +129,6 @@ class DynamicCropDatabase {
         }
       },
 
-      // Mountain crops
       'apple': {
         crop_id: 'apple_001',
         name: 'Apple',
@@ -185,7 +163,6 @@ class DynamicCropDatabase {
         }
       },
 
-      // Cold climate crops
       'potato': {
         crop_id: 'potato_001',
         name: 'Potato',
@@ -220,7 +197,6 @@ class DynamicCropDatabase {
         }
       },
 
-      // Additional crops
       'cotton': {
         crop_id: 'cotton_001',
         name: 'Cotton',
@@ -323,7 +299,6 @@ class DynamicCropDatabase {
 
   _initializeLocationCropMapping() {
     return {
-      // India regions
       'punjab': ['wheat', 'rice', 'cotton', 'sugarcane'],
       'uttar pradesh': ['wheat', 'rice', 'sugarcane', 'potato'],
       'rajasthan': ['millet', 'wheat', 'cotton', 'mustard', 'groundnut'],
@@ -345,7 +320,6 @@ class DynamicCropDatabase {
       'odisha': ['rice', 'pulses', 'groundnut', 'jute'],
       'assam': ['rice', 'tea', 'jute', 'mustard'],
 
-      // International regions
       'midwest usa': ['corn', 'soybean', 'wheat'],
       'california': ['almonds', 'grapes', 'tomatoes', 'olive'],
       'mediterranean': ['olive', 'grapes', 'citrus', 'wheat'],
@@ -354,20 +328,15 @@ class DynamicCropDatabase {
     };
   }
 
-  /**
-   * Get crops for a specific location
-   */
   getCropsForLocation(locationContext) {
     const regionKey = locationContext.region?.toLowerCase() || '';
     const country = locationContext.country?.toLowerCase() || '';
     const zone = locationContext.agro_climatic_zone;
 
-    // Step 1: Filter by agro-climatic zone
     let zoneCrops = Object.values(this.crops).filter(crop =>
       crop.agro_climatic_zones.includes(zone)
     );
 
-    // Step 2: Filter by country if available
     if (country) {
       const countryCrops = zoneCrops.filter(crop =>
         crop.countries.some(c => c.toLowerCase() === country)
@@ -377,7 +346,6 @@ class DynamicCropDatabase {
       }
     }
 
-    // Step 3: Filter by region mapping
     let regionCrops = [];
     if (regionKey && this.locationCropMap[regionKey]) {
       const regionCropNames = this.locationCropMap[regionKey];
@@ -386,16 +354,13 @@ class DynamicCropDatabase {
       );
     }
 
-    // Step 4: Use region-specific crops if found, otherwise use zone crops
     let suitableCrops = regionCrops.length > 0 ? regionCrops : zoneCrops;
 
-    // Step 5: Filter by elevation
     const elevation = locationContext.elevation || 200;
     suitableCrops = suitableCrops.filter(crop =>
       elevation >= crop.elevation_range[0] && elevation <= crop.elevation_range[1]
     );
 
-    // Step 6: Filter by current season (but be lenient)
     const currentSeason = locationContext.current_season;
     let seasonFiltered = suitableCrops.filter(crop =>
       crop.seasons.includes(currentSeason) || 
@@ -403,15 +368,12 @@ class DynamicCropDatabase {
       crop.seasons.includes('All')
     );
 
-    // If no crops match current season, relax season filter completely
     if (seasonFiltered.length === 0) {
       seasonFiltered = suitableCrops;
       logger.info(`No crops match current season (${currentSeason}), showing all suitable crops`);
     }
 
-    // If still too few crops, include zone crops even if not in region map
     if (seasonFiltered.length < 3 && zoneCrops.length > seasonFiltered.length) {
-      // Add zone crops that weren't in region map but match zone
       const additionalCrops = zoneCrops.filter(crop => 
         !seasonFiltered.some(sc => sc.crop_id === crop.crop_id) &&
         elevation >= crop.elevation_range[0] && elevation <= crop.elevation_range[1]
@@ -429,33 +391,39 @@ class DynamicCropDatabase {
   }
 }
 
-/**
- * Agro-climatic Zone Classifier
- */
 class AgroClimaticClassifier {
-  classify(lat, lon) {
-    // Simple classification based on latitude and longitude
+  classify(lat, lon, elevation = 200) {
     const absLat = Math.abs(lat);
 
+    if ((lat > 33 && lat < 35 && lon > 74 && lon < 76) || elevation > 1500) {
+      return AgroClimaticZone.MOUNTAIN;
+    }
+    
+    if ((lat > 30 && lat < 33 && lon > 76 && lon < 79 && elevation > 1000) ||
+        (lat > 29 && lat < 31 && lon > 78 && lon < 80 && elevation > 1000)) {
+      return AgroClimaticZone.MOUNTAIN;
+    }
+
+    if (lat > 23 && lat < 30 && lon > 69 && lon < 78) {
+      if (lat > 25 && lat < 28 && lon > 70 && lon < 76) {
+        return AgroClimaticZone.ARID;
+      }
+      return AgroClimaticZone.SEMI_ARID;
+    }
+
     if (absLat < 23.5) {
-      // Tropical
       if (lon > 70 && lon < 90 && lat > 8 && lat < 37) {
-        // South Asia specific - check for humid conditions
         return AgroClimaticZone.TROPICAL_HOT_HUMID;
       }
       return AgroClimaticZone.TROPICAL_HOT_DRY;
     } else if (absLat >= 23.5 && absLat < 35) {
-      // Subtropical
       return AgroClimaticZone.SUBTROPICAL;
     } else if (absLat >= 35 && absLat < 45) {
-      // Temperate/Mediterranean
       if (lon > 0 && lon < 20) {
-        // Mediterranean region
         return AgroClimaticZone.MEDITERRANEAN;
       }
       return AgroClimaticZone.TEMPERATE;
     } else {
-      // Cold/Mountain
       if (absLat > 30 && elevation > 1000) {
         return AgroClimaticZone.MOUNTAIN;
       }
@@ -464,14 +432,10 @@ class AgroClimaticClassifier {
   }
 }
 
-/**
- * Season Detector
- */
 class SeasonDetector {
   getSeason(lat, lon) {
     const month = new Date().getMonth() + 1;
 
-    // India-specific seasons
     if (lon > 70 && lon < 90 && lat > 8 && lat < 37) {
       if (month >= 6 && month <= 10) {
         return Season.KHARIF;
@@ -482,7 +446,6 @@ class SeasonDetector {
       }
     }
 
-    // Northern hemisphere
     if (lat > 0) {
       if (month >= 3 && month <= 5) {
         return Season.SPRING;
@@ -494,7 +457,6 @@ class SeasonDetector {
         return Season.WINTER;
       }
     } else {
-      // Southern hemisphere
       if (month >= 9 && month <= 11) {
         return Season.SPRING;
       } else if (month === 12 || month <= 2) {
@@ -531,9 +493,6 @@ class SeasonDetector {
   }
 }
 
-/**
- * Location-Aware Crop Recommendation Engine
- */
 class LocationAwareCropEngine {
   constructor() {
     this.cropDb = new DynamicCropDatabase();
@@ -541,14 +500,9 @@ class LocationAwareCropEngine {
     this.seasonDetector = new SeasonDetector();
   }
 
-  /**
-   * Analyze location and create context
-   */
   analyzeLocation(lat, lon, state = null, region = null, country = 'India') {
-    // Get elevation - for Kashmir and mountain regions, use higher elevation
     let elevation = this._getElevation(lat, lon);
     
-    // Adjust elevation for known mountain regions
     if (state && (state.toLowerCase().includes('kashmir') || 
                   state.toLowerCase().includes('himachal') ||
                   state.toLowerCase().includes('uttarakhand'))) {
@@ -575,11 +529,7 @@ class LocationAwareCropEngine {
     };
   }
 
-  /**
-   * Generate location-specific recommendations
-   */
   generateRecommendations(locationContext, soilData, weatherData, marketData = null) {
-    // Get location-specific crops
     const locationCrops = this.cropDb.getCropsForLocation(locationContext);
 
     if (locationCrops.length === 0) {
@@ -590,7 +540,6 @@ class LocationAwareCropEngine {
     const recommendations = [];
 
     for (const crop of locationCrops) {
-      // Calculate suitability score
       const { score, detailedScores } = this._calculateCropSuitability(
         crop,
         locationContext,
@@ -598,12 +547,9 @@ class LocationAwareCropEngine {
         weatherData
       );
 
-      // Apply location-specific adjustments
       const adjustedScore = this._applyLocationAdjustments(score, crop, locationContext);
 
-      // Only recommend if score is above threshold
       if (adjustedScore >= 50) {
-        // Calculate expected yield
         const expectedYield = this._calculateLocationYield(
           crop,
           adjustedScore,
@@ -611,7 +557,6 @@ class LocationAwareCropEngine {
           soilData
         );
 
-        // Calculate revenue
         const revenue = this._calculateLocationRevenue(
           expectedYield,
           crop,
@@ -643,52 +588,39 @@ class LocationAwareCropEngine {
       }
     }
 
-    // Sort by suitability score
     recommendations.sort((a, b) => b.suitability_score - a.suitability_score);
 
-    // Ensure diversity
     const uniqueRecommendations = this._ensureDiversity(recommendations);
 
     return uniqueRecommendations.slice(0, 10);
   }
 
-  /**
-   * Calculate comprehensive crop suitability score
-   */
   _calculateCropSuitability(crop, locationContext, soilData, weatherData) {
     const scores = {};
 
-    // 1. Climate Match (25 points)
     const climateScore = this._calculateClimateScore(crop, locationContext, weatherData);
     scores.climate_match = climateScore * 25;
 
-    // 2. Soil Compatibility (20 points)
     const soilScore = this._calculateSoilScore(crop, soilData);
     scores.soil_compatibility = soilScore * 20;
 
-    // 3. Seasonal Fit (15 points)
     const seasonScore = crop.seasons.includes(locationContext.current_season) ? 1.0 : 0.5;
     scores.seasonal_fit = seasonScore * 15;
 
-    // 4. Elevation Suitability (10 points)
     const elevationScore = this._calculateElevationScore(crop, locationContext.elevation);
     scores.elevation_suitability = elevationScore * 10;
 
-    // 5. Regional Popularity (10 points)
     const regionalScore = this._calculateRegionalScore(crop, locationContext.region);
     scores.regional_popularity = regionalScore * 10;
 
-    // 6. Economic Viability (10 points)
     const economicScore = this._calculateEconomicScore(crop, locationContext);
     scores.economic_viability = economicScore * 10;
 
-    // 7. Risk Factor (10 points)
     const riskScore = this._calculateRiskScore(crop, locationContext, weatherData);
     scores.risk_factor = riskScore * 10;
 
     const totalScore = Object.values(scores).reduce((sum, val) => sum + val, 0);
 
-    // Apply crop-specific adjustments
     const adjustments = crop.suitability_score_adjustments || {};
     let adjustedScore = totalScore;
     if (adjustments.temperature) {
@@ -708,7 +640,6 @@ class LocationAwareCropEngine {
     const currentTemp = weatherData.temperature || 25;
     const currentRainfall = weatherData.rainfall || 0;
 
-    // Temperature score
     const tempRange = crop.max_temp - crop.min_temp;
     const tempDistance = Math.abs(currentTemp - crop.optimal_temp);
     let tempScore = 0;
@@ -716,7 +647,6 @@ class LocationAwareCropEngine {
       tempScore = 1 - (tempDistance / (tempRange / 2));
     }
 
-    // Rainfall score
     let rainfallScore = 0;
     if (crop.rainfall_min <= currentRainfall && currentRainfall <= crop.rainfall_max) {
       rainfallScore = 1.0;
@@ -726,7 +656,6 @@ class LocationAwareCropEngine {
       rainfallScore = crop.rainfall_max / currentRainfall;
     }
 
-    // Long-term climate match
     const longTermTempMatch = 1 - Math.abs(locationContext.avg_annual_temp - crop.optimal_temp) / 20;
     const longTermRainfallMatch = Math.min(locationContext.avg_annual_rainfall / crop.rainfall_max, 1.0);
 
@@ -745,7 +674,6 @@ class LocationAwareCropEngine {
     const soilType = (soilData.soil_type || soilData.type || 'loam').toLowerCase();
     const drainage = (soilData.drainage || 'moderate').toLowerCase();
 
-    // pH score
     let phScore = 0;
     if (crop.min_ph <= soilPh && soilPh <= crop.max_ph) {
       const phDistance = Math.abs(soilPh - crop.optimal_ph);
@@ -753,11 +681,9 @@ class LocationAwareCropEngine {
       phScore = 1 - (phDistance / (phRange / 2));
     }
 
-    // Soil type score
     const cropSoilTypes = crop.soil_types.map(t => t.toLowerCase());
     const soilTypeScore = cropSoilTypes.includes(soilType) ? 1.0 : 0.3;
 
-    // Drainage score
     const drainageMatch = {
       'poor': { 'poor_to_moderate': 1.0, 'well': 0.3, 'excellent': 0.1 },
       'moderate': { 'poor_to_moderate': 1.0, 'well': 0.8, 'excellent': 0.5 },
@@ -826,21 +752,18 @@ class LocationAwareCropEngine {
     const currentTemp = weatherData.temperature || 25;
     const currentRainfall = weatherData.rainfall || 0;
 
-    // Temperature risk
     if (currentTemp > crop.max_temp + 5) {
       riskFactors.push(0.3);
     } else if (currentTemp < crop.min_temp - 5) {
       riskFactors.push(0.4);
     }
 
-    // Rainfall risk
     if (currentRainfall > crop.rainfall_max * 1.5) {
       riskFactors.push(0.5);
     } else if (currentRainfall < crop.rainfall_min * 0.5) {
       riskFactors.push(0.6);
     }
 
-    // Frost risk
     if (locationContext.frost_free_days < crop.duration_days) {
       riskFactors.push(0.4);
     }
@@ -856,18 +779,15 @@ class LocationAwareCropEngine {
   _applyLocationAdjustments(score, crop, locationContext) {
     let adjustedScore = score;
 
-    // Adjust for agro-climatic zone match
     if (crop.agro_climatic_zones.includes(locationContext.agro_climatic_zone)) {
       adjustedScore *= 1.1;
     }
 
-    // Adjust for country match
     const countryLower = locationContext.country.toLowerCase();
     if (crop.countries.some(c => c.toLowerCase() === countryLower)) {
       adjustedScore *= 1.05;
     }
 
-    // Adjust for elevation optimality
     const elevationScore = this._calculateElevationScore(crop, locationContext.elevation);
     if (elevationScore > 0.8) {
       adjustedScore *= 1.05;
@@ -881,7 +801,6 @@ class LocationAwareCropEngine {
     const baseAvg = (baseMin + baseMax) / 2;
     const scoreFactor = suitabilityScore / 100;
 
-    // Soil factor
     const organicMatter = parseFloat(soilData.organic_matter || soilData.organicMatter || '2.0') || 2.0;
     let soilFactor = 1.0;
     if (organicMatter > 3.0) {
@@ -890,7 +809,6 @@ class LocationAwareCropEngine {
       soilFactor = 0.8;
     }
 
-    // Location factor
     const locationFactor = this._getLocationYieldFactor(crop.name, locationContext.region);
 
     const adjustedAvg = baseAvg * scoreFactor * soilFactor * locationFactor;
@@ -1039,12 +957,10 @@ class LocationAwareCropEngine {
         seenCrops.add(cropName);
         uniqueCrops.push(rec);
       } else {
-        // Allow similar crops if significantly different scores
         const similarRecs = uniqueCrops.filter(r => (r.crop_name || r.name) === cropName);
         if (similarRecs.length > 0) {
           const existingScore = similarRecs[0].suitability_score;
           if (rec.suitability_score > existingScore + 10) {
-            // Replace with higher scoring version
             const filtered = uniqueCrops.filter(r => (r.crop_name || r.name) !== cropName);
             filtered.push(rec);
             uniqueCrops.length = 0;
@@ -1061,9 +977,7 @@ class LocationAwareCropEngine {
     return Math.min(score / 100, 1.0);
   }
 
-  // Placeholder methods for external data
   _getElevation(lat, lon) {
-    // Would call elevation API
     return 200.0;
   }
 

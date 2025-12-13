@@ -72,7 +72,6 @@ const Analytics = () => {
       if (response.data.success && response.data.data) {
         setDashboardData(response.data.data);
       } else {
-        // Use default empty data structure
         setDashboardData({
           summary: { metrics: {} },
           marketTrends: [],
@@ -82,7 +81,6 @@ const Analytics = () => {
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      // Use default empty data structure on error
       setDashboardData({
         summary: { metrics: {} },
         marketTrends: [],
@@ -109,10 +107,17 @@ const Analytics = () => {
         startDate.setDate(startDate.getDate() - 30);
         params.startDate = startDate.toISOString().split('T')[0];
         params.endDate = endDate.toISOString().split('T')[0];
+      } else if (timeRange === '90days') {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 90);
+        params.startDate = startDate.toISOString().split('T')[0];
+        params.endDate = endDate.toISOString().split('T')[0];
       }
       const response = await api.get('/analytics/historical', { params });
-      if (response.data.success && response.data.data) {
-        setHistoricalData(response.data.data);
+      if (response.data && response.data.success && response.data.data) {
+        const data = Array.isArray(response.data.data) ? response.data.data : [];
+        setHistoricalData(data);
       } else {
         setHistoricalData([]);
       }
@@ -154,7 +159,6 @@ const Analytics = () => {
     );
   }
 
-  // Provide default values to prevent errors - do this BEFORE any access
   const safeDashboardData = dashboardData || {};
   const safeSummary = (safeDashboardData.summary && typeof safeDashboardData.summary === 'object') 
     ? safeDashboardData.summary 
@@ -173,11 +177,15 @@ const Analytics = () => {
     );
   }
 
-  const revenueData = historicalData.map(item => ({
-    date: new Date(item.date).toLocaleDateString(),
-    revenue: item.metrics?.totalRevenue || 0,
-    expenses: item.metrics?.totalExpenses || 0
-  }));
+  const revenueData = Array.isArray(historicalData) && historicalData.length > 0
+    ? historicalData.map(item => ({
+        date: item.date ? new Date(item.date).toLocaleDateString() : new Date().toLocaleDateString(),
+        revenue: (item.metrics && typeof item.metrics.totalRevenue === 'number') ? item.metrics.totalRevenue : 0,
+        expenses: (item.metrics && typeof item.metrics.totalExpenses === 'number') ? item.metrics.totalExpenses : 0
+      }))
+    : [
+        { date: new Date().toLocaleDateString(), revenue: 0, expenses: 0 }
+      ];
 
   const cropHealthData = [
     { name: t('analytics.healthy') || 'Healthy', value: safeSummary.metrics?.activeCrops || 0 },
@@ -192,7 +200,21 @@ const Analytics = () => {
     <Container maxWidth="xl" sx={{ mt: 2, mb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">{t('analytics.title') || 'Analytics Dashboard'}</Typography>
-        <Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button 
+            variant="contained" 
+            color="primary"
+            sx={{ minWidth: 40, width: 40, height: 40, borderRadius: '50%', p: 0 }}
+            onClick={() => {
+              const newItem = prompt('Add new item:');
+              if (newItem) {
+                console.log('Adding:', newItem);
+              }
+            }}
+            title="Add New Item"
+          >
+            +
+          </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={handleRefresh}>
             {t('analytics.refresh') || 'Refresh'}
           </Button>
@@ -276,10 +298,10 @@ const Analytics = () => {
             <Box sx={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={cropHealthData} cx="50%" cy="50%" labelLine={false}
+                  <Pie data={Array.isArray(cropHealthData) ? cropHealthData : []} cx="50%" cy="50%" labelLine={false}
                     label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
                     outerRadius={80} fill="#8884d8" dataKey="value">
-                    {cropHealthData.map((entry, index) => (
+                    {(Array.isArray(cropHealthData) ? cropHealthData : []).map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
@@ -290,7 +312,7 @@ const Analytics = () => {
           </Paper>
         </Grid>
 
-        {insights.length > 0 && (
+        {Array.isArray(insights) && insights.length > 0 && (
           <Grid item xs={12}>
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" gutterBottom>{t('analytics.insights') || 'Insights'} & {t('analytics.recommendations') || 'Recommendations'}</Typography>

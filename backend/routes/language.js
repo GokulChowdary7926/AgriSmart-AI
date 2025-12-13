@@ -4,7 +4,6 @@ const LanguageController = require('../controllers/LanguageController');
 const LanguageMiddleware = require('../middleware/language');
 const { authenticateToken } = require('../middleware/auth');
 
-// Public routes
 router.get('/languages', LanguageMiddleware.getSupportedLanguages);
 
 router.get('/translate/:key', async (req, res) => {
@@ -26,13 +25,10 @@ router.get('/translate/:key', async (req, res) => {
   }
 });
 
-// Get module translations (public)
 router.get('/module/:module', LanguageMiddleware.detectLanguage, LanguageController.getModuleTranslations);
 
-// Protected routes
 router.use(authenticateToken);
 
-// Admin only routes
 router.post('/initialize', async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({

@@ -82,7 +82,6 @@ const cropSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Indexes
 cropSchema.index({ name: 1 });
 cropSchema.index({ type: 1 });
 cropSchema.index({ status: 1 });
@@ -90,13 +89,11 @@ cropSchema.index({ createdBy: 1 });
 cropSchema.index({ 'location.state': 1 });
 cropSchema.index({ plantingDate: 1 });
 
-// Virtual for formatted area
 cropSchema.virtual('formattedArea').get(function() {
   if (!this.area || !this.area.value) return 'N/A';
   return `${this.area.value} ${this.area.unit}`;
 });
 
-// Method to get crop status color
 cropSchema.methods.getStatusColor = function() {
   const colors = {
     planned: 'default',
@@ -110,17 +107,14 @@ cropSchema.methods.getStatusColor = function() {
   return colors[this.status] || 'default';
 };
 
-// Static method to find crops by status
 cropSchema.statics.findByStatus = function(status) {
   return this.find({ status });
 };
 
-// Static method to find crops by type
 cropSchema.statics.findByType = function(type) {
   return this.find({ type });
 };
 
-// Static method to find crops by season
 cropSchema.statics.findBySeason = function(season) {
   return this.find({ seasons: season });
 };
@@ -128,5 +122,18 @@ cropSchema.statics.findBySeason = function(season) {
 const Crop = mongoose.model('Crop', cropSchema);
 
 module.exports = Crop;
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

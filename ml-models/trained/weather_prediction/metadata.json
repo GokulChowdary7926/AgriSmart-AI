@@ -1,0 +1,13 @@
+{
+  "training_id": "training_24012",
+  "model_type": "random_forest",
+  "features": [
+    "temperature",
+    "humidity",
+    "pressure",
+    "windSpeed",
+    "rainfall"
+  ],
+  "mae": 0.133724968658632,
+  "tensorflow_available": false
+}

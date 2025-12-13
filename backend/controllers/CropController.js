@@ -1,11 +1,11 @@
 const Crop = require('../models/Crop');
 const logger = require('../utils/logger');
 const cropRecommendationEngine = require('../services/CropRecommendationEngine');
+const enhancedCropRecommendationService = require('../services/EnhancedCropRecommendationService');
 const cropRecommenderML = require('../services/ml/CropRecommenderML');
 const weatherService = require('../services/WeatherService');
 
 class CropController {
-  // Get all crops
   static async getAll(req, res) {
     try {
       const { 
@@ -58,7 +58,6 @@ class CropController {
     }
   }
   
-  // Get crop by ID
   static async getById(req, res) {
     try {
       const crop = await Crop.findById(req.params.id);
@@ -83,7 +82,6 @@ class CropController {
     }
   }
   
-  // Create new crop
   static async create(req, res) {
     try {
       const crop = new Crop({
@@ -106,7 +104,6 @@ class CropController {
     }
   }
   
-  // Update crop
   static async update(req, res) {
     try {
       const crop = await Crop.findByIdAndUpdate(
@@ -138,7 +135,6 @@ class CropController {
     }
   }
   
-  // Delete crop
   static async delete(req, res) {
     try {
       const crop = await Crop.findByIdAndDelete(req.params.id);
@@ -163,17 +159,13 @@ class CropController {
     }
   }
   
-  // Get crop recommendations
   static async recommend(req, res) {
     try {
-      // Support both GET (query params) and POST (body) requests
       const requestData = req.method === 'POST' ? (req.body || {}) : (req.query || {});
       
-      // Extract parameters - handle both string and number formats
       const rawLat = requestData?.latitude;
       const rawLng = requestData?.longitude;
       
-      // Convert to string and trim, but keep undefined if not present
       const latitude = (rawLat !== undefined && rawLat !== null && String(rawLat).trim() !== '') 
         ? String(rawLat).trim() 
         : undefined;
@@ -186,6 +178,11 @@ class CropController {
       const ph = requestData?.ph;
       const soilType = requestData?.soilType;
       const season = requestData?.season;
+      const state = requestData?.state;
+      
+      let locationData = null;
+      let weatherData = null;
+      let conditions = {};
       
       logger.info('Crop recommendation request:', {
         method: req.method,
@@ -198,15 +195,10 @@ class CropController {
       });
       
       const locationService = require('../services/locationService');
-      let conditions = {};
-      let locationData = null;
 
-      // If coordinates provided, get comprehensive location data
-      // Convert to numbers and check if valid - SIMPLIFIED VERSION
       let lat = null;
       let lng = null;
       
-      // Parse latitude
       if (latitude !== undefined && latitude !== null) {
         const latStr = String(latitude).trim();
         if (latStr !== '' && latStr !== 'undefined' && latStr !== 'null') {
@@ -217,7 +209,6 @@ class CropController {
         }
       }
       
-      // Parse longitude
       if (longitude !== undefined && longitude !== null) {
         const lngStr = String(longitude).trim();
         if (lngStr !== '' && lngStr !== 'undefined' && lngStr !== 'null') {
@@ -236,13 +227,10 @@ class CropController {
         hasValidCoords: !!(lat !== null && lng !== null)
       });
       
-      // If we have valid coordinates, fetch location data using CropRecommendationEngine
       if (lat !== null && lng !== null) {
         try {
           logger.info('Fetching location data using CropRecommendationEngine:', { latitude: lat, longitude: lng });
           
-          // Get weather data if available from locationService
-          let weatherData = null;
           try {
             const locationService = require('../services/locationService');
             const locData = await locationService.getLocationData(lat, lng);
@@ -258,17 +246,12 @@ class CropController {
             logger.warn('Weather data not available, using defaults');
           }
           
-          // Use CropRecommendationEngine to get comprehensive data with location-aware engine
-          // Pass state and region to enable location-specific recommendations
-          const stateFromLocation = engineData?.location?.state || state || null;
-          const regionFromLocation = engineData?.location?.region || stateFromLocation || null;
-          
           const engineData = await cropRecommendationEngine.getLocationData(
             lat, 
             lng, 
             weatherData,
-            stateFromLocation,
-            regionFromLocation,
+            state || null,
+            state || null,
             'India'
           );
           
@@ -280,7 +263,6 @@ class CropController {
             location: engineData.location?.state || engineData.location?.region
           });
           
-          // Set locationData for response
           locationData = {
             location: engineData.location,
             weather: engineData.weather,
@@ -292,7 +274,6 @@ class CropController {
             humidity: engineData.weather?.humidity || 65
           };
           
-          // Extract conditions from engine data
           const temp = parseFloat(temperature) || locationData.temperature || 25;
           const rain = parseFloat(rainfall) || locationData.rainfall || 800;
           const soilPh = parseFloat(ph) || locationData.ph || 7.0;
@@ -307,7 +288,6 @@ class CropController {
             location: engineData.location
           };
           
-          // Store engine recommendations for later use (these are location-specific)
           locationData.engineRecommendations = engineData.recommendations;
           locationData.marketPrices = engineData.market_prices;
           locationData.diseases = engineData.common_diseases;
@@ -322,8 +302,6 @@ class CropController {
         logger.warn('Coordinates check failed - lat:', lat, 'lng:', lng, 'rawLat:', latitude, 'rawLng:', longitude);
       }
 
-      // Fallback to query parameters if location data not available
-      // Check if conditions were set from locationData
       if (!conditions.temperature || !conditions.rainfall || !conditions.ph || !conditions.soilType) {
         logger.warn('Conditions not set from locationData, checking provided params...', {
           hasLocationData: !!locationData,
@@ -331,7 +309,6 @@ class CropController {
           providedParams: { temperature, rainfall, ph, soilType }
         });
         
-        // If we have locationData but conditions weren't set, there was an error
         if (locationData) {
           logger.error('Location data fetched but conditions not set properly:', {
             locationDataKeys: Object.keys(locationData),
@@ -349,31 +326,25 @@ class CropController {
           });
         }
         
-        // Try to use provided parameters OR use fallback defaults
         if (!temperature || !rainfall || !ph || !soilType) {
           
-          // Use fallback defaults based on approximate location or generic Indian data
           const fallbackLat = latitude ? parseFloat(latitude) : 28.6139; // New Delhi default
           const fallbackLng = longitude ? parseFloat(longitude) : 77.2090;
           
-          // Determine region and set defaults
           let defaultTemp = 25;
           let defaultRainfall = 800;
           let defaultPh = 7.0;
           let defaultSoilType = 'alluvial';
           
           if (fallbackLat > 30) {
-            // North India
             defaultTemp = 22;
             defaultRainfall = 600;
             defaultSoilType = 'alluvial';
           } else if (fallbackLat < 20) {
-            // South India
             defaultTemp = 28;
             defaultRainfall = 1200;
             defaultSoilType = 'red';
           } else {
-            // Central India
             defaultTemp = 26;
             defaultRainfall = 900;
             defaultSoilType = 'black';
@@ -394,7 +365,6 @@ class CropController {
           
           logger.info('Using fallback defaults:', conditions);
         } else {
-          // Use provided parameters if they exist
           const temp = temperature ? parseFloat(temperature) : null;
           const rain = rainfall ? parseFloat(rainfall) : null;
           const soilPh = ph ? parseFloat(ph) : null;
@@ -412,7 +382,6 @@ class CropController {
         }
       }
       
-      // Final validation - ensure all conditions are set
       if (!conditions.temperature || !conditions.rainfall || !conditions.ph || !conditions.soilType) {
         logger.error('Conditions validation failed:', conditions);
         return res.status(500).json({
@@ -422,23 +391,96 @@ class CropController {
         });
       }
       
-      // PRIORITIZE location-aware engine recommendations over ML
-      // Location-aware engine provides location-specific crops
       let recommendations = [];
+      let realTimeUsed = false;
       
-      // First priority: Use location-aware engine recommendations (location-specific)
-      if (locationData?.engineRecommendations && locationData.engineRecommendations.length > 0) {
+      if (lat !== null && lng !== null) {
+        try {
+          const userPreferences = {
+            irrigation: requestData.irrigation || 'rainfed',
+            farmSize: requestData.farmSize || 1,
+            experience: requestData.experience || 'beginner',
+            budget: requestData.budget || 'low'
+          };
+          
+          const perfectResult = await enhancedCropRecommendationService.getPerfectRecommendations(
+            { lat, lng },
+            conditions.soilType,
+            conditions.season,
+            userPreferences
+          );
+          
+          if (perfectResult.success && perfectResult.recommendations?.length > 0) {
+            recommendations = perfectResult.recommendations.map(rec => ({
+              crop_name: rec.name || rec.crop_name || rec.crop,
+              name: rec.name || rec.crop_name || rec.crop,
+              crop: rec.name || rec.crop_name || rec.crop,
+              suitability: rec.perfectScore || rec.suitability || rec.score,
+              confidence: rec.confidence || 0.9,
+              perfectScore: rec.perfectScore,
+              scoreBreakdown: rec.scoreBreakdown,
+              recommendation: rec.recommendation,
+              advantages: rec.advantages,
+              risks: rec.risks,
+              profitability: rec.profitability,
+              marketDemand: rec.marketDemand,
+              bestPractices: rec.bestPractices,
+              reasons: rec.reasons || rec.advantages,
+              expectedYield: rec.expectedYield || rec.yield,
+              profitEstimate: rec.profitability?.estimatedProfit,
+              source: 'Enhanced Perfect Recommendation'
+            }));
+            realTimeUsed = true;
+            logger.info(`✅ Using enhanced perfect crop recommendations: ${recommendations.length} crops`);
+          }
+        } catch (enhancedError) {
+          logger.warn('Enhanced crop recommendation unavailable, trying real-time service:', enhancedError.message);
+          
+          try {
+            const RealTimeCropRecommendationService = require('../services/RealTimeCropRecommendationService');
+            const userPreferences = {
+              irrigation: requestData.irrigation || 'rainfed',
+              farmSize: requestData.farmSize || 1,
+              experience: requestData.experience || 'beginner',
+              budget: requestData.budget || 'low'
+            };
+            
+            const realTimeResult = await RealTimeCropRecommendationService.getRealTimeRecommendations(
+              { lat, lng },
+              userPreferences
+            );
+            
+            if (realTimeResult.success && realTimeResult.recommendations?.length > 0) {
+              recommendations = realTimeResult.recommendations.map(rec => ({
+                crop_name: rec.crop,
+                name: rec.crop,
+                crop: rec.crop,
+                suitability: rec.combinedScore || rec.score,
+                confidence: rec.confidence,
+                reasons: rec.reasons,
+                expectedYield: rec.expectedYield,
+                profitEstimate: rec.profitEstimate,
+                source: 'Real-Time Service'
+              }));
+              realTimeUsed = true;
+              logger.info(`✅ Using real-time crop recommendations: ${recommendations.length} crops`);
+            }
+          } catch (realtimeError) {
+            logger.warn('Real-time crop recommendation unavailable, using location-aware engine:', realtimeError.message);
+          }
+        }
+      }
+      
+      if (!realTimeUsed && locationData?.engineRecommendations && locationData.engineRecommendations.length > 0) {
         recommendations = locationData.engineRecommendations;
         const location = locationData.location?.state || locationData.location?.region || 'location';
         logger.info(`✅ Using location-aware engine recommendations: ${recommendations.length} crops for ${location}`);
         
-        // Log first few crop names to verify location-specific results
         if (recommendations.length > 0) {
           const cropNames = recommendations.slice(0, 5).map(r => r.crop_name || r.name || r.crop).join(', ');
           logger.info(`   📍 Location-specific crops: ${cropNames}`);
         }
       } else {
-        // If no location-aware recommendations, try to force generate them
         logger.warn('⚠️ No location-aware recommendations found, attempting to generate...');
         try {
           const detectedState = locationData?.location?.state || state || null;
@@ -463,10 +505,8 @@ class CropController {
           logger.warn('Could not force generate location-aware recommendations:', forceError.message);
         }
         
-        // Fallback: Try ML model (but it's generic, not location-specific)
         if (recommendations.length === 0) {
           try {
-            // Prepare features for ML model
             const mlFeatures = {
               N: 70, // Default nitrogen
               P: 40, // Default phosphorus
@@ -495,7 +535,6 @@ class CropController {
               }));
               logger.info('⚠️ Using generic ML recommendations (not location-specific):', recommendations.length);
             } else {
-              // Final fallback: Use basic engine recommendations
               logger.warn('⚠️ Using basic engine recommendations (not location-specific)');
               recommendations = cropRecommendationEngine.getCropRecommendations(
                 conditions.temperature || 25,
@@ -509,10 +548,10 @@ class CropController {
             }
           } catch (mlError) {
             logger.error('ML prediction error, using final fallback:', mlError);
-            // Final fallback
+            const fallbackHumidity = locationData?.humidity || weatherData?.humidity || 65;
             recommendations = cropRecommendationEngine.getCropRecommendations(
               conditions.temperature || 25,
-              65,
+              fallbackHumidity,
               conditions.ph || 7.0,
               conditions.rainfall || 800,
               conditions.soilType || 'alluvial',
@@ -523,9 +562,7 @@ class CropController {
         }
       }
       
-      // Format recommendations for frontend
       const formattedRecommendations = recommendations.map((rec, index) => {
-        // Handle both old and new recommendation formats
         const baseRec = {
           id: rec.id || `rec-${index}`,
           name: rec.crop || rec.name || 'Unknown Crop',
@@ -547,7 +584,6 @@ class CropController {
           requirements: rec.requirements || {}
         };
 
-        // Add new fields if they exist (from multi-layered system)
         if (rec.scoringBreakdown) {
           baseRec.scoringBreakdown = rec.scoringBreakdown;
         }
@@ -600,7 +636,6 @@ class CropController {
     }
   }
 
-  // Helper method to generate recommendation reason
   static generateRecommendationReason(rec, conditions, locationData) {
     const reasons = [];
     
@@ -625,11 +660,9 @@ class CropController {
     return reasons.join(', ') || 'Suitable for your region';
   }
 
-  // Helper method to get current season based on state
   static getCurrentSeason(state) {
     const month = new Date().getMonth() + 1; // 1-12
     
-    // North India seasons
     const northStates = ['Punjab', 'Haryana', 'Uttar Pradesh', 'Delhi', 'Himachal Pradesh', 'Uttarakhand'];
     if (northStates.includes(state)) {
       if (month >= 3 && month <= 5) return 'summer';
@@ -638,18 +671,15 @@ class CropController {
       return 'winter';
     }
 
-    // South India seasons (less variation)
     if (month >= 6 && month <= 9) return 'monsoon';
     if (month >= 10 && month <= 12) return 'winter';
     if (month >= 1 && month <= 2) return 'winter';
     return 'summer';
   }
 
-  // Fallback recommendations when AI model is not available
   static getFallbackRecommendations(conditions) {
     const { temperature, rainfall, ph, soilType, season } = conditions;
     
-    // Basic crop recommendations based on conditions
     const crops = [
       { name: 'Rice', score: 85, season: 'monsoon', duration: '120-150 days', yield: '4-6 tons/ha' },
       { name: 'Wheat', score: 80, season: 'winter', duration: '100-120 days', yield: '3-5 tons/ha' },
@@ -663,7 +693,6 @@ class CropController {
       { name: 'Chili', score: 60, season: 'summer', duration: '120-150 days', yield: '2-3 tons/ha' }
     ];
 
-    // Filter and score based on conditions
     return crops
       .filter(crop => !season || crop.season === season)
       .map(crop => ({
@@ -683,7 +712,6 @@ class CropController {
       .slice(0, 10);
   }
   
-  // Get crops by season
   static async getBySeason(req, res) {
     try {
       const { season } = req.params;
@@ -703,16 +731,13 @@ class CropController {
     }
   }
 
-  // Get crops analytics for dashboard
   static async getAnalytics(req, res) {
     try {
       const userId = req.user?._id;
       
-      // Get user's crops if userId is available
       let userCrops = [];
       if (userId) {
         const CropModel = require('../models/Crop');
-        // Assuming crops have a user/createdBy field
         userCrops = await CropModel.find({ createdBy: userId }).limit(10).sort({ createdAt: -1 });
       }
       

@@ -3,7 +3,6 @@ const router = express.Router();
 const AuthController = require('../controllers/AuthController');
 const logger = require('../utils/logger');
 
-// Debugging middleware for auth routes
 router.use((req, res, next) => {
   if (process.env.NODE_ENV === 'development') {
     logger.info('📱 Auth Route:', {

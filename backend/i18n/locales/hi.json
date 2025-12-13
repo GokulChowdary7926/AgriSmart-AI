@@ -1,0 +1,69 @@
+{
+  "welcome": "स्वागत है, {name}!",
+  "weather": "मौसम",
+  "crops": "फसलें",
+  "diseases": "रोग",
+  "market": "बाजार",
+  "soil": "मिट्टी",
+  "irrigation": "सिंचाई",
+  "fertilizer": "उर्वरक",
+  "harvest": "फसल कटाई",
+  "alert": "चेतावनी",
+  "success": "सफलता",
+  "error": "त्रुटि",
+  "loading": "लोड हो रहा है...",
+  "no_data": "कोई डेटा नहीं",
+  "search": "खोजें",
+  "settings": "सेटिंग्स",
+  "profile": "प्रोफाइल",
+  "logout": "लॉग आउट",
+  "login": "लॉगिन",
+  "register": "पंजीकरण",
+  "phone": "फोन नंबर",
+  "password": "पासवर्ड",
+  "verify": "सत्यापित करें",
+  "send_otp": "OTP भेजें",
+  "disease_detected": "रोग पाया गया: {disease}",
+  "treatment": "उपचार: {treatment}",
+  "weather_alert": "मौसम चेतावनी",
+  "market_price": "बाजार मूल्य: ₹{price}",
+  "crop_advice": "{crop} की खेती के लिए सलाह",
+  "soil_health": "मिट्टी स्वास्थ्य: {status}",
+  "irrigation_time": "सिंचाई का समय: {time}",
+  "fertilizer_dose": "उर्वरक की मात्रा: {dose}",
+  "harvest_time": "फसल कटाई का समय: {time}",
+  "subscription": "सदस्यता",
+  "free": "मुफ्त",
+  "basic": "बेसिक",
+  "premium": "प्रीमियम",
+  "enterprise": "एंटरप्राइज",
+  "features": "विशेषताएं",
+  "buy_now": "अभी खरीदें",
+  "payment_success": "भुगतान सफल",
+  "payment_failed": "भुगतान विफल",
+  "contact_support": "समर्थन से संपर्क करें",
+  "help": "मदद",
+  "about": "के बारे में",
+  "privacy": "गोपनीयता",
+  "terms": "नियम और शर्तें",
+  "language": "भाषा",
+  "notifications": "सूचनाएं",
+  "dark_mode": "डार्क मोड",
+  "feedback": "प्रतिक्रिया",
+  "share": "साझा करें",
+  "rate_app": "ऐप रेट करें",
+  "update": "अद्यतन",
+  "version": "संस्करण"
+}
+
+
+
+
+
+
+
+
+
+
+
+

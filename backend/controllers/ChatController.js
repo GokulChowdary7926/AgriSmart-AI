@@ -2,7 +2,6 @@ const ChatSession = require('../models/ChatSession');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
-// Generate UUID v4 manually
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -12,7 +11,6 @@ function uuidv4() {
 }
 
 class ChatController {
-  // Get or create active session
   static async getOrCreateSession(req, res) {
     try {
       const userId = req.user._id;
@@ -43,7 +41,6 @@ class ChatController {
     }
   }
   
-  // Send message
   static async sendMessage(req, res) {
     try {
       const { sessionId, message, metadata } = req.body;
@@ -69,11 +66,8 @@ class ChatController {
         });
       }
       
-      // Add user message
       await session.addMessage('user', message, metadata);
       
-      // TODO: Process message with AI chatbot service
-      // For now, return a simple response
       const aiResponse = {
         content: `I received your message: "${message}". This is a placeholder response.`,
         metadata: {
@@ -100,7 +94,6 @@ class ChatController {
     }
   }
   
-  // Get session history
   static async getHistory(req, res) {
     try {
       const { sessionId } = req.params;
@@ -131,7 +124,6 @@ class ChatController {
     }
   }
   
-  // Get all user sessions
   static async getUserSessions(req, res) {
     try {
       const userId = req.user._id;
@@ -152,7 +144,6 @@ class ChatController {
     }
   }
   
-  // End session
   static async endSession(req, res) {
     try {
       const { sessionId } = req.params;

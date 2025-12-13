@@ -1,0 +1,185 @@
+{
+  "Rice": [
+    "Leaf_Blight",
+    "Bacterial_Blight",
+    "Blast",
+    "Brown_Spot",
+    "Sheath_Blight",
+    "Tungro",
+    "healthy"
+  ],
+  "Wheat": [
+    "Powdery_Mildew",
+    "Rust",
+    "Leaf_Blight",
+    "Karnal_Bunt",
+    "Loose_Smut",
+    "healthy"
+  ],
+  "Maize": [
+    "Downy_Mildew",
+    "Rust",
+    "Leaf_Blight",
+    "Common_Rust",
+    "Gray_Leaf_Spot",
+    "healthy"
+  ],
+  "Tomato": [
+    "Early_Blight",
+    "Late_Blight",
+    "Bacterial_Spot",
+    "Mosaic_Virus",
+    "Leaf_Curly_Top",
+    "Wilt",
+    "Leaf_Mold",
+    "Septoria_Leaf_Spot",
+    "Target_Spot",
+    "healthy"
+  ],
+  "Potato": [
+    "Early_Blight",
+    "Late_Blight",
+    "Bacterial_Wilt",
+    "Scab",
+    "healthy"
+  ],
+  "Cotton": [
+    "Leaf_Curl",
+    "Bacterial_Blight",
+    "Fusarium_Wilt",
+    "healthy"
+  ],
+  "Sugarcane": [
+    "Smut",
+    "Red_Rot",
+    "Rust",
+    "healthy"
+  ],
+  "Mango": [
+    "Anthracnose",
+    "Powdery_Mildew",
+    "Bacterial_Canker",
+    "healthy"
+  ],
+  "Chickpea": [
+    "Wilt",
+    "Ascochyta_Blight",
+    "healthy"
+  ],
+  "Pigeonpea": [
+    "Wilt",
+    "Sterility_Mosaic",
+    "healthy"
+  ],
+  "Groundnut": [
+    "Early_Leaf_Spot",
+    "Late_Leaf_Spot",
+    "Rust",
+    "healthy"
+  ],
+  "Soybean": [
+    "Rust",
+    "Bacterial_Blight",
+    "healthy"
+  ],
+  "Banana": [
+    "Sigatoka",
+    "Panama_Disease",
+    "healthy"
+  ],
+  "Chili": [
+    "Anthracnose",
+    "Bacterial_Spot",
+    "healthy"
+  ],
+  "Brinjal": [
+    "Bacterial_Wilt",
+    "Phomopsis_Blight",
+    "healthy"
+  ],
+  "Cucumber": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Onion": [
+    "Purple_Blotch",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Cabbage": [
+    "Black_Rot",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Cauliflower": [
+    "Black_Rot",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Okra": [
+    "Yellow_Vein_Mosaic",
+    "Powdery_Mildew",
+    "healthy"
+  ],
+  "Pumpkin": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Watermelon": [
+    "Anthracnose",
+    "Powdery_Mildew",
+    "healthy"
+  ],
+  "Muskmelon": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Bottle_Gourd": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Bitter_Gourd": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Ridge_Gourd": [
+    "Powdery_Mildew",
+    "Downy_Mildew",
+    "healthy"
+  ],
+  "Apple": [
+    "Apple_Scab",
+    "Black_Rot",
+    "Cedar_Apple_Rust",
+    "healthy"
+  ],
+  "Grape": [
+    "Black_Rot",
+    "Esca",
+    "Leaf_Blight",
+    "healthy"
+  ],
+  "Peach": [
+    "Bacterial_Spot",
+    "healthy"
+  ],
+  "Pepper_Bell": [
+    "Bacterial_Spot",
+    "healthy"
+  ],
+  "Strawberry": [
+    "Leaf_Scorch",
+    "healthy"
+  ],
+  "Corn": [
+    "Cercospora_Leaf_Spot",
+    "Common_Rust",
+    "Northern_Leaf_Blight",
+    "healthy"
+  ]
+}

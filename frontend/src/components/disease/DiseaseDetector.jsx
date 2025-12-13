@@ -15,6 +15,8 @@ import { CloudUpload, PhotoCamera, Search, Close } from '@mui/icons-material';
 import { useLanguage } from '../../contexts/LanguageContext';
 import diseaseService from '../../services/diseaseService';
 import MedicationRecommendations from './MedicationRecommendations';
+import api from '../../services/api';
+import logger from '../../services/logger';
 
 const DiseaseDetector = ({ onDetectionComplete }) => {
   const { t } = useLanguage();
@@ -27,13 +29,11 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
   const handleImageUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
-      // Validate file type
       if (!file.type.startsWith('image/')) {
         setError(t('diseases.invalidImageFile') || 'Please select a valid image file');
         return;
       }
       
-      // Validate file size (max 10MB)
       if (file.size > 10 * 1024 * 1024) {
         setError(t('diseases.imageSizeError') || 'Image size should be less than 10MB');
         return;
@@ -71,7 +71,6 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
         onDetectionComplete(detectionResult);
       }
       
-      // Scroll to medication section if available
       if (detectionResult?.medication) {
         setTimeout(() => {
           const medicationSection = document.getElementById('medication-section');
@@ -81,7 +80,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
         }, 500);
       }
     } catch (err) {
-      console.error('Detection error:', err);
+      logger.error('Detection error', err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to detect disease. Please try again.';
       setError(errorMsg);
     } finally {
@@ -97,7 +96,6 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
   };
 
   const handleCameraCapture = () => {
-    // Trigger file input for camera
     document.getElementById('disease-file-input').click();
   };
 
@@ -109,7 +107,6 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
         </Typography>
         
         <Grid container spacing={3} sx={{ mt: 1 }}>
-          {/* Image Upload Section */}
           <Grid item xs={12} md={6}>
             <Paper
               sx={{
@@ -151,43 +148,30 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
               ) : (
                 <>
                   <input
-                    accept="image/*"
-                    style={{ display: 'none' }}
                     id="disease-file-input"
                     type="file"
+                    accept="image/*"
                     onChange={handleImageUpload}
-                    capture="environment"
+                    style={{ display: 'none' }}
                   />
-                  <CloudUpload sx={{ fontSize: 60, color: '#ccc', mb: 2 }} />
-                  <Typography color="textSecondary" gutterBottom>
-                    {t('diseases.uploadImage') || 'Upload an image of the affected plant'}
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="large"
+                    startIcon={<CloudUpload />}
+                    onClick={handleCameraCapture}
+                    sx={{ mb: 2 }}
+                  >
+                    {t('diseases.uploadImage') || 'Upload Image'}
+                  </Button>
+                  <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                    {t('diseases.selectImageFile') || 'Select an image file to detect plant diseases'}
                   </Typography>
-                  <Typography variant="caption" color="textSecondary" sx={{ mb: 2 }}>
-                    {t('diseases.supportedFormats') || 'Supported formats: JPG, PNG, WebP (Max 10MB)'}
-                  </Typography>
-                  <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    <Button
-                      variant="contained"
-                      component="label"
-                      startIcon={<CloudUpload />}
-                    >
-                      {t('diseases.uploadImage') || 'Upload Image'}
-                      <input type="file" hidden accept="image/*" onChange={handleImageUpload} />
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      startIcon={<PhotoCamera />}
-                      onClick={handleCameraCapture}
-                    >
-                      {t('diseases.takePhoto') || 'Take Photo'}
-                    </Button>
-                  </Box>
                 </>
               )}
             </Paper>
           </Grid>
-
-          {/* Detection Section */}
+          
           <Grid item xs={12} md={6}>
             <Box sx={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
               <Button
@@ -270,8 +254,26 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
                         <Button
                           variant="outlined"
                           color="primary"
-                          onClick={() => {
-                            window.location.href = `/diseases/${result.diseaseInfo._id}`;
+                          onClick={async () => {
+                            try {
+                              if (result?.diseaseInfo?._id) {
+                                const response = await api.get(`/diseases/${result.diseaseInfo._id}`);
+                                if (response?.data?.success && response?.data?.data) {
+                                  if (onDetectionComplete) {
+                                    onDetectionComplete({ diseaseInfo: response.data.data });
+                                  }
+                                } else if (onDetectionComplete) {
+                                  onDetectionComplete(result);
+                                }
+                              } else if (onDetectionComplete) {
+                                onDetectionComplete(result);
+                              }
+                            } catch (err) {
+                              logger.error('Error fetching disease details', err);
+                              if (onDetectionComplete) {
+                                onDetectionComplete(result);
+                              }
+                            }
                           }}
                           fullWidth
                         >
@@ -328,7 +330,6 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
         </Grid>
       </CardContent>
       
-      {/* Medication Recommendations */}
       {result?.medication && (
         <Box id="medication-section" sx={{ mt: 4 }}>
           <MedicationRecommendations

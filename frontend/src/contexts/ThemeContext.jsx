@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useMemo } from 'react';
 import { ThemeProvider as MUIThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import logger from '../services/logger';
 
 const ThemeContext = createContext();
 
@@ -12,43 +13,60 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
-  // Always use dark theme - no toggle
   const [mode] = useState('dark');
 
   const toggleTheme = () => {
-    // Theme toggle disabled - always dark
-    console.log('Dark theme is always enabled');
+    logger.debug('Dark theme is always enabled');
   };
 
   const theme = useMemo(
     () =>
       createTheme({
         palette: {
-          mode,
+          mode: 'dark',
           primary: {
-            main: '#2e7d32', // Green - consistent across all pages
-            light: '#60ad5e',
-            dark: '#005005',
+            main: '#4caf50', // Bright green for agriculture
+            light: '#81c784',
+            dark: '#388e3c',
+            contrastText: '#ffffff',
           },
           secondary: {
-            main: '#ff6f00', // Orange - consistent across all pages
-            light: '#ff9f40',
-            dark: '#c43e00',
+            main: '#ff9800', // Orange for alerts
+            light: '#ffb74d',
+            dark: '#f57c00',
+            contrastText: '#ffffff',
           },
           background: {
-            default: '#121212', // Always dark
-            paper: '#1e1e1e', // Always dark
+            default: '#0a0a0a', // Deep dark background
+            paper: '#1a1a1a', // Slightly lighter for cards
+            elevated: '#252525', // For elevated surfaces
+          },
+          text: {
+            primary: '#ffffff',
+            secondary: 'rgba(255, 255, 255, 0.7)',
+            disabled: 'rgba(255, 255, 255, 0.5)',
           },
           success: {
-            main: '#2e7d32',
-            light: '#60ad5e',
-            dark: '#005005',
+            main: '#4caf50',
+            light: '#81c784',
+            dark: '#388e3c',
           },
           warning: {
-            main: '#ff6f00',
-            light: '#ff9f40',
-            dark: '#c43e00',
+            main: '#ff9800',
+            light: '#ffb74d',
+            dark: '#f57c00',
           },
+          error: {
+            main: '#f44336',
+            light: '#e57373',
+            dark: '#d32f2f',
+          },
+          info: {
+            main: '#2196f3',
+            light: '#64b5f6',
+            dark: '#1976d2',
+          },
+          divider: 'rgba(255, 255, 255, 0.12)',
         },
         typography: {
           fontFamily: [
@@ -71,12 +89,37 @@ export const ThemeProvider = ({ children }) => {
           },
         },
         components: {
+          MuiCssBaseline: {
+            styleOverrides: {
+              body: {
+                backgroundColor: '#0a0a0a',
+                color: '#ffffff',
+                '&::-webkit-scrollbar': {
+                  width: '10px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: '#1a1a1a',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: '#4caf50',
+                  borderRadius: '5px',
+                  '&:hover': {
+                    background: '#388e3c',
+                  },
+                },
+              },
+            },
+          },
           MuiButton: {
             styleOverrides: {
               root: {
                 textTransform: 'none',
                 borderRadius: 8,
                 fontWeight: 500,
+                boxShadow: 'none',
+                '&:hover': {
+                  boxShadow: '0 4px 12px rgba(76, 175, 80, 0.3)',
+                },
               },
             },
           },
@@ -84,8 +127,13 @@ export const ThemeProvider = ({ children }) => {
             styleOverrides: {
               root: {
                 borderRadius: 12,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                bgcolor: 'background.paper',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                backgroundColor: '#1a1a1a',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                '&:hover': {
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                  borderColor: 'rgba(76, 175, 80, 0.3)',
+                },
               },
             },
           },
@@ -93,13 +141,14 @@ export const ThemeProvider = ({ children }) => {
             styleOverrides: {
               root: {
                 backgroundImage: 'none',
-                bgcolor: 'background.paper',
+                backgroundColor: '#1a1a1a',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               },
               elevation1: {
-                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
               },
               elevation3: {
-                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
               },
             },
           },
@@ -108,6 +157,42 @@ export const ThemeProvider = ({ children }) => {
               root: {
                 paddingTop: 24,
                 paddingBottom: 24,
+                backgroundColor: 'transparent',
+              },
+            },
+          },
+          MuiTextField: {
+            styleOverrides: {
+              root: {
+                '& .MuiOutlinedInput-root': {
+                  backgroundColor: '#1a1a1a',
+                  '& fieldset': {
+                    borderColor: 'rgba(255, 255, 255, 0.23)',
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'rgba(76, 175, 80, 0.5)',
+                  },
+                  '&.Mui-focused fieldset': {
+                    borderColor: '#4caf50',
+                  },
+                },
+              },
+            },
+          },
+          MuiAppBar: {
+            styleOverrides: {
+              root: {
+                backgroundColor: '#1a1a1a',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              },
+            },
+          },
+          MuiDrawer: {
+            styleOverrides: {
+              paper: {
+                backgroundColor: '#1a1a1a',
+                borderRight: '1px solid rgba(255, 255, 255, 0.1)',
               },
             },
           },

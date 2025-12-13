@@ -61,17 +61,14 @@ const translationSchema = new mongoose.Schema({
   }
 });
 
-// Index for efficient lookups
 translationSchema.index({ key: 1, module: 1 }, { unique: true });
 translationSchema.index({ module: 1, category: 1 });
 
-// Pre-save to update timestamps
 translationSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
 
-// Method to get translation for specific language
 translationSchema.methods.getTranslation = function(language = 'en') {
   const lang = language.toLowerCase();
   return this.translations[lang] || 
@@ -79,10 +76,8 @@ translationSchema.methods.getTranslation = function(language = 'en') {
          this.key;
 };
 
-// Static method to initialize common translations
 translationSchema.statics.initializeCommonTranslations = async function() {
   const commonTranslations = [
-    // Common UI Elements
     {
       key: 'app_name',
       module: 'common',
@@ -185,7 +180,6 @@ translationSchema.statics.initializeCommonTranslations = async function() {
         pa: 'ਸੰਪਾਦਨ ਕਰੋ'
       }
     },
-    // Auth Translations
     {
       key: 'login',
       module: 'auth',
@@ -237,7 +231,6 @@ translationSchema.statics.initializeCommonTranslations = async function() {
         pa: 'ਲੌਗਆਉਟ'
       }
     },
-    // Crop Management
     {
       key: 'crops',
       module: 'crops',

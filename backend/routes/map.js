@@ -4,7 +4,6 @@ const axios = require('axios');
 const { authenticateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
-// Reverse Geocoding - Get address from coordinates
 router.get('/reverse-geocode', async (req, res) => {
   try {
     const { latitude, longitude, language = 'en' } = req.query;
@@ -18,7 +17,6 @@ router.get('/reverse-geocode', async (req, res) => {
     
     logger.info(`Reverse geocoding: ${latitude}, ${longitude} (Language: ${language})`);
     
-    // Try OpenStreetMap Nominatim first
     const osmResult = await reverseGeocodeOSM(latitude, longitude, language);
     
     if (osmResult) {
@@ -29,7 +27,6 @@ router.get('/reverse-geocode', async (req, res) => {
       });
     }
     
-    // Fallback: Generate approximate address
     const approximateAddress = generateApproximateAddress(latitude, longitude, language);
     
     res.json({
@@ -49,7 +46,6 @@ router.get('/reverse-geocode', async (req, res) => {
   }
 });
 
-// Forward Geocoding - Get coordinates from address
 router.get('/geocode', async (req, res) => {
   try {
     const { query, language = 'en' } = req.query;
@@ -63,7 +59,6 @@ router.get('/geocode', async (req, res) => {
     
     logger.info(`Geocoding: "${query}" (Language: ${language})`);
     
-    // Try OpenStreetMap Nominatim
     const osmResults = await forwardGeocodeOSM(query, language);
     
     if (osmResults && osmResults.length > 0) {
@@ -91,7 +86,6 @@ router.get('/geocode', async (req, res) => {
   }
 });
 
-// Get detailed address information
 router.get('/address-details', authenticateToken, async (req, res) => {
   try {
     const { latitude, longitude, language = 'en' } = req.query;
@@ -103,7 +97,6 @@ router.get('/address-details', authenticateToken, async (req, res) => {
       });
     }
     
-    // Get reverse geocode
     const address = await reverseGeocodeOSM(latitude, longitude, language);
     
     if (!address) {
@@ -132,7 +125,6 @@ router.get('/address-details', authenticateToken, async (req, res) => {
   }
 });
 
-// Helper Functions
 async function reverseGeocodeOSM(latitude, longitude, language) {
   try {
     const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
@@ -226,7 +218,6 @@ function formatOSMAddress(data, lat, lng) {
 function formatAddressString(address) {
   const parts = [];
   
-  // Indian address format
   if (address.house_number) parts.push(address.house_number);
   if (address.road) parts.push(address.road);
   if (address.village) parts.push(address.village);
@@ -256,7 +247,6 @@ function formatCompleteAddress(address, language) {
 }
 
 function generateApproximateAddress(latitude, longitude, language) {
-  // Simple approximation based on Indian regions
   const regions = {
     'north': { state: 'Punjab/Haryana', district: 'Northern Region', city: 'North India' },
     'south': { state: 'Tamil Nadu/Karnataka', district: 'Southern Region', city: 'South India' },
@@ -292,6 +282,19 @@ function getIndianRegion(lat, lng) {
 }
 
 module.exports = router;
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

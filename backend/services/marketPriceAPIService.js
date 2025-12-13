@@ -1,30 +1,28 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
+const apiErrorHandler = require('./api/apiErrorHandler');
+const fallbackManager = require('./api/fallbackManager');
 const ricePrices = require('../data/ricePrices');
 
-/**
- * Real-time Market Price API Service
- * Integrates with multiple market price APIs to get live commodity prices
- */
 class MarketPriceAPIService {
   constructor() {
-    // API endpoints for real-time market prices
     this.apis = {
-      // Indian Government APIs
       agmarknet: 'https://agmarknet.gov.in/api/price/CommodityDatewisePrice',
-      // Alternative APIs
+      dataGovIn: 'https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070',
       mandi: 'https://api.mandirate.com/v1/prices',
-      // Fallback mock data generator
+      ncdex: 'https://www.ncdex.com/api/marketdata',
       fallback: true
+    };
+    
+    this.apiKeys = {
+      agmarknet: process.env.AGMARKNET_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b',
+      dataGovIn: process.env.DATA_GOV_IN_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b'
     };
     
     this.cache = new Map();
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
   }
 
-  /**
-   * Get state capital for creating default markets
-   */
   getStateCapital(state) {
     const capitals = {
       'Andhra Pradesh': 'Amaravati',
@@ -67,9 +65,6 @@ class MarketPriceAPIService {
     return capitals[state] || state.split(' ')[0]; // Return capital or first word
   }
 
-  /**
-   * Convert price from Quintal/Ton to per Kilogram
-   */
   convertToPerKg(price, unit) {
     if (!price || isNaN(price)) return 0;
     
@@ -85,19 +80,13 @@ class MarketPriceAPIService {
       return parseFloat(price) / 1000; // 1 tonne = 1000 kg
     }
     
-    // Default: assume it's already per kg
     return parseFloat(price);
   }
 
-  /**
-   * Get real-time market prices from AgMarkNet API
-   */
   async getAgMarkNetPrices(commodity, state) {
     try {
-      // Use Data.gov.in AgMarkNet API
-      const apiKey = process.env.AGMARKNET_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b';
+      const apiKey = this.apiKeys.dataGovIn;
       
-      // Build filters
       const filters = {};
       if (commodity) {
         filters.commodity = commodity;
@@ -106,18 +95,53 @@ class MarketPriceAPIService {
         filters.state = state;
       }
       
-      const response = await axios.get('https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070', {
-        params: {
-          'api-key': apiKey,
-          format: 'json',
-          limit: 100,
-          ...(Object.keys(filters).length > 0 && { filters: JSON.stringify(filters) })
+      const endpoints = [
+        {
+          url: this.apis.dataGovIn,
+          params: {
+            'api-key': apiKey,
+            format: 'json',
+            limit: 500, // Increased limit for more data
+            offset: 0,
+            ...(Object.keys(filters).length > 0 && { filters: JSON.stringify(filters) })
+          }
         },
-        timeout: 15000,
-        headers: {
-          'Accept': 'application/json'
+        {
+          url: 'https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070',
+          params: {
+            'api-key': apiKey,
+            format: 'json',
+            limit: 500,
+            offset: 0,
+            ...(Object.keys(filters).length > 0 && { filters: JSON.stringify(filters) })
+          }
         }
-      });
+      ];
+      
+      let response = null;
+      for (const endpoint of endpoints) {
+        try {
+          response = await axios.get(endpoint.url, {
+            params: endpoint.params,
+            timeout: 15000,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'AgriSmart-AI/1.0'
+            }
+          });
+          if (response.data && response.data.records && response.data.records.length > 0) {
+            break; // Success, use this response
+          }
+        } catch (err) {
+          logger.debug(`Endpoint ${endpoint.url} failed, trying next...`);
+          continue;
+        }
+      }
+      
+      if (!response) {
+        logger.warn('All Data.gov.in AgMarkNet endpoints failed, using fallback');
+        return [];
+      }
 
       if (response.data && response.data.records && Array.isArray(response.data.records) && response.data.records.length > 0) {
         const prices = response.data.records
@@ -174,9 +198,6 @@ class MarketPriceAPIService {
     }
   }
 
-  /**
-   * Get prices from MandiRate API
-   */
   async getMandiRatePrices(commodity, state) {
     try {
       const response = await axios.get(this.apis.mandi, {
@@ -205,6 +226,8 @@ class MarketPriceAPIService {
             price: {
               value: this.convertToPerKg(item.price, item.unit),
               unit: 'kg',
+              perKg: this.convertToPerKg(item.price, item.unit),
+              perTon: this.convertToPerKg(item.price, item.unit) * 1000,
               originalValue: parseFloat(item.price || 0),
               originalUnit: item.unit || 'quintal'
             },
@@ -231,18 +254,12 @@ class MarketPriceAPIService {
     }
   }
 
-  /**
-   * Calculate price change percentage
-   */
   calculatePriceChange(current, min, max) {
     if (!current || !min || !max) return 0;
     const avg = (parseFloat(min) + parseFloat(max)) / 2;
     return parseFloat(((parseFloat(current) - avg) / avg * 100).toFixed(2));
   }
 
-  /**
-   * Fetch from NCDEX (National Commodity & Derivatives Exchange)
-   */
   async fetchFromNCDEX(commodity) {
     try {
       const response = await axios.get('https://www.ncdex.com/api/marketdata', {
@@ -300,13 +317,8 @@ class MarketPriceAPIService {
     }
   }
 
-  /**
-   * Generate realistic mock prices (fallback)
-   */
   generateMockPrices(commodity, state) {
-    // Base prices per kg in INR (realistic Indian market prices for daily-use agricultural products)
     const basePrices = {
-      // Grains & Cereals
       'rice': 25,
       'wheat': 22,
       'maize': 18,
@@ -314,7 +326,6 @@ class MarketPriceAPIService {
       'jowar': 19,
       'ragi': 24,
       
-      // Pulses & Legumes
       'toor dal': 85,
       'moong dal': 90,
       'urad dal': 95,
@@ -322,7 +333,6 @@ class MarketPriceAPIService {
       'masoor dal': 75,
       'rajma': 80,
       
-      // Vegetables
       'tomato': 30,
       'potato': 20,
       'onion': 25,
@@ -344,7 +354,6 @@ class MarketPriceAPIService {
       'garlic': 150,
       'green chili': 80,
       
-      // Fruits
       'banana': 40,
       'mango': 60,
       'apple': 120,
@@ -358,7 +367,6 @@ class MarketPriceAPIService {
       'sweet lime': 45,
       'lemon': 40,
       
-      // Spices
       'turmeric': 150,
       'red chili': 200,
       'coriander seeds': 120,
@@ -371,7 +379,6 @@ class MarketPriceAPIService {
       'cinnamon': 300,
       'coriander': 120,
       
-      // Oilseeds
       'groundnut': 80,
       'mustard': 70,
       'sunflower': 75,
@@ -379,13 +386,11 @@ class MarketPriceAPIService {
       'soybean': 50,
       'coconut': 40,
       
-      // Cash Crops
       'cotton': 55,
       'sugarcane': 3,
       'jute': 45,
       'tobacco': 150,
       
-      // Others
       'sugar': 45,
       'jaggery': 50,
       'tea': 300,
@@ -395,15 +400,11 @@ class MarketPriceAPIService {
       'peanut': 80
     };
 
-    // Normalize commodity name for matching (remove extra spaces, convert to lowercase)
     const normalizedCommodity = commodity?.toLowerCase().trim().replace(/\s+/g, ' ') || '';
-    // Try exact match first, then try without spaces
     const basePrice = basePrices[normalizedCommodity] || basePrices[normalizedCommodity.replace(/\s+/g, '')] || 25;
     const variation = basePrice * 0.1; // 10% variation
     
-    // Major markets across all Indian states
     const markets = [
-      // North India
       { name: 'Delhi Mandi', location: 'Delhi', state: 'Delhi' },
       { name: 'Chandigarh Mandi', location: 'Chandigarh', state: 'Chandigarh' },
       { name: 'Amritsar APMC', location: 'Amritsar', state: 'Punjab' },
@@ -414,7 +415,6 @@ class MarketPriceAPIService {
       { name: 'Jammu Mandi', location: 'Jammu', state: 'Jammu and Kashmir' },
       { name: 'Srinagar Mandi', location: 'Srinagar', state: 'Jammu and Kashmir' },
       
-      // West India
       { name: 'Mumbai APMC', location: 'Mumbai', state: 'Maharashtra' },
       { name: 'Pune APMC', location: 'Pune', state: 'Maharashtra' },
       { name: 'Nagpur Mandi', location: 'Nagpur', state: 'Maharashtra' },
@@ -424,14 +424,12 @@ class MarketPriceAPIService {
       { name: 'Udaipur Mandi', location: 'Udaipur', state: 'Rajasthan' },
       { name: 'Panaji Mandi', location: 'Panaji', state: 'Goa' },
       
-      // Central India
       { name: 'Bhopal Mandi', location: 'Bhopal', state: 'Madhya Pradesh' },
       { name: 'Indore APMC', location: 'Indore', state: 'Madhya Pradesh' },
       { name: 'Jabalpur Mandi', location: 'Jabalpur', state: 'Madhya Pradesh' },
       { name: 'Raipur Mandi', location: 'Raipur', state: 'Chhattisgarh' },
       { name: 'Bilaspur Mandi', location: 'Bilaspur', state: 'Chhattisgarh' },
       
-      // East India
       { name: 'Kolkata Market', location: 'Kolkata', state: 'West Bengal' },
       { name: 'Siliguri Mandi', location: 'Siliguri', state: 'West Bengal' },
       { name: 'Patna Mandi', location: 'Patna', state: 'Bihar' },
@@ -448,7 +446,6 @@ class MarketPriceAPIService {
       { name: 'Agartala Mandi', location: 'Agartala', state: 'Tripura' },
       { name: 'Gangtok Mandi', location: 'Gangtok', state: 'Sikkim' },
       
-      // South India
       { name: 'Chennai Market', location: 'Chennai', state: 'Tamil Nadu' },
       { name: 'Coimbatore Mandi', location: 'Coimbatore', state: 'Tamil Nadu' },
       { name: 'Madurai Mandi', location: 'Madurai', state: 'Tamil Nadu' },
@@ -463,13 +460,11 @@ class MarketPriceAPIService {
       { name: 'Thiruvananthapuram Mandi', location: 'Thiruvananthapuram', state: 'Kerala' },
       { name: 'Puducherry Mandi', location: 'Puducherry', state: 'Puducherry' },
       
-      // Union Territories
       { name: 'Port Blair Mandi', location: 'Port Blair', state: 'Andaman and Nicobar Islands' },
       { name: 'Kavaratti Mandi', location: 'Kavaratti', state: 'Lakshadweep' },
       { name: 'Leh Mandi', location: 'Leh', state: 'Ladakh' }
     ];
 
-    // All Indian States and Union Territories
     const allStates = [
       'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
       'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
@@ -480,34 +475,27 @@ class MarketPriceAPIService {
       'Ladakh', 'Lakshadweep', 'Puducherry'
     ];
 
-    // If state is specified, filter markets for that state
     let targetStates = allStates;
     if (state) {
       targetStates = allStates.filter(s => 
         s.toLowerCase().includes(state.toLowerCase()) || 
         state.toLowerCase().includes(s.toLowerCase())
       );
-      // If no match, use all states
       if (targetStates.length === 0) {
         targetStates = allStates;
       }
     }
 
-    // Generate prices for each target state
     const selectedMarkets = [];
     targetStates.forEach(targetState => {
-      // Find markets in this state
       const stateMarkets = markets.filter(m => 
         m.state?.toLowerCase() === targetState.toLowerCase() ||
         m.location?.toLowerCase().includes(targetState.toLowerCase().split(' ')[0])
       );
       
-      // If we have markets for this state, use them; otherwise create a default market
       if (stateMarkets.length > 0) {
-        // Use 1-2 markets per state to ensure coverage
         selectedMarkets.push(...stateMarkets.slice(0, 2));
       } else {
-        // Create a default market for states without specific markets
         const stateCapital = this.getStateCapital(targetState);
         selectedMarkets.push({
           name: `${stateCapital} Mandi`,
@@ -517,8 +505,6 @@ class MarketPriceAPIService {
       }
     });
     
-    // Limit total markets if too many (for performance)
-    // But ensure at least one market per state if state filter is not applied
     const maxMarkets = state ? 10 : 72; // Up to 2 markets per state (36 states * 2)
     const finalMarkets = selectedMarkets.slice(0, maxMarkets);
     
@@ -554,9 +540,6 @@ class MarketPriceAPIService {
     });
   }
 
-  /**
-   * Get real-time market prices with fallback
-   */
   async getRealTimePrices(commodity, state) {
     const cacheKey = `${commodity || 'all'}_${state || 'all'}`;
     const cached = this.cache.get(cacheKey);
@@ -568,13 +551,11 @@ class MarketPriceAPIService {
 
     let prices = [];
     
-    // Try AgMarkNet first (Indian Government API)
     try {
       logger.info(`Fetching real-time prices from AgMarkNet for ${commodity || 'all commodities'}`);
       prices = await this.getAgMarkNetPrices(commodity, state);
       if (prices && prices.length > 0) {
         logger.info(`✅ Got ${prices.length} prices from AgMarkNet`);
-        // Cache the results
         this.cache.set(cacheKey, {
           data: prices,
           timestamp: Date.now()
@@ -585,14 +566,12 @@ class MarketPriceAPIService {
       logger.warn('AgMarkNet API failed:', error.message);
     }
     
-    // If AgMarkNet fails, try NCDEX
     if (!prices || prices.length === 0) {
       try {
         logger.info(`Trying NCDEX API for ${commodity || 'all commodities'}`);
         prices = await this.fetchFromNCDEX(commodity);
         if (prices && prices.length > 0) {
           logger.info(`✅ Got ${prices.length} prices from NCDEX`);
-          // Cache the results
           this.cache.set(cacheKey, {
             data: prices,
             timestamp: Date.now()
@@ -604,14 +583,12 @@ class MarketPriceAPIService {
       }
     }
     
-    // If NCDEX fails, try MandiRate
     if (!prices || prices.length === 0) {
       try {
         logger.info(`Trying MandiRate API for ${commodity || 'all commodities'}`);
         prices = await this.getMandiRatePrices(commodity, state);
         if (prices && prices.length > 0) {
           logger.info(`✅ Got ${prices.length} prices from MandiRate`);
-          // Cache the results
           this.cache.set(cacheKey, {
             data: prices,
             timestamp: Date.now()
@@ -623,13 +600,11 @@ class MarketPriceAPIService {
       }
     }
     
-    // If all APIs fail, use mock data with realistic prices
     if (!prices || prices.length === 0) {
       logger.info(`Using mock market prices for ${commodity || 'all commodities'} (real APIs unavailable)`);
       prices = this.generateMockPrices(commodity, state);
     }
 
-    // Ensure all prices have required fields
     prices = prices.map((price, index) => ({
       id: price.id || `price_${Date.now()}_${index}`,
       commodity: price.commodity || commodity || 'Unknown',
@@ -644,7 +619,6 @@ class MarketPriceAPIService {
       source: price.source || 'mock'
     }));
 
-    // Cache the results
     this.cache.set(cacheKey, {
       data: prices,
       timestamp: Date.now()
@@ -653,15 +627,10 @@ class MarketPriceAPIService {
     return prices;
   }
 
-  /**
-   * Get price trends for prediction with seasonal factors
-   */
   async getPriceTrends(commodity, days = 30) {
     try {
-      // Get seasonal factor for better prediction
       const seasonalFactor = this.getSeasonalFactor(commodity);
       
-      // Generate trend data based on historical patterns
       const trends = [];
       const basePrices = {
         'rice': 45,
@@ -683,7 +652,6 @@ class MarketPriceAPIService {
         date.setDate(date.getDate() - i);
         const month = date.getMonth();
         
-        // Apply seasonal factor
         const monthFactor = seasonalFactor[month] || 1.0;
         const trendFactor = 1 + (days - i) * 0.001; // Slight upward trend
         const randomFactor = 1 + (Math.random() * volatility * 2 - volatility);
@@ -725,11 +693,7 @@ class MarketPriceAPIService {
     }
   }
 
-  /**
-   * Get seasonal factor for commodity price prediction
-   */
   getSeasonalFactor(commodity) {
-    // Monthly seasonal patterns (0-11 for Jan-Dec)
     const patterns = {
       'rice': [1.1, 1.05, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 1.1, 1.15, 1.2],
       'wheat': [1.2, 1.15, 1.1, 1.05, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 1.1],

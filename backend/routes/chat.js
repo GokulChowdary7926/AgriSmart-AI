@@ -3,7 +3,6 @@ const router = express.Router();
 const ChatController = require('../controllers/ChatController');
 const { authenticateToken } = require('../middleware/auth');
 
-// All routes require authentication
 router.use(authenticateToken);
 
 router.post('/session', ChatController.getOrCreateSession);

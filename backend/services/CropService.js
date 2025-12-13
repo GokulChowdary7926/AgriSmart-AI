@@ -1,36 +1,25 @@
 const axios = require('axios');
+const path = require('path');
 const logger = require('../utils/logger');
 const WeatherService = require('./WeatherService');
 const marketPriceAPIService = require('./marketPriceAPIService');
 
-/**
- * Real-time Crop Recommendation Service
- * Integrates with weather, soil, and market APIs for accurate recommendations
- */
 class CropService {
   constructor() {
     this.cache = new Map();
     this.cacheDuration = 30 * 60 * 1000; // 30 minutes
   }
 
-  /**
-   * Get real-time crop recommendations with live data
-   */
   async getRealTimeRecommendations(location, soilData) {
     try {
-      // Get real-time weather data
       const weather = await this.getRealTimeWeather(location);
       
-      // Get soil data from ISRIC API
       const soil = soilData || await this.getRealTimeSoilData(location);
       
-      // Get market prices for crops
       const marketPrices = await this.getCurrentCropPrices();
       
-      // Get seasonal data
       const season = this.getCurrentSeason(location);
       
-      // Use ML model for recommendations
       const recommendations = await this.getMLRecommendations({
         ...location,
         ...weather,
@@ -38,7 +27,6 @@ class CropService {
         season
       });
       
-      // Enrich with real-time market data
       return this.enrichWithMarketData(recommendations, marketPrices);
       
     } catch (error) {
@@ -47,9 +35,6 @@ class CropService {
     }
   }
 
-  /**
-   * Get real-time weather data
-   */
   async getRealTimeWeather(location) {
     try {
       const weatherData = await WeatherService.getWeatherByCoords(
@@ -76,9 +61,6 @@ class CropService {
     }
   }
 
-  /**
-   * Get real-time soil data from ISRIC Soil Grids
-   */
   async getRealTimeSoilData(location) {
     try {
       const lat = location.lat || location.latitude;
@@ -112,7 +94,6 @@ class CropService {
       logger.warn('ISRIC API error, using estimated soil data');
     }
     
-    // Fallback to estimated soil data
     return {
       pH: 6.5,
       organicCarbon: 1.2,
@@ -120,9 +101,6 @@ class CropService {
     };
   }
 
-  /**
-   * Get current crop prices from market API
-   */
   async getCurrentCropPrices() {
     try {
       const prices = await marketPriceAPIService.getRealTimePrices();
@@ -148,13 +126,9 @@ class CropService {
     return {};
   }
 
-  /**
-   * Get current season based on location and date
-   */
   getCurrentSeason(location) {
     const month = new Date().getMonth() + 1; // 1-12
     
-    // Indian seasons
     if (month >= 6 && month <= 10) {
       return 'Kharif';
     } else if (month >= 11 || month <= 3) {
@@ -164,11 +138,51 @@ class CropService {
     }
   }
 
-  /**
-   * Get ML-based recommendations
-   */
   async getMLRecommendations(features) {
     try {
+      const tf = require('@tensorflow/tfjs-node');
+      if (this.mlModel) {
+        return await this.getTensorFlowPredictions(features);
+      } else {
+        await this.loadMLModel();
+        if (this.mlModel) {
+          return await this.getTensorFlowPredictions(features);
+        }
+      }
+    } catch (tfError) {
+      logger.warn('TensorFlow.js not available, trying Python ML...');
+    }
+
+    try {
+      const pythonService = require('./PythonService');
+      
+      if (pythonService.isAvailable) {
+        try {
+          const result = await pythonService.executeScript(
+            path.join(__dirname, 'ml', 'predict_crop_enhanced.py'),
+            ['--input', JSON.stringify({
+              temperature: features.temperature || 25,
+              humidity: features.humidity || 60,
+              ph: features.pH || 6.5,
+              rainfall: features.rainfall || 0,
+              season: features.season || 'Kharif',
+              N: features.N || 50,
+              P: features.P || 50,
+              K: features.K || 50
+            })]
+          );
+          
+          logger.mlPrediction('crop-recommendation', features, result, 0, 0.85, {
+            engine: 'python-ml',
+            script: 'predict_crop_enhanced.py'
+          });
+          
+          return result;
+        } catch (pythonError) {
+          logger.warn('Python ML prediction failed, trying fallback', pythonError);
+        }
+      }
+      
       const PythonShell = require('python-shell').PythonShell;
       const options = {
         mode: 'json',
@@ -180,15 +194,19 @@ class CropService {
             humidity: features.humidity || 60,
             ph: features.pH || 6.5,
             rainfall: features.rainfall || 0,
-            season: features.season || 'Kharif'
+            season: features.season || 'Kharif',
+            N: features.N || 50,
+            P: features.P || 50,
+            K: features.K || 50
           })
-        ]
+        ],
+        timeout: 10000 // 10 second timeout
       };
 
       return new Promise((resolve, reject) => {
         PythonShell.run('predict_crop.py', options, (err, results) => {
           if (err) {
-            logger.warn('ML prediction error, using rule-based');
+            logger.warn('Python ML prediction error, using rule-based');
             resolve(this.getRuleBasedRecommendations(features));
           } else {
             resolve(results[0] || this.getRuleBasedRecommendations(features));
@@ -196,71 +214,310 @@ class CropService {
         });
       });
     } catch (error) {
-      logger.warn('ML service unavailable, using rule-based recommendations');
+      logger.warn('ML service unavailable, using enhanced rule-based recommendations');
       return this.getRuleBasedRecommendations(features);
     }
   }
 
-  /**
-   * Rule-based crop recommendations (fallback)
-   */
+  async loadMLModel() {
+    try {
+      try {
+        const modelRegistry = require('./ModelRegistryService');
+        const modelInfo = await modelRegistry.getModel('crop-recommendation').catch(() => null);
+        
+        if (modelInfo && modelInfo.valid) {
+          const tf = require('@tensorflow/tfjs-node');
+          const modelPath = path.join(modelInfo.path, 'model.json');
+          if (fs.existsSync(modelPath)) {
+            this.mlModel = await tf.loadLayersModel(`file://${modelPath}`);
+            logger.info('Crop recommendation ML model loaded from registry', {
+              model: 'crop-recommendation',
+              version: modelInfo.version,
+              path: modelInfo.path
+            });
+            return;
+          }
+        }
+      } catch (registryError) {
+        logger.debug('Model registry not available, trying legacy paths', { error: registryError.message });
+      }
+      
+      const tf = require('@tensorflow/tfjs-node');
+      const fs = require('fs');
+      const path = require('path');
+      
+      const modelPaths = [
+        path.join(__dirname, '../../ml-models/crop-recommendation/model.json'),
+        path.join(__dirname, '../ml-models/crop-recommendation/model.json'),
+        path.join(process.cwd(), 'ml-models/crop-recommendation/model.json')
+      ];
+      
+      for (const modelPath of modelPaths) {
+        try {
+          if (fs.existsSync(modelPath)) {
+            this.mlModel = await tf.loadLayersModel(`file://${modelPath}`);
+            logger.info('Crop recommendation ML model loaded from legacy path', { path: modelPath });
+            return;
+          }
+        } catch (pathError) {
+          continue;
+        }
+      }
+      
+      logger.warn('No ML model found, will use rule-based recommendations');
+    } catch (error) {
+      logger.warn('Could not load ML model', error, { service: 'CropService' });
+    }
+  }
+
+  async getTensorFlowPredictions(features) {
+    try {
+      const tf = require('@tensorflow/tfjs-node');
+      
+      const inputTensor = tf.tensor2d([[
+        features.N || 50,
+        features.P || 50,
+        features.K || 50,
+        features.temperature || 25,
+        features.humidity || 60,
+        features.pH || 6.5,
+        features.rainfall || 0
+      ]]);
+      
+      const prediction = this.mlModel.predict(inputTensor);
+      const probabilities = await prediction.data();
+      
+      const cropLabels = this.getCropLabels();
+      
+      const topIndices = this.getTopIndices(probabilities, 5);
+      const crops = topIndices.map((index, i) => ({
+        name: cropLabels[index] || `Crop_${index}`,
+        suitability: Math.round(probabilities[index] * 100),
+        confidence: probabilities[index],
+        season: this.getSeasonForCrop(cropLabels[index]),
+        reason: `ML model prediction with ${Math.round(probabilities[index] * 100)}% confidence`
+      }));
+      
+      inputTensor.dispose();
+      prediction.dispose();
+      
+      return {
+        crops: crops,
+        location: features,
+        timestamp: new Date().toISOString(),
+        source: 'ml_tensorflow'
+      };
+    } catch (error) {
+      logger.error('TensorFlow prediction error:', error);
+      throw error; // Will fallback to rule-based
+    }
+  }
+
+  getTopIndices(probabilities, topN) {
+    const indexed = probabilities.map((prob, index) => ({ prob, index }));
+    indexed.sort((a, b) => b.prob - a.prob);
+    return indexed.slice(0, topN).map(item => item.index);
+  }
+
+  getCropLabels() {
+    return [
+      'Rice', 'Maize', 'Chickpea', 'Kidneybeans', 'Pigeonpeas',
+      'Mothbeans', 'Mungbean', 'Blackgram', 'Lentil', 'Pomegranate',
+      'Banana', 'Mango', 'Grapes', 'Watermelon', 'Muskmelon',
+      'Apple', 'Orange', 'Papaya', 'Coconut', 'Cotton',
+      'Jute', 'Coffee'
+    ];
+  }
+
+  getSeasonForCrop(cropName) {
+    const kharifCrops = ['Rice', 'Maize', 'Cotton', 'Sugarcane', 'Groundnut'];
+    const rabiCrops = ['Wheat', 'Barley', 'Mustard', 'Chickpea', 'Lentil'];
+    
+    if (kharifCrops.includes(cropName)) return 'Kharif';
+    if (rabiCrops.includes(cropName)) return 'Rabi';
+    return 'Kharif'; // Default
+  }
+
   getRuleBasedRecommendations(features) {
     const crops = [];
     const temp = features.temperature || 25;
     const rainfall = features.rainfall || 0;
     const ph = features.pH || 6.5;
     const season = features.season || 'Kharif';
+    const N = features.N || 50;
+    const P = features.P || 50;
+    const K = features.K || 50;
+    const humidity = features.humidity || 60;
 
-    // Rice
-    if (temp >= 20 && temp <= 35 && rainfall >= 100 && ph >= 5.5 && ph <= 7.5) {
-      crops.push({
+    const cropDatabase = [
+      {
         name: 'Rice',
-        suitability: 95,
+        idealTemp: { min: 20, max: 35 },
+        idealRainfall: { min: 100, max: 200 },
+        idealPH: { min: 5.5, max: 7.5 },
+        idealN: { min: 40, max: 80 },
+        idealP: { min: 20, max: 60 },
+        idealK: { min: 30, max: 70 },
+        idealHumidity: { min: 70, max: 90 },
         season: 'Kharif',
-        reason: 'Optimal temperature, rainfall, and soil pH for rice cultivation'
-      });
-    }
-
-    // Wheat
-    if (temp >= 10 && temp <= 25 && ph >= 6.0 && ph <= 7.5 && season === 'Rabi') {
-      crops.push({
+        duration: '110-130 days',
+        yield: '35-45 quintals/acre'
+      },
+      {
         name: 'Wheat',
-        suitability: 90,
+        idealTemp: { min: 10, max: 25 },
+        idealRainfall: { min: 30, max: 100 },
+        idealPH: { min: 6.0, max: 7.5 },
+        idealN: { min: 50, max: 100 },
+        idealP: { min: 30, max: 70 },
+        idealK: { min: 40, max: 80 },
+        idealHumidity: { min: 50, max: 70 },
         season: 'Rabi',
-        reason: 'Ideal conditions for wheat during Rabi season'
-      });
-    }
-
-    // Cotton
-    if (temp >= 21 && temp <= 30 && rainfall >= 50 && ph >= 5.8 && ph <= 8.0) {
-      crops.push({
+        duration: '100-120 days',
+        yield: '40-50 quintals/acre'
+      },
+      {
         name: 'Cotton',
-        suitability: 85,
+        idealTemp: { min: 21, max: 30 },
+        idealRainfall: { min: 50, max: 100 },
+        idealPH: { min: 5.8, max: 8.0 },
+        idealN: { min: 40, max: 90 },
+        idealP: { min: 20, max: 60 },
+        idealK: { min: 30, max: 80 },
+        idealHumidity: { min: 60, max: 80 },
         season: 'Kharif',
-        reason: 'Suitable temperature and soil conditions for cotton'
-      });
-    }
-
-    // Maize
-    if (temp >= 18 && temp <= 27 && rainfall >= 50 && ph >= 5.5 && ph <= 7.0) {
-      crops.push({
+        duration: '150-180 days',
+        yield: '8-12 quintals/acre'
+      },
+      {
         name: 'Maize',
-        suitability: 80,
+        idealTemp: { min: 18, max: 27 },
+        idealRainfall: { min: 50, max: 150 },
+        idealPH: { min: 5.5, max: 7.0 },
+        idealN: { min: 50, max: 100 },
+        idealP: { min: 30, max: 70 },
+        idealK: { min: 40, max: 90 },
+        idealHumidity: { min: 50, max: 80 },
         season: 'Kharif',
-        reason: 'Good conditions for maize cultivation'
-      });
-    }
+        duration: '80-100 days',
+        yield: '25-35 quintals/acre'
+      },
+      {
+        name: 'Sugarcane',
+        idealTemp: { min: 26, max: 32 },
+        idealRainfall: { min: 100, max: 200 },
+        idealPH: { min: 6.0, max: 7.5 },
+        idealN: { min: 60, max: 120 },
+        idealP: { min: 30, max: 80 },
+        idealK: { min: 50, max: 100 },
+        idealHumidity: { min: 70, max: 90 },
+        season: 'Kharif',
+        duration: '10-12 months',
+        yield: '60-80 tonnes/acre'
+      }
+    ];
+
+    cropDatabase.forEach(crop => {
+      let score = 0;
+      let reasons = [];
+      let maxScore = 100;
+
+      if (temp >= crop.idealTemp.min && temp <= crop.idealTemp.max) {
+        const tempScore = 20;
+        score += tempScore;
+        reasons.push(`Optimal temperature (${temp}°C)`);
+      } else {
+        const tempDiff = Math.min(
+          Math.abs(temp - crop.idealTemp.min),
+          Math.abs(temp - crop.idealTemp.max)
+        );
+        const tempScore = Math.max(0, 20 - (tempDiff * 2));
+        score += tempScore;
+      }
+
+      if (rainfall >= crop.idealRainfall.min && rainfall <= crop.idealRainfall.max) {
+        score += 20;
+        reasons.push(`Adequate rainfall (${rainfall}mm)`);
+      } else if (rainfall < crop.idealRainfall.min) {
+        const rainScore = Math.max(0, 20 - ((crop.idealRainfall.min - rainfall) / 10));
+        score += rainScore;
+      } else {
+        const rainScore = Math.max(0, 20 - ((rainfall - crop.idealRainfall.max) / 20));
+        score += rainScore;
+      }
+
+      if (ph >= crop.idealPH.min && ph <= crop.idealPH.max) {
+        score += 15;
+        reasons.push(`Suitable soil pH (${ph})`);
+      } else {
+        const phDiff = Math.min(
+          Math.abs(ph - crop.idealPH.min),
+          Math.abs(ph - crop.idealPH.max)
+        );
+        const phScore = Math.max(0, 15 - (phDiff * 3));
+        score += phScore;
+      }
+
+      const nScore = this.calculateNutrientScore(N, crop.idealN);
+      const pScore = this.calculateNutrientScore(P, crop.idealP);
+      const kScore = this.calculateNutrientScore(K, crop.idealK);
+      score += (nScore + pScore + kScore) / 3 * 0.25;
+      if (nScore > 15 && pScore > 15 && kScore > 15) {
+        reasons.push('Good nutrient levels');
+      }
+
+      if (season === crop.season) {
+        score += 10;
+        reasons.push(`Perfect for ${season} season`);
+      } else {
+        score += 5; // Partial match
+      }
+
+      if (humidity >= crop.idealHumidity.min && humidity <= crop.idealHumidity.max) {
+        score += 10;
+        reasons.push(`Optimal humidity (${humidity}%)`);
+      }
+
+      if (score >= 50) {
+        crops.push({
+          name: crop.name,
+          suitability: Math.round(score),
+          season: crop.season,
+          duration: crop.duration,
+          estimatedYield: crop.yield,
+          reason: reasons.length > 0 ? reasons.join(', ') : 'Suitable conditions',
+          scoringBreakdown: {
+            temperature: Math.round((temp >= crop.idealTemp.min && temp <= crop.idealTemp.max) ? 20 : 10),
+            rainfall: Math.round((rainfall >= crop.idealRainfall.min && rainfall <= crop.idealRainfall.max) ? 20 : 10),
+            ph: Math.round((ph >= crop.idealPH.min && ph <= crop.idealPH.max) ? 15 : 7),
+            nutrients: Math.round((nScore + pScore + kScore) / 3 * 0.25),
+            season: Math.round(season === crop.season ? 10 : 5),
+            humidity: Math.round((humidity >= crop.idealHumidity.min && humidity <= crop.idealHumidity.max) ? 10 : 5)
+          }
+        });
+      }
+    });
 
     return {
       crops: crops.sort((a, b) => b.suitability - a.suitability).slice(0, 5),
       location: features,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      source: 'rule_based_enhanced'
     };
   }
 
-  /**
-   * Enrich recommendations with market data
-   */
+  calculateNutrientScore(value, ideal) {
+    if (value >= ideal.min && value <= ideal.max) {
+      return 20; // Perfect
+    } else if (value < ideal.min) {
+      const diff = ideal.min - value;
+      return Math.max(0, 20 - (diff * 0.5)); // Penalty for low
+    } else {
+      const diff = value - ideal.max;
+      return Math.max(0, 20 - (diff * 0.3)); // Penalty for high
+    }
+  }
+
   enrichWithMarketData(recommendations, marketPrices) {
     if (!recommendations.crops) return recommendations;
 
@@ -279,9 +536,6 @@ class CropService {
     return recommendations;
   }
 
-  /**
-   * Fallback recommendations
-   */
   getFallbackRecommendations(location) {
     return {
       crops: [
@@ -310,5 +564,6 @@ class CropService {
 }
 
 module.exports = new CropService();
+
 
 

@@ -6,9 +6,6 @@ class LocationService {
     this.geocodingCache = new Map();
   }
 
-  /**
-   * Get location details from coordinates (reverse geocoding)
-   */
   async getLocationFromCoordinates(latitude, longitude) {
     const cacheKey = `${latitude},${longitude}`;
     
@@ -17,7 +14,6 @@ class LocationService {
     }
 
     try {
-      // Using OpenStreetMap Nominatim API (free, no API key required)
       const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
         params: {
           lat: latitude,
@@ -43,14 +39,12 @@ class LocationService {
         raw: data
       };
 
-      // Cache for 24 hours
       this.geocodingCache.set(cacheKey, location);
       setTimeout(() => this.geocodingCache.delete(cacheKey), 24 * 60 * 60 * 1000);
 
       return location;
     } catch (error) {
       logger.error('Error getting location from coordinates:', error);
-      // Return fallback location
       return {
         address: 'Unknown Location',
         city: 'Unknown',
@@ -62,11 +56,7 @@ class LocationService {
     }
   }
 
-  /**
-   * Get soil type based on location (India-specific)
-   */
   async getSoilType(latitude, longitude, state = null) {
-    // India soil type mapping by state/region
     const soilTypeMap = {
       'Punjab': 'alluvial',
       'Haryana': 'alluvial',
@@ -93,16 +83,13 @@ class LocationService {
       'Nagaland': 'laterite'
     };
 
-    // Try to get state from coordinates if not provided
     if (!state) {
       const location = await this.getLocationFromCoordinates(latitude, longitude);
       state = location.state;
     }
 
-    // Get soil type from state
     const soilType = soilTypeMap[state] || 'alluvial'; // Default to alluvial
 
-    // Additional soil characteristics based on region
     const soilCharacteristics = {
       alluvial: { ph: 6.5, organicMatter: 'medium', drainage: 'good' },
       black: { ph: 7.5, organicMatter: 'high', drainage: 'moderate' },
@@ -119,16 +106,10 @@ class LocationService {
     };
   }
 
-  /**
-   * Get weather data for location
-   */
   async getWeatherForLocation(latitude, longitude) {
     try {
-      // Using OpenWeatherMap API (requires API key)
-      // For now, return mock data - replace with actual API call
       const WeatherData = require('../models/WeatherData');
       
-      // Try to get from database first (if WeatherData model exists and has getLatest method)
       try {
         if (WeatherData && typeof WeatherData.getLatest === 'function') {
           const existing = await WeatherData.getLatest([longitude, latitude]);
@@ -142,11 +123,9 @@ class LocationService {
           }
         }
       } catch (error) {
-        // WeatherData model not available or getLatest not implemented - continue with fallback
         logger.debug('WeatherData.getLatest not available, using fallback');
       }
 
-      // Fallback mock data
       return {
         temperature: 25,
         rainfall: 0,
@@ -164,10 +143,6 @@ class LocationService {
     }
   }
 
-  /**
-   * Get comprehensive location data (location + soil + weather)
-   * Returns ALL required parameters: latitude, longitude, temperature, rainfall, pH, soilType
-   */
   async getLocationData(latitude, longitude) {
     try {
       const [location, soil, weather] = await Promise.all([
@@ -176,7 +151,6 @@ class LocationService {
         this.getWeatherForLocation(latitude, longitude)
       ]);
 
-      // Ensure all required fields are present with proper structure
       return {
         location: {
           latitude: parseFloat(latitude),
@@ -209,7 +183,6 @@ class LocationService {
           latitude: parseFloat(latitude),
           longitude: parseFloat(longitude)
         },
-        // Direct access fields for easy access
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         temperature: weather.temperature || 25,
@@ -220,7 +193,6 @@ class LocationService {
       };
     } catch (error) {
       logger.error('Error getting location data:', error);
-      // Return fallback data with all required fields
       return {
         location: {
           latitude: parseFloat(latitude),

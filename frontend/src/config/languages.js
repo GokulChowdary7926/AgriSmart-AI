@@ -1,4 +1,3 @@
-// Indian languages configuration
 export const indianLanguages = {
   en: {
     code: 'en',
@@ -92,7 +91,6 @@ export const indianLanguages = {
   }
 };
 
-// Language preferences configuration
 export const languagePreferences = {
   defaultLanguage: 'en',
   supportedLanguages: Object.keys(indianLanguages),

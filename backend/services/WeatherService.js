@@ -1,39 +1,36 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
+const apiErrorHandler = require('./api/apiErrorHandler');
+const fallbackManager = require('./api/fallbackManager');
+const retryManager = require('./api/retryManager');
+const { CircuitBreakerManager } = require('./api/circuitBreaker');
+const apiMonitor = require('./monitoring/apiMonitor');
 
-/**
- * Real-time Weather Service
- * Integrates with OpenWeatherMap and provides fallbacks
- */
 class WeatherService {
   constructor() {
     this.openweatherApiKey = process.env.OPENWEATHER_API_KEY || null;
+    this.weatherAPIs = {
+      openweathermap: {
+        current: 'http://api.openweathermap.org/data/2.5/weather',
+        forecast: 'http://api.openweathermap.org/data/2.5/forecast',
+        alerts: 'http://api.openweathermap.org/data/2.5/onecall'
+      },
+      imd: process.env.IMD_API_URL || 'https://mausam.imd.gov.in/api',
+      weatherapi: process.env.WEATHERAPI_KEY ? `https://api.weatherapi.com/v1` : null
+    };
     this.cache = new Map();
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
+    
+    this.circuitBreaker = CircuitBreakerManager.getBreaker('weather_openweathermap', {
+      threshold: 5,
+      timeout: 60000
+    });
   }
 
-  /**
-   * Get weather by IP address (fallback location detection)
-   */
   async getWeatherByIP() {
     try {
-      // Default to a central Indian location
       const defaultCoords = { lat: 20.5937, lng: 78.9629 }; // Central India
       
-      // Optional: Enable real IP detection (requires IP geolocation service)
-      /*
-      try {
-        const ipResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
-        const ipData = ipResponse.data;
-        const locationResponse = await axios.get(`http://ip-api.com/json/${ipData.ip}`, { timeout: 5000 });
-        const locationData = locationResponse.data;
-        if (locationData.lat && locationData.lon) {
-          return { lat: locationData.lat, lng: locationData.lon };
-        }
-      } catch (ipError) {
-        logger.warn('IP geolocation failed, using default location');
-      }
-      */
       
       return defaultCoords;
     } catch (error) {
@@ -42,42 +39,71 @@ class WeatherService {
     }
   }
 
-  /**
-   * Get weather by coordinates
-   */
   async getWeatherByCoords(lat, lon) {
     const cacheKey = `weather_${lat}_${lon}`;
     const cached = this.cache.get(cacheKey);
     
-    // Check cache
     if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
       return cached.data;
     }
 
     try {
-      // Try OpenWeatherMap
       if (this.openweatherApiKey && this.openweatherApiKey !== 'your_api_key_here') {
-        const response = await axios.get('http://api.openweathermap.org/data/2.5/weather', {
-          params: {
-            lat,
-            lon,
-            appid: this.openweatherApiKey,
-            units: 'metric'
-          },
-          timeout: 10000
-        });
+        const startTime = Date.now();
+        
+        const weatherData = await this.circuitBreaker.execute(async () => {
+          const result = await retryManager.executeWithRetry(async () => {
+            const response = await axios.get('http://api.openweathermap.org/data/2.5/weather', {
+              params: {
+                lat,
+                lon,
+                appid: this.openweatherApiKey,
+                units: 'metric'
+              },
+              timeout: 10000
+            });
 
-        if (response.status === 200) {
-          const weatherData = this.parseOpenWeatherData(response.data);
-          this.cache.set(cacheKey, { data: weatherData, timestamp: Date.now() });
-          return weatherData;
-        }
+            if (response.status === 200) {
+              return this.parseOpenWeatherData(response.data);
+            } else {
+              throw new Error(`Unexpected status: ${response.status}`);
+            }
+          }, { maxRetries: 2 });
+          
+          if (result.success) {
+            return result.data;
+          } else {
+            throw result.error;
+          }
+        }, async () => {
+          return fallbackManager.getFallback('weather', { lat, lon });
+        });
+        
+        const responseTime = Date.now() - startTime;
+        apiMonitor.recordRequest('weather', true, responseTime, false);
+        
+        this.cache.set(cacheKey, { data: weatherData, timestamp: Date.now() });
+        return weatherData;
       }
     } catch (error) {
       logger.warn('OpenWeather API error:', error.message);
+      
+      const responseTime = Date.now() - (Date.now() - 100); // Approximate
+      apiMonitor.recordRequest('weather', false, responseTime, false);
+      apiMonitor.recordError('weather', error);
+      
+      const errorResponse = apiErrorHandler.handleError(error, 'weather', {
+        params: { lat, lon },
+        retryCount: 0
+      });
+      
+      if (errorResponse.fallback) {
+        logger.info('Using weather fallback data');
+        apiMonitor.recordRequest('weather_fallback', true, 0, true);
+        return errorResponse.data;
+      }
     }
 
-    // Try to get location from IP if coordinates not provided
     if (!lat || !lon) {
       const ipLocation = await this.getWeatherByIP();
       if (ipLocation) {
@@ -85,46 +111,101 @@ class WeatherService {
       }
     }
 
-    // Fallback to mock data
     const mockData = this.getMockWeather(lat, lon);
     this.cache.set(cacheKey, { data: mockData, timestamp: Date.now() });
     return mockData;
   }
 
-  /**
-   * Get weather forecast
-   */
   async getWeatherForecast(lat, lon) {
+    const cacheKey = `forecast_${lat}_${lon}`;
+    const cached = this.cache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+      return cached.data;
+    }
+
     try {
       if (this.openweatherApiKey && this.openweatherApiKey !== 'your_api_key_here') {
-        const response = await axios.get('http://api.openweathermap.org/data/2.5/forecast', {
-          params: {
-            lat,
-            lon,
-            appid: this.openweatherApiKey,
-            units: 'metric',
-            cnt: 7
-          },
-          timeout: 10000
-        });
+        try {
+          const response = await axios.get(this.weatherAPIs.openweathermap.forecast, {
+            params: {
+              lat,
+              lon,
+              appid: this.openweatherApiKey,
+              units: 'metric',
+              cnt: 40 // 5 days * 8 intervals per day
+            },
+            timeout: 10000
+          });
 
-        if (response.status === 200) {
-          return this.parseForecastData(response.data);
+          if (response.status === 200 && response.data && response.data.list) {
+            const forecast = this.parseForecastData(response.data);
+            this.cache.set(cacheKey, { data: forecast, timestamp: Date.now() });
+            logger.info(`✅ Got real-time forecast from OpenWeatherMap (${forecast.length} periods)`);
+            return forecast;
+          }
+        } catch (error) {
+          logger.warn('OpenWeatherMap forecast API error:', error.message);
+        }
+      }
+
+      if (process.env.WEATHERAPI_KEY) {
+        try {
+          const response = await axios.get(`${this.weatherAPIs.weatherapi}/forecast.json`, {
+            params: {
+              key: process.env.WEATHERAPI_KEY,
+              q: `${lat},${lon}`,
+              days: 7,
+              aqi: 'yes',
+              alerts: 'yes'
+            },
+            timeout: 10000
+          });
+
+          if (response.status === 200 && response.data && response.data.forecast) {
+            const forecast = this.parseWeatherAPIForecast(response.data);
+            this.cache.set(cacheKey, { data: forecast, timestamp: Date.now() });
+            logger.info(`✅ Got real-time forecast from WeatherAPI (${forecast.length} periods)`);
+            return forecast;
+          }
+        } catch (error) {
+          logger.warn('WeatherAPI forecast error:', error.message);
         }
       }
     } catch (error) {
       logger.warn('Forecast API error:', error.message);
     }
 
-    return this.getMockForecast();
+    const mockForecast = this.getMockForecast();
+    this.cache.set(cacheKey, { data: mockForecast, timestamp: Date.now() });
+    return mockForecast;
   }
 
-  /**
-   * Get soil data based on location
-   */
+  parseWeatherAPIForecast(data) {
+    if (!data.forecast || !data.forecast.forecastday) {
+      return [];
+    }
+    
+    return data.forecast.forecastday.flatMap(day => 
+      day.hour.map(hour => ({
+        date: hour.time,
+        temperature: hour.temp_c,
+        min_temp: day.day.mintemp_c,
+        max_temp: day.day.maxtemp_c,
+        humidity: hour.humidity,
+        weather: hour.condition.text,
+        description: hour.condition.text,
+        rainfall: hour.precip_mm || 0,
+        wind_speed: hour.wind_kph / 3.6, // Convert to m/s
+        wind_degree: hour.wind_degree,
+        cloud_cover: hour.cloud,
+        visibility: hour.vis_km
+      }))
+    ).slice(0, 40); // Limit to 40 periods
+  }
+
   async getSoilData(lat, lon) {
     try {
-      // Using ISRIC Soil Grids API (free tier)
       const response = await axios.get('https://rest.isric.org/soilgrids/v2.0/properties/query', {
         params: {
           lon: lon,
@@ -146,9 +227,6 @@ class WeatherService {
     return this.getMockSoilData(lat, lon);
   }
 
-  /**
-   * Parse OpenWeatherMap response
-   */
   parseOpenWeatherData(data) {
     return {
       temperature: data.main.temp,
@@ -170,9 +248,6 @@ class WeatherService {
     };
   }
 
-  /**
-   * Parse forecast data
-   */
   parseForecastData(data) {
     if (!data || !data.list || !Array.isArray(data.list)) {
       return [];
@@ -189,9 +264,6 @@ class WeatherService {
     }));
   }
 
-  /**
-   * Parse soil data
-   */
   parseSoilData(data) {
     const properties = data.properties;
     const clay = properties.clay?.mean || 30;
@@ -210,9 +282,6 @@ class WeatherService {
     };
   }
 
-  /**
-   * Determine soil type from texture
-   */
   determineSoilType(clay, sand, silt) {
     const total = clay + sand + silt;
     if (total === 0) return 'Unknown';
@@ -229,11 +298,7 @@ class WeatherService {
     return 'Sandy Loam';
   }
 
-  /**
-   * Get mock weather data
-   */
   getMockWeather(lat, lon) {
-    // Simple approximation for India
     let temp, rainfall;
     
     if (lat > 28) { // North India
@@ -265,9 +330,6 @@ class WeatherService {
     };
   }
 
-  /**
-   * Get mock forecast
-   */
   getMockForecast() {
     const forecast = [];
     for (let i = 0; i < 7; i++) {
@@ -288,9 +350,6 @@ class WeatherService {
     return forecast;
   }
 
-  /**
-   * Get mock soil data
-   */
   getMockSoilData(lat, lon) {
     let soilType, ph;
     

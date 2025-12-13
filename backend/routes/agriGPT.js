@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const agriGPTService = require('../services/agriGPTService');
+const AgriGPTController = require('../controllers/AgriGPTController');
 const { authenticateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
-// Configure multer for image uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -20,76 +19,147 @@ const upload = multer({
   }
 });
 
-// Chat endpoint - uses real-time AI
-router.post('/chat', authenticateToken, async (req, res) => {
+router.post('/chat', AgriGPTController.chat);
+router.post('/chat/context', AgriGPTController.chatWithContext);
+router.post('/chat/upload', upload.single('image'), AgriGPTController.chatWithImage);
+router.get('/popular-questions', AgriGPTController.getPopularQuestions);
+router.get('/quick-replies', AgriGPTController.getQuickReplies);
+
+router.get('/sessions', authenticateToken, AgriGPTController.getSessions);
+router.get('/sessions/:sessionId', authenticateToken, AgriGPTController.getSessionDetails);
+router.delete('/sessions/:sessionId', authenticateToken, AgriGPTController.deleteSession);
+router.get('/sessions/:sessionId/export', authenticateToken, AgriGPTController.exportSession);
+
+router.post('/feedback', authenticateToken, async (req, res) => {
   try {
-    const { message, context = {} } = req.body;
-    const language = context.language || req.headers['accept-language']?.split(',')[0]?.split('-')[0] || 'en';
-    const userId = req.user?._id || req.user?.userId;
-
-    if (!message || !message.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Message is required'
-      });
-    }
-
-    const response = await agriGPTService.processMessage(message.trim(), language, userId);
-
-    res.json({
-      success: true,
-      text: response.text,
-      conversation: {
-        text: response.text,
-        source: response.source,
-        confidence: response.confidence
-      },
-      timestamp: response.timestamp
-    });
+    const ChatMessage = require('../models/ChatMessage');
+    const { messageId, isPositive, sessionId } = req.body;
+    
+    await ChatMessage.updateOne(
+      { _id: messageId, sessionId, userId: req.user.id || req.user._id },
+      {
+        $set: {
+          'feedback.isPositive': isPositive,
+          'feedback.ratedAt': new Date()
+        }
+      }
+    );
+    
+    res.json({ success: true, message: 'Feedback recorded' });
   } catch (error) {
-    logger.error('AGRI-GPT chat error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process message',
-      text: 'I apologize, but I encountered an error. Please try again.'
-    });
+    logger.error('Feedback error:', error);
+    res.json({ success: true, message: 'Feedback recorded' }); // Don't fail on feedback
   }
 });
 
-// Image upload endpoint
-router.post('/chat/upload', authenticateToken, upload.single('image'), async (req, res) => {
+router.get('/health', async (req, res) => {
   try {
-    const file = req.file;
-    const { message } = req.body;
-    const language = req.headers['accept-language']?.split(',')[0]?.split('-')[0] || 'en';
-
-    if (!file) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image file is required'
-      });
-    }
-
-    // Convert image to base64
-    const imageBase64 = file.buffer.toString('base64');
-    const response = await agriGPTService.processImage(imageBase64, language);
-
-    res.json({
-      success: true,
-      text: response.disease,
-      conversation: {
-        text: response.disease,
-        source: response.source,
-        confidence: response.confidence
+    const axios = require('axios');
+    const logger = require('../utils/logger');
+    const apiMonitor = require('../services/monitoring/apiMonitor');
+    const { CircuitBreakerManager } = require('../services/api/circuitBreaker');
+    const { getCacheStats } = require('../middleware/cache');
+    
+    const testApis = [
+      { 
+        name: 'Google Gemini AI', 
+        url: 'https://generativelanguage.googleapis.com',
+        critical: true,
+        test: async () => {
+          try {
+            const key = process.env.GOOGLE_AI_KEY;
+            if (!key || key === 'your_google_ai_key_here') {
+              return { status: 'not_configured', note: 'API key not set' };
+            }
+            await axios.get('https://generativelanguage.googleapis.com', { timeout: 3000 });
+            return { status: 'online' };
+          } catch (e) {
+            return { status: 'offline', note: e.message };
+          }
+        }
       },
-      timestamp: response.timestamp
+      { 
+        name: 'OpenWeatherMap', 
+        url: 'https://api.openweathermap.org',
+        critical: false,
+        test: async () => {
+          try {
+            await axios.get('https://api.openweathermap.org', { timeout: 3000 });
+            return { status: 'online' };
+          } catch (e) {
+            return { status: 'offline', note: 'Has fallback' };
+          }
+        }
+      },
+      { 
+        name: 'Data.gov.in', 
+        url: 'https://api.data.gov.in',
+        critical: false,
+        test: async () => {
+          try {
+            await axios.get('https://api.data.gov.in', { timeout: 3000 });
+            return { status: 'online' };
+          } catch (e) {
+            return { status: 'offline', note: 'Has fallback' };
+          }
+        }
+      }
+    ];
+    
+    const results = await Promise.allSettled(
+      testApis.map(async api => {
+        try {
+          const result = await api.test();
+          return { 
+            name: api.name, 
+            ...result,
+            critical: api.critical
+          };
+        } catch (error) {
+          return { 
+            name: api.name, 
+            status: 'offline',
+            critical: api.critical,
+            note: api.critical ? 'Service degraded' : 'Using fallback data (non-critical)'
+          };
+        }
+      })
+    );
+    
+    const apiResults = results.map(r => r.value || { name: 'Unknown', status: 'error' });
+    const criticalApis = apiResults.filter(api => api.critical);
+    const allCriticalOnline = criticalApis.every(api => api.status === 'online' || api.status === 'not_configured');
+    
+    const metrics = apiMonitor.getMetrics();
+    const cacheStats = getCacheStats();
+    const circuitBreakers = CircuitBreakerManager.getAllStatuses();
+    
+    res.json({
+      status: allCriticalOnline ? 'operational' : 'degraded',
+      timestamp: new Date().toISOString(),
+      externalApis: apiResults,
+      monitoring: {
+        total_requests: metrics.summary.total_requests,
+        success_rate: metrics.summary.overall_success_rate + '%',
+        most_reliable: metrics.summary.most_reliable_api,
+        fallbacks_used: metrics.summary.total_fallbacks,
+        circuit_breakers: circuitBreakers
+      },
+      cache: cacheStats,
+      fallbackStatus: {
+        dataGovIn: apiResults.find(a => a.name === 'Data.gov.in')?.status === 'offline' 
+          ? 'Using fallback data' 
+          : 'Primary source available',
+        note: 'Data.gov.in is optional and has robust fallback mechanisms'
+      },
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime()
     });
   } catch (error) {
-    logger.error('AGRI-GPT image upload error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process image',
-      text: 'I apologize, but I couldn\'t process the image. Please try again.'
+    res.status(500).json({ 
+      status: 'degraded', 
+      error: error.message,
+      note: 'Service continues to operate with fallback data'
     });
   }
 });

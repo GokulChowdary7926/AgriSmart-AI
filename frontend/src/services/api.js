@@ -1,7 +1,6 @@
 import axios from 'axios';
+import logger from './logger';
 
-// Create axios instance with default config
-// Use relative URL to leverage Vite proxy, or full URL if VITE_API_URL is set
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
@@ -10,90 +9,140 @@ const api = axios.create({
   timeout: 30000, // 30 seconds timeout
 });
 
-// Request interceptor
 api.interceptors.request.use(
   (config) => {
-    // Get token from localStorage
     const token = localStorage.getItem('token');
     
-    // If token exists, add to headers
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     
-    // Add language header if available
     const language = localStorage.getItem('language') || 'en';
     config.headers['Accept-Language'] = language;
+    
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
     
     return config;
   },
   (error) => {
-    console.error('❌ Request error:', error);
+    logger.error('Request error', error);
     return Promise.reject(error);
   }
 );
 
-// Response interceptor
 api.interceptors.response.use(
   (response) => {
-    // Return successful response
     return response;
   },
-  (error) => {
+  async (error) => {
     const originalRequest = error.config;
     
-    // Error details available in error object for debugging
-    
-    // Handle 401 Unauthorized errors (token expired)
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if ((error.code === 'ECONNABORTED' || error.code === 'NETWORK_ERROR' || !error.response) && !originalRequest._retry) {
       originalRequest._retry = true;
+      originalRequest._retryCount = (originalRequest._retryCount || 0) + 1;
       
-      // Unauthorized - Clearing token
-      localStorage.removeItem('token');
-      
-      // Only redirect if not already on login page
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login';
+      if (originalRequest._retryCount <= 2) {
+        logger.debug(`Retrying request (attempt ${originalRequest._retryCount})`);
+        
+        await new Promise(resolve => setTimeout(resolve, 1000 * originalRequest._retryCount));
+        
+        return api.request(originalRequest);
       }
-      
-      return Promise.reject(error);
     }
     
-    // Handle network errors
+    if (error.response) {
+      switch (error.response.status) {
+        case 401:
+          if (!originalRequest._retry) {
+            originalRequest._retry = true;
+            
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            
+            if (!window.location.pathname.includes('/login')) {
+              window.location.href = '/login';
+            }
+          }
+          break;
+          
+        case 403:
+          logger.error('Access forbidden');
+          return Promise.reject({
+            success: false,
+            error: 'You do not have permission to access this resource.',
+            statusCode: 403
+          });
+          
+        case 404:
+          logger.error('API endpoint not found', { url: originalRequest.url });
+          return Promise.reject({
+            success: false,
+            error: 'The requested resource was not found.',
+            statusCode: 404
+          });
+          
+        case 429:
+          logger.warn('Rate limit exceeded');
+          const retryAfter = error.response.headers['retry-after'] || 60;
+          return Promise.reject({
+            success: false,
+            error: `Too many requests. Please wait ${retryAfter} seconds before trying again.`,
+            statusCode: 429,
+            retryAfter
+          });
+          
+        case 500:
+          console.error('Server error:', error.response.data);
+          return Promise.reject({
+            success: false,
+            error: 'Server error. Please try again later.',
+            statusCode: 500
+          });
+          
+        case 503:
+          logger.error('Service unavailable');
+          return Promise.reject({
+            success: false,
+            error: 'Service temporarily unavailable. Please try again later.',
+            statusCode: 503
+          });
+      }
+    }
+    
     if (!error.response) {
-      // Network error - connection issue
       return Promise.reject({
         success: false,
-        error: 'Network error. Please check your connection.',
-        isNetworkError: true
+        error: error.code === 'ECONNABORTED' 
+          ? 'Request timeout. Please check your connection and try again.'
+          : 'Network error. Please check your connection.',
+        isNetworkError: true,
+        code: error.code
       });
     }
     
-    // Handle server errors
     if (error.response.status >= 500) {
-      // Server error - 500+ status code
       return Promise.reject({
         success: false,
         error: 'Server error. Please try again later.',
-        isServerError: true
+        isServerError: true,
+        statusCode: error.response.status
       });
     }
     
-    // For 4xx errors, preserve the error structure from backend
     if (error.response?.data) {
-      // Backend returns {success: false, error: "message"} for 4xx errors
       return Promise.reject({
         ...error.response.data,
+        statusCode: error.response.status,
         response: error.response // Keep response for debugging
       });
     }
     
-    // Return error response
     return Promise.reject(error.response?.data || error);
   }
 );
 
-// API health check
 export const checkApiHealth = async () => {
   try {
     const healthUrl = import.meta.env.VITE_API_URL 
@@ -106,11 +155,8 @@ export const checkApiHealth = async () => {
   }
 };
 
-// Export default api instance
-// Helper function for crop recommendation with auto-detection
 export const getCropRecommendationWithAutoLocation = async () => {
   try {
-    // Get current location
     const position = await new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error('Geolocation not supported'));
@@ -126,10 +172,8 @@ export const getCropRecommendationWithAutoLocation = async () => {
     
     const { latitude, longitude } = position.coords;
     
-    // Get language
     const language = localStorage.getItem('language') || 'en';
     
-    // Call recommendation API
     const response = await api.post('/crops/recommend', {
       latitude,
       longitude,
@@ -141,7 +185,6 @@ export const getCropRecommendationWithAutoLocation = async () => {
   } catch (error) {
     console.error('Auto location recommendation error:', error);
     
-    // Fallback to default location (New Delhi)
     const response = await api.post('/crops/recommend', {
       latitude: 28.6139,
       longitude: 77.2090,
@@ -156,7 +199,6 @@ export const getCropRecommendationWithAutoLocation = async () => {
   }
 };
 
-// Helper function for scheme recommendation
 export const getSchemeRecommendationForFarmer = async (farmerProfile) => {
   try {
     const response = await api.post('/government-schemes/recommend', {
@@ -167,9 +209,8 @@ export const getSchemeRecommendationForFarmer = async (farmerProfile) => {
     return response.data;
     
   } catch (error) {
-    console.error('Scheme recommendation error:', error);
+    logger.error('Scheme recommendation error', error);
     
-    // Return fallback schemes
     return {
       success: true,
       data: [

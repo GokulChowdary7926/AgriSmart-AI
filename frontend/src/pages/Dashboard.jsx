@@ -36,12 +36,12 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
+import logger from '../services/logger';
 
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Fetch comprehensive dashboard data
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ['analytics', 'dashboard'],
     queryFn: async () => {
@@ -58,7 +58,6 @@ export default function Dashboard() {
     staleTime: 60000
   });
 
-  // Fetch crops data
   const { data: cropsData, isLoading: cropsLoading } = useQuery({
     queryKey: ['crops', 'analytics'],
     queryFn: async () => {
@@ -74,7 +73,6 @@ export default function Dashboard() {
     staleTime: 60000
   });
 
-  // Fetch weather alerts
   const { data: weatherAlerts } = useQuery({
     queryKey: ['weather', 'alerts'],
     queryFn: async () => {
@@ -82,7 +80,6 @@ export default function Dashboard() {
         const response = await api.get('/weather/alerts?lat=28.6139&lng=77.2090');
         return response.data.data || [];
       } catch (error) {
-        // Fallback to alerts endpoint
         try {
           const alertsResponse = await api.get('/alerts');
           return alertsResponse.data.data || [];
@@ -93,18 +90,15 @@ export default function Dashboard() {
     }
   });
 
-  // Fetch market prices - get all daily-use commodities (same as Market page)
   const { data: marketData } = useQuery({
     queryKey: ['market', 'dashboard', 'all-commodities'],
     queryFn: async () => {
       try {
-        // Fetch all prices without filters to get all daily-use commodities
         const response = await api.get('/market/prices', { params: { limit: 500 } });
         const data = response.data.data || [];
-        // Filter out invalid entries
         return data.filter(item => item.price || (item.commodity && item.market));
       } catch (error) {
-        console.error('Failed to fetch market prices:', error);
+        logger.error('Failed to fetch market prices', error);
         return [];
       }
     },
@@ -113,7 +107,6 @@ export default function Dashboard() {
     staleTime: 2 * 60 * 1000 // Consider stale after 2 minutes
   });
 
-  // Fetch government schemes summary
   const { data: schemesData } = useQuery({
     queryKey: ['schemes', 'summary'],
     queryFn: async () => {
@@ -143,7 +136,6 @@ export default function Dashboard() {
     staleTime: 10 * 60 * 1000 // 10 minutes
   });
 
-  // Fetch recent diseases
   const { data: diseasesData } = useQuery({
     queryKey: ['diseases', 'recent'],
     queryFn: async () => {
@@ -156,7 +148,6 @@ export default function Dashboard() {
     }
   });
 
-  // Stats Cards with real data
   const stats = [
     {
       title: 'Active Crops',
@@ -188,7 +179,6 @@ export default function Dashboard() {
     }
   ];
 
-  // Quick Actions
   const quickActions = [
     { title: 'Crop Recommendation', icon: <CropIcon />, path: '/crop-recommendation', color: '#4caf50' },
     { title: 'Disease Detection', icon: <DiseaseIcon />, path: '/diseases', color: '#f44336' },
@@ -200,7 +190,6 @@ export default function Dashboard() {
     { title: 'Analytics', icon: <AnalyticsIcon />, path: '/analytics', color: '#607d8b' }
   ];
 
-  // Prepare chart data from real analytics
   const cropGrowthData = React.useMemo(() => {
     if (analytics?.cropStats?.seasonalTrends) {
       const trends = analytics.cropStats.seasonalTrends;
@@ -220,10 +209,8 @@ export default function Dashboard() {
     ];
   }, [analytics]);
 
-  // Aggregate market prices by commodity (same logic as Market page)
   const marketTrendsData = React.useMemo(() => {
     if (!marketData || !Array.isArray(marketData) || marketData.length === 0) {
-      // Fallback to analytics if available
       if (analytics?.marketStats?.priceTrends && Array.isArray(analytics.marketStats.priceTrends)) {
         return analytics.marketStats.priceTrends.slice(0, 12).map(trend => ({
           commodity: trend.commodity || 'Unknown',
@@ -234,7 +221,6 @@ export default function Dashboard() {
       return [];
     }
     
-    // Aggregate by commodity: calculate average price per commodity (same as Market page)
     const commodityMap = new Map();
     
     marketData.forEach(price => {
@@ -264,7 +250,6 @@ export default function Dashboard() {
       }
     });
     
-    // Convert to array with calculated averages
     const aggregated = Array.from(commodityMap.values()).map(data => {
       const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length;
       const avgChange = data.priceChanges.length > 0
@@ -283,7 +268,6 @@ export default function Dashboard() {
       };
     }).sort((a, b) => a.commodity.localeCompare(b.commodity));
     
-    // Return top 12 daily-use commodities
     return aggregated.slice(0, 12);
   }, [marketData, analytics]);
 
@@ -295,7 +279,6 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* Welcome Section */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
           Welcome back, {user?.name || 'Farmer'}! 👋
@@ -321,7 +304,6 @@ export default function Dashboard() {
         )}
       </Box>
 
-      {/* Stats Cards */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         {stats.map((stat, index) => (
           <Grid item xs={12} sm={6} md={3} key={index}>
@@ -355,7 +337,6 @@ export default function Dashboard() {
         ))}
       </Grid>
 
-      {/* Quick Actions */}
       <Paper sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" gutterBottom>
           Quick Actions
@@ -386,11 +367,8 @@ export default function Dashboard() {
         </Grid>
       </Paper>
 
-      {/* Main Content Grid */}
       <Grid container spacing={3}>
-        {/* Left Column */}
         <Grid item xs={12} md={8}>
-          {/* Market Trends */}
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box>
@@ -421,28 +399,24 @@ export default function Dashboard() {
                       </ListItemIcon>
                       <ListItemText
                         primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                              {item.commodity}
-                            </Typography>
+                          <Typography component="span" variant="body1" sx={{ fontWeight: 500, display: 'inline-block' }}>
+                            {item.commodity}
                             {item.priceRange && (
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
                                 (₹{item.priceRange.min.toFixed(2)} - ₹{item.priceRange.max.toFixed(2)})
                               </Typography>
                             )}
-                          </Box>
+                          </Typography>
                         }
                         secondary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                              ₹{item.price?.toFixed(2) || item.price || 0}/kg
-                            </Typography>
+                          <Typography component="span" variant="body2" sx={{ fontWeight: 600, color: 'primary.main', display: 'inline-block' }}>
+                            ₹{item.price?.toFixed(2) || item.price || 0}/kg
                             {item.sampleCount && (
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
                                 • {item.sampleCount} {item.sampleCount === 1 ? 'market' : 'markets'}
                               </Typography>
                             )}
-                          </Box>
+                          </Typography>
                         }
                       />
                       <Chip
@@ -464,7 +438,6 @@ export default function Dashboard() {
             )}
           </Paper>
 
-          {/* Recent Activity */}
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
               Recent Activity
@@ -476,7 +449,9 @@ export default function Dashboard() {
                     <ListItemIcon>
                       <CheckIcon color="success" />
                     </ListItemIcon>
-                    <ListItemText primary={activity} />
+                    <ListItemText>
+                      <Typography component="span">{activity}</Typography>
+                    </ListItemText>
                   </ListItem>
                 ))}
               </List>
@@ -486,9 +461,7 @@ export default function Dashboard() {
           </Paper>
         </Grid>
 
-        {/* Right Column */}
         <Grid item xs={12} md={4}>
-          {/* Recent Crops */}
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6">Recent Crops</Typography>
@@ -518,7 +491,6 @@ export default function Dashboard() {
             )}
           </Paper>
 
-          {/* Weather Alerts */}
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6">Weather Alerts</Typography>
@@ -544,7 +516,6 @@ export default function Dashboard() {
             )}
           </Paper>
 
-          {/* Top Recommended Schemes */}
           <Paper sx={{ p: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6">Recommended Schemes</Typography>
@@ -593,7 +564,6 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
-      {/* System Statistics (if admin) */}
       {analytics?.systemStats && (
         <Paper sx={{ p: 3, mt: 3 }}>
           <Typography variant="h6" gutterBottom>

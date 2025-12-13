@@ -6,24 +6,54 @@ const { authenticateToken } = require('../middleware/auth');
 class AuthController {
   static async register(req, res) {
     try {
-      const { email, password, name, phone, language, role } = req.body;
+      const { email, password, name, phone, username, language, role } = req.body;
+      
+      logger.info('📝 Registration attempt:', {
+        hasName: !!name,
+        hasUsername: !!username,
+        hasEmail: !!email,
+        hasPhone: !!phone,
+        hasPassword: !!password,
+        username: username || 'N/A'
+      });
 
-      // Validate input
-      if (!email || !password || !name || !phone) {
+      const missingFields = [];
+      if (!name) missingFields.push('name');
+      if (!username) missingFields.push('username');
+      if (!email) missingFields.push('email');
+      if (!phone) missingFields.push('phone');
+      if (!password) missingFields.push('password');
+      
+      if (missingFields.length > 0) {
+        logger.warn('❌ Missing required fields:', missingFields);
         return res.status(400).json({ 
           success: false,
-          error: 'All fields are required: name, email, phone, and password' 
+          error: `Missing required fields: ${missingFields.join(', ')}` 
         });
       }
 
-      // Clean phone number (remove +, spaces, dashes)
+      const normalizedUsername = username.toLowerCase().trim();
+      if (!/^[a-z0-9_]+$/.test(normalizedUsername)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Username can only contain lowercase letters, numbers, and underscores' 
+        });
+      }
+
+      if (normalizedUsername.length < 3 || normalizedUsername.length > 30) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Username must be between 3 and 30 characters' 
+        });
+      }
+
       const cleanedPhone = phone.replace(/[\s+\-]/g, '');
 
-      // Check if user exists
       const existingUser = await User.findOne({ 
         $or: [
           { email: email.toLowerCase() }, 
-          { phone: cleanedPhone }
+          { phone: cleanedPhone },
+          { username: normalizedUsername }
         ] 
       });
       
@@ -40,13 +70,19 @@ class AuthController {
             error: 'An account with this phone number already exists' 
           });
         }
+        if (existingUser.username === normalizedUsername) {
+          return res.status(400).json({ 
+            success: false,
+            error: 'An account with this username already exists' 
+          });
+        }
       }
 
-      // Create user
       const user = new User({
         email: email.toLowerCase(),
         password,
         name,
+        username: normalizedUsername,
         phone: cleanedPhone,
         preferences: {
           language: language || 'en'
@@ -56,7 +92,6 @@ class AuthController {
 
       await user.save();
 
-      // Generate token
       const token = user.generateAuthToken();
 
       res.status(201).json({
@@ -65,6 +100,7 @@ class AuthController {
         token,
         user: {
           id: user._id,
+          username: user.username,
           email: user.email,
           name: user.name,
           phone: user.phone,
@@ -81,7 +117,6 @@ class AuthController {
         errors: error.errors
       });
       
-      // Handle validation errors
       if (error.name === 'ValidationError') {
         const messages = Object.values(error.errors).map(err => err.message);
         const errorMessage = messages.length > 0 
@@ -93,17 +128,18 @@ class AuthController {
         });
       }
       
-      // Handle duplicate key error
       if (error.code === 11000) {
         const field = Object.keys(error.keyPattern || {})[0] || 'field';
-        const fieldName = field === 'email' ? 'email' : field === 'phone' ? 'phone number' : field;
+        let fieldName = 'field';
+        if (field === 'email') fieldName = 'email';
+        else if (field === 'phone') fieldName = 'phone number';
+        else if (field === 'username') fieldName = 'username';
         return res.status(400).json({ 
           success: false,
           error: `An account with this ${fieldName} already exists` 
         });
       }
       
-      // Return more specific error message
       const errorMessage = error.message || 'Registration failed. Please check your information and try again.';
       res.status(500).json({ 
         success: false,
@@ -114,43 +150,64 @@ class AuthController {
 
   static async login(req, res) {
     try {
-      const { email, phone, password } = req.body;
+      const { email, phone, username, identifier, password } = req.body;
+
+      const loginIdentifier = identifier || email || phone || username;
 
       logger.info('🔐 Login attempt:', {
-        email: email || 'N/A',
-        phone: phone || 'N/A',
+        identifier: loginIdentifier ? 'provided' : 'N/A',
         timestamp: new Date().toISOString(),
         ip: req.ip
       });
 
-      if ((!email && !phone) || !password) {
-        logger.warn('❌ Missing email/phone or password');
+      if (!loginIdentifier || !password) {
+        logger.warn('❌ Missing identifier or password');
         return res.status(400).json({ 
           success: false,
-          error: 'Email/phone and password required' 
+          error: 'Email/Phone/Username and password required' 
         });
       }
 
-      // Find user - normalize email to lowercase
-      const normalizedEmail = email ? email.toLowerCase().trim() : null;
-      logger.info('📧 Searching for user with email:', normalizedEmail || phone);
+      let query = {};
+      let identifierType = 'unknown';
       
-      const user = await User.findOne(
-        normalizedEmail ? { email: normalizedEmail } : { phone }
-      ).select('+password');
+      if (loginIdentifier.includes('@')) {
+        const normalizedEmail = loginIdentifier.toLowerCase().trim();
+        query = { email: normalizedEmail };
+        identifierType = 'email';
+        logger.info('📧 Searching for user by email:', normalizedEmail);
+      }
+      else if (/^[\d\s+\-]+$/.test(loginIdentifier) && loginIdentifier.replace(/[\s+\-]/g, '').length >= 10) {
+        const cleanedPhone = loginIdentifier.replace(/[\s+\-]/g, '');
+        query = { phone: cleanedPhone };
+        identifierType = 'phone';
+        logger.info('📱 Searching for user by phone:', cleanedPhone);
+      }
+      else {
+        const normalizedUsername = loginIdentifier.toLowerCase().trim();
+        query = { username: normalizedUsername };
+        identifierType = 'username';
+        logger.info('👤 Searching for user by username:', normalizedUsername);
+      }
+      
+      const user = await User.findOne(query).select('+password');
       
       if (!user) {
-        logger.warn('❌ User not found:', normalizedEmail || phone);
+        logger.warn('❌ User not found:', loginIdentifier);
         return res.status(401).json({ 
           success: false,
           error: 'Invalid credentials' 
         });
       }
 
-      logger.info('👤 User found:', user.email);
+      logger.info('👤 User found:', { 
+        id: user._id, 
+        email: user.email, 
+        phone: user.phone,
+        foundBy: identifierType 
+      });
       logger.info('🔍 Verifying password...');
 
-      // Verify password
       const isValid = await user.comparePassword(password);
       
       if (!isValid) {
@@ -163,12 +220,10 @@ class AuthController {
 
       logger.info('✅ Password verified successfully');
 
-      // Update last login
       user.lastLogin = new Date();
       user.loginCount = (user.loginCount || 0) + 1;
       await user.save();
 
-      // Generate token
       const token = user.generateAuthToken();
       logger.info('🎫 Token generated successfully');
 
@@ -180,6 +235,7 @@ class AuthController {
         token,
         user: {
           id: user._id,
+          username: user.username,
           email: user.email,
           name: user.name,
           phone: user.phone,
@@ -205,8 +261,6 @@ class AuthController {
   }
 
   static async logout(req, res) {
-    // In a stateless JWT system, logout is handled client-side
-    // But you can implement token blacklisting here
     res.json({ 
       success: true,
       message: 'Logout successful' 
@@ -215,8 +269,6 @@ class AuthController {
 
   static async getCurrentUser(req, res) {
     try {
-      // User is attached by authenticateToken middleware
-      // Check both req.user and req.userId
       const userId = req.user?._id || req.userId;
       
       if (!userId) {
@@ -239,6 +291,7 @@ class AuthController {
         success: true,
         user: {
           id: user._id,
+          username: user.username,
           email: user.email,
           name: user.name,
           phone: user.phone,
@@ -267,7 +320,6 @@ class AuthController {
 
       const user = await User.findOne({ email });
       if (!user) {
-        // Don't reveal if user exists
         return res.json({
           success: true,
           message: 'If user exists, password reset email will be sent'
@@ -277,8 +329,6 @@ class AuthController {
       const resetToken = user.generatePasswordResetToken();
       await user.save({ validateBeforeSave: false });
 
-      // TODO: Send email with reset token
-      // await sendPasswordResetEmail(user.email, resetToken);
 
       res.json({
         success: true,
@@ -343,7 +393,6 @@ class AuthController {
     try {
       const { phone, code } = req.body;
 
-      // TODO: Implement OTP verification
       const user = await User.findOne({ phone });
       if (!user) {
         return res.status(404).json({ 
@@ -352,7 +401,6 @@ class AuthController {
         });
       }
 
-      // For now, just mark as verified
       user.isVerified.phone = true;
       await user.save();
 
@@ -405,7 +453,6 @@ class AuthController {
 
   static async refreshToken(req, res) {
     try {
-      // Get user from token
       const user = await User.findById(req.userId);
       if (!user) {
         return res.status(404).json({ 

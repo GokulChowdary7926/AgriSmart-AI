@@ -5,8 +5,6 @@ const { authenticateToken } = require('../middleware/auth');
 const cropRecommendationEngine = require('../services/CropRecommendationEngine');
 const logger = require('../utils/logger');
 
-// Public routes
-// IMPORTANT: Specific routes must come before parameterized routes (/:id)
 router.get('/recommend', CropController.recommend); // GET with query params
 router.post('/recommend', CropController.recommend); // POST with body data (for auto-detection)
 router.get('/recommend-by-location', CropController.recommend); // Alias for location-based
@@ -62,7 +60,6 @@ router.get('/analytics', authenticateToken, CropController.getAnalytics);
 router.get('/', CropController.getAll);
 router.get('/:id', CropController.getById); // This must be last to avoid matching /recommend
 
-// Protected routes (require authentication)
 router.post('/', authenticateToken, CropController.create);
 router.put('/:id', authenticateToken, CropController.update);
 router.delete('/:id', authenticateToken, CropController.delete);

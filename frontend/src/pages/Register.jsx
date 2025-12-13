@@ -16,6 +16,7 @@ import { useSnackbar } from 'notistack';
 export default function Register() {
   const [formData, setFormData] = useState({
     name: '',
+    username: '',
     email: '',
     phone: '',
     password: '',
@@ -48,7 +49,19 @@ export default function Register() {
       return;
     }
 
-    const result = await register(formData);
+    if (!formData.username || formData.username.trim().length < 3) {
+      setError('Username must be at least 3 characters');
+      return;
+    }
+
+    if (!/^[a-z0-9_]+$/.test(formData.username.toLowerCase())) {
+      setError('Username can only contain lowercase letters, numbers, and underscores');
+      return;
+    }
+
+    const { confirmPassword, ...registrationData } = formData;
+    registrationData.username = registrationData.username.toLowerCase().trim();
+    const result = await register(registrationData);
     
     if (result && result.success) {
       enqueueSnackbar('Registration successful!', { variant: 'success' });
@@ -86,6 +99,21 @@ export default function Register() {
             margin="normal"
             required
             autoComplete="name"
+          />
+          <TextField
+            fullWidth
+            label="Username"
+            name="username"
+            value={formData.username}
+            onChange={handleChange}
+            margin="normal"
+            required
+            autoComplete="username"
+            helperText="3-30 characters, lowercase letters, numbers, and underscores only"
+            inputProps={{ 
+              pattern: '[a-z0-9_]+',
+              style: { textTransform: 'lowercase' }
+            }}
           />
           <TextField
             fullWidth
@@ -152,6 +180,19 @@ export default function Register() {
     </Container>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

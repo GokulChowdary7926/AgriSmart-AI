@@ -40,7 +40,6 @@ export default function AgriChat() {
   const { user } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
   
-  // State
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [conversations, setConversations] = useState([]);
@@ -56,26 +55,23 @@ export default function AgriChat() {
   const [typingUsers, setTypingUsers] = useState({});
   const [radius, setRadius] = useState(50); // km
   
-  // Refs
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const drawerRef = useRef(null);
 
-  // Load conversations
   const loadConversations = useCallback(async () => {
     try {
       setLoading(true);
       const response = await api.get('/agri-chat/conversations');
       setConversations(response.data.data || []);
     } catch (error) {
-      console.error('Error loading conversations:', error);
+      logger.error('Error loading conversations', error);
       enqueueSnackbar('Failed to load conversations', { variant: 'error' });
     } finally {
       setLoading(false);
     }
   }, [enqueueSnackbar]);
 
-  // Load nearby users
   const loadNearbyUsers = useCallback(async () => {
     try {
       setLoading(true);
@@ -83,14 +79,12 @@ export default function AgriChat() {
       const users = response.data.data || [];
       setNearbyUsers(users);
       
-      // Only show error if response indicates failure
       if (!response.data.success && users.length === 0) {
         enqueueSnackbar(response.data.message || 'No nearby sellers/dealers found. Try searching instead.', { 
           variant: 'info',
           autoHideDuration: 4000
         });
       } else if (users.length === 0) {
-        // Show info message if no users found but request was successful
         enqueueSnackbar('No nearby sellers/dealers found. Try searching for users instead.', { 
           variant: 'info',
           autoHideDuration: 4000
@@ -98,7 +92,6 @@ export default function AgriChat() {
       }
     } catch (error) {
       console.error('Error loading nearby users:', error);
-      // Set empty array to prevent UI issues
       setNearbyUsers([]);
       enqueueSnackbar(
         error.response?.data?.message || 
@@ -113,17 +106,15 @@ export default function AgriChat() {
     }
   }, [radius, enqueueSnackbar]);
 
-  // Initialize socket connection
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
-      console.warn('No token found, skipping socket connection');
+      logger.warn('No token found, skipping socket connection');
       return;
     }
 
-    // Prevent duplicate connections - check if socket already exists and is connected
     if (socket && socket.connected) {
-      console.log('Socket already connected, skipping new connection');
+      logger.debug('Socket already connected, skipping new connection');
       return;
     }
 
@@ -146,7 +137,7 @@ export default function AgriChat() {
 
       newSocket.on('connect', () => {
         if (isMounted) {
-          console.log('AgriChat socket connected');
+          logger.info('AgriChat socket connected');
           setIsConnected(true);
           loadConversations();
           loadNearbyUsers();
@@ -155,9 +146,8 @@ export default function AgriChat() {
 
       newSocket.on('connect_error', (error) => {
         if (isMounted) {
-          console.warn('Socket connection error:', error.message);
+          logger.warn('Socket connection error', { message: error.message });
           setIsConnected(false);
-          // Don't show error snackbar for connection errors - they're usually temporary
         }
       });
 
@@ -165,7 +155,6 @@ export default function AgriChat() {
         if (isMounted) {
           console.log('Socket disconnected:', reason);
           setIsConnected(false);
-          // Only attempt manual reconnect for server-initiated disconnects
           if (reason === 'io server disconnect') {
             setTimeout(() => {
               if (isMounted && newSocket && !newSocket.connected) {
@@ -180,7 +169,6 @@ export default function AgriChat() {
         if (selectedConversation && message.conversation.toString() === selectedConversation._id) {
           setMessages(prev => [...prev, message]);
         }
-        // Update conversation list
         loadConversations();
       });
 
@@ -218,7 +206,7 @@ export default function AgriChat() {
         setSocket(newSocket);
       }
     } catch (error) {
-      console.error('Failed to initialize socket:', error);
+      logger.error('Failed to initialize socket', error);
       if (isMounted) {
         enqueueSnackbar('Failed to connect to chat server', { variant: 'error' });
       }
@@ -227,7 +215,6 @@ export default function AgriChat() {
     return () => {
       isMounted = false;
       if (newSocket) {
-        // Only disconnect if we're not already disconnected
         if (newSocket.connected) {
           newSocket.disconnect();
         }
@@ -236,7 +223,6 @@ export default function AgriChat() {
     };
   }, [loadConversations, loadNearbyUsers]); // Include dependencies to avoid stale closures
 
-  // Load messages for a conversation
   const loadMessages = useCallback(async (conversationId) => {
     try {
       setLoadingMessages(true);
@@ -244,14 +230,13 @@ export default function AgriChat() {
       setMessages(response.data.data || []);
       scrollToBottom();
     } catch (error) {
-      console.error('Error loading messages:', error);
+      logger.error('Error loading messages', error);
       enqueueSnackbar('Failed to load messages', { variant: 'error' });
     } finally {
       setLoadingMessages(false);
     }
   }, [enqueueSnackbar]);
 
-  // Search users
   const searchUsers = useCallback(async (query) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
@@ -266,7 +251,6 @@ export default function AgriChat() {
     }
   }, []);
 
-  // Start conversation with a user
   const startConversation = async (otherUserId) => {
     try {
       const response = await api.post('/agri-chat/conversation', { otherUserId });
@@ -276,12 +260,11 @@ export default function AgriChat() {
       await loadMessages(conversation._id);
       await loadConversations();
     } catch (error) {
-      console.error('Error starting conversation:', error);
+      logger.error('Error starting conversation', error);
       enqueueSnackbar('Failed to start conversation', { variant: 'error' });
     }
   };
 
-  // Send message
   const sendMessage = async () => {
     if (!messageText.trim() || !selectedConversation) return;
 
@@ -290,14 +273,12 @@ export default function AgriChat() {
 
     try {
       if (socket) {
-        // Send via socket for real-time
         socket.emit('agri-chat:send-message', {
           conversationId: selectedConversation._id,
           content,
           type: 'text'
         });
       } else {
-        // Fallback to HTTP
         await api.post('/agri-chat/message', {
           conversationId: selectedConversation._id,
           content,
@@ -307,24 +288,21 @@ export default function AgriChat() {
       }
       scrollToBottom();
     } catch (error) {
-      console.error('Error sending message:', error);
+      logger.error('Error sending message', error);
       enqueueSnackbar('Failed to send message', { variant: 'error' });
     }
   };
 
-  // Handle typing
   const handleTyping = () => {
     if (socket && selectedConversation) {
       socket.emit('agri-chat:typing', {
         conversationId: selectedConversation._id
       });
 
-      // Clear previous timeout
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
 
-      // Stop typing after 3 seconds
       typingTimeoutRef.current = setTimeout(() => {
         if (socket && selectedConversation) {
           socket.emit('agri-chat:stop-typing', {
@@ -335,27 +313,23 @@ export default function AgriChat() {
     }
   };
 
-  // Scroll to bottom
   const scrollToBottom = () => {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
   };
 
-  // Initial load
   useEffect(() => {
     loadConversations();
     loadNearbyUsers();
   }, [loadConversations, loadNearbyUsers]);
 
-  // Load messages when conversation is selected
   useEffect(() => {
     if (selectedConversation) {
       loadMessages(selectedConversation._id);
     }
   }, [selectedConversation, loadMessages]);
 
-  // Search debounce
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) {
@@ -368,13 +342,11 @@ export default function AgriChat() {
     return () => clearTimeout(timer);
   }, [searchQuery, searchUsers]);
 
-  // Get other participant
   const getOtherParticipant = (conversation) => {
     return conversation.otherParticipant || 
            conversation.participants?.find(p => p._id !== user?._id);
   };
 
-  // Format time
   const formatTime = (date) => {
     if (!date) return '';
     const d = new Date(date);
@@ -390,7 +362,6 @@ export default function AgriChat() {
 
   return (
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px - 48px)', bgcolor: 'background.default', m: -3, p: 0 }}>
-      {/* Sidebar - Conversations List */}
       <Paper
         elevation={0}
         sx={{
@@ -402,7 +373,6 @@ export default function AgriChat() {
           bgcolor: 'background.paper'
         }}
       >
-        {/* Header */}
         <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
           <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
             AgriChat
@@ -436,7 +406,6 @@ export default function AgriChat() {
           </Box>
         </Box>
 
-        {/* Search Results */}
         {searchQuery && searchResults.length > 0 && (
           <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', maxHeight: 200, overflow: 'auto' }}>
             <Typography variant="caption" sx={{ px: 2, py: 1, display: 'block', color: 'text.secondary' }}>
@@ -461,7 +430,6 @@ export default function AgriChat() {
           </Box>
         )}
 
-        {/* Nearby Users */}
         {showNearby && (
           <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', maxHeight: 300, overflow: 'auto' }}>
             <Box sx={{ px: 2, py: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -525,7 +493,6 @@ export default function AgriChat() {
           </Box>
         )}
 
-        {/* Conversations List */}
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           {loading && conversations.length === 0 ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -596,11 +563,9 @@ export default function AgriChat() {
         </Box>
       </Paper>
 
-      {/* Main Chat Area */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
         {selectedConversation ? (
           <>
-            {/* Chat Header */}
             <Box
               sx={{
                 p: 2,
@@ -625,7 +590,6 @@ export default function AgriChat() {
               </Box>
             </Box>
 
-            {/* Messages */}
             <Box
               sx={{
                 flex: 1,
@@ -708,7 +672,6 @@ export default function AgriChat() {
               )}
             </Box>
 
-            {/* Message Input */}
             <Box
               sx={{
                 p: 2,

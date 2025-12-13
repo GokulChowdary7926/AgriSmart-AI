@@ -3,20 +3,16 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SnackbarProvider } from 'notistack';
 
-// Contexts
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ChatProvider } from './contexts/ChatContext';
 import { LanguageProvider } from './contexts/LanguageContext';
 
-// Components
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Layout from './components/Layout';
 
-// Components
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Pages
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -36,8 +32,8 @@ import AgriChat from './pages/AgriChat';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      cacheTime: 10 * 60 * 1000, // 10 minutes
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
       retry: 1,
       refetchOnWindowFocus: false
     }
@@ -63,26 +59,143 @@ function App() {
                       <Route path="/login" element={<Login />} />
                       <Route path="/register" element={<Register />} />
                       <Route
-                        path="/*"
+                        path="/"
                         element={
-                          <Layout>
-                            <Routes>
-                              <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                              <Route path="/crops" element={<ProtectedRoute><Crops /></ProtectedRoute>} />
-                              <Route path="/crop-recommendation" element={<ProtectedRoute><CropRecommendation /></ProtectedRoute>} />
-                              <Route path="/diseases" element={<ProtectedRoute><Diseases /></ProtectedRoute>} />
-                              <Route path="/weather" element={<ProtectedRoute><Weather /></ProtectedRoute>} />
-                              <Route path="/market" element={<ProtectedRoute><Market /></ProtectedRoute>} />
-                              <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
-                              <Route path="/agri-chat" element={<ProtectedRoute><AgriChat /></ProtectedRoute>} />
-                              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-                              <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-                              <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-                              <Route path="/government-schemes" element={<ProtectedRoute><GovernmentSchemes /></ProtectedRoute>} />
-                              <Route path="/agri-map" element={<ProtectedRoute><AgriMap /></ProtectedRoute>} />
-                            </Routes>
-                          </Layout>
+                          <ProtectedRoute>
+                            <Layout>
+                              <Dashboard />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/dashboard"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Dashboard />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/crops"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Crops />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/crop-recommendation"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <CropRecommendation />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/diseases"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Diseases />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/weather"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Weather />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/market"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Market />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/chat"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Chat />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/agri-chat"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <AgriChat />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/analytics"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Analytics />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/agri-map"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <AgriMap />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/government-schemes"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <GovernmentSchemes />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/settings"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Settings />
+                            </Layout>
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/profile"
+                        element={
+                          <ProtectedRoute>
+                            <Layout>
+                              <Profile />
+                            </Layout>
+                          </ProtectedRoute>
                         }
                       />
                     </Routes>
@@ -98,4 +211,3 @@ function App() {
 }
 
 export default App;
-

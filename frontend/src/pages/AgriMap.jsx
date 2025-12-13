@@ -68,13 +68,12 @@ import {
 import { useLanguage } from '../contexts/LanguageContext';
 import { useSnackbar } from 'notistack';
 import api from '../services/api';
+import logger from '../services/logger';
 
-// Import Leaflet components
 import { MapContainer, TileLayer, Marker, Popup, Circle, Tooltip as LeafletTooltip, ZoomControl, ScaleControl, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// Fix for default icons - Use inline SVG to avoid 404 errors
 const createDefaultIcon = () => {
   return L.icon({
     iconUrl: 'data:image/svg+xml;base64,' + btoa(`
@@ -96,17 +95,14 @@ const createDefaultIcon = () => {
   });
 };
 
-// Set default icon to avoid 404 errors
 L.Icon.Default = createDefaultIcon();
 
-// Theme is provided by App.jsx ThemeProvider, no need for local theme
 
 const AgriMap = () => {
   const { t, language } = useLanguage();
   const { enqueueSnackbar } = useSnackbar();
   const navigate = useNavigate();
   
-  // Map State
   const [loading, setLoading] = useState(true);
   const [mapLoading, setMapLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -121,7 +117,6 @@ const AgriMap = () => {
   const [showCrops, setShowCrops] = useState(true);
   const [showFarms, setShowFarms] = useState(true);
   
-  // Address Lookup State
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [addressInfo, setAddressInfo] = useState(null);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -129,21 +124,17 @@ const AgriMap = () => {
   const [clickedLocation, setClickedLocation] = useState(null);
   const [recentAddresses, setRecentAddresses] = useState([]);
   
-  // Map Data
   const [cropData, setCropData] = useState([]);
   const [farmData, setFarmData] = useState([]);
   const [soilData, setSoilData] = useState([]);
   const [weatherData, setWeatherData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // UI State
   const [legendAnchor, setLegendAnchor] = useState(null);
   const [selectedMarker, setSelectedMarker] = useState(null);
   
-  // Refs
   const mapRef = useRef();
 
-  // Helper functions for mock data (defined before useCallback to avoid dependency issues)
   const getMockFarmData = useCallback((lat, lng) => {
     const farms = [];
     for (let i = 0; i < 20; i++) {
@@ -214,7 +205,6 @@ const AgriMap = () => {
 
   const getWeatherData = useCallback(async (lat, lng) => {
     try {
-      // Try to get weather from GPS complete endpoint first
       const response = await api.get('/gps/complete', {
         params: { 
           latitude: lat.toString(), 
@@ -234,11 +224,8 @@ const AgriMap = () => {
         };
       }
     } catch (error) {
-      // Silently fail and return mock data
-      // Weather API not available, using mock data
     }
     
-    // Return mock weather data as fallback
     return {
       temperature: 25 + Math.random() * 10,
       humidity: 60 + Math.random() * 30,
@@ -249,34 +236,90 @@ const AgriMap = () => {
     };
   }, []);
 
-  // Load map data function
   const loadMapData = useCallback(async (latitude, longitude) => {
     try {
       setMapLoading(true);
       
-      // Load mock data for now
-      setCropData(getMockCropData());
-      setFarmData(getMockFarmData(latitude, longitude));
-      setSoilData(getMockSoilData(latitude, longitude));
+      const [weatherRes, cropRes, soilRes] = await Promise.allSettled([
+        api.get('/weather/current', {
+          params: { lat: latitude, lng: longitude }
+        }).catch(() => getWeatherData(latitude, longitude)),
+        
+        api.get('/crops/recommend', {
+          params: { latitude, longitude }
+        }).catch(() => ({ data: { recommendations: getMockCropData() } })),
+        
+        api.get('/gps/complete', {
+          params: { latitude: latitude.toString(), longitude: longitude.toString() }
+        }).catch(() => ({ data: { soil: getMockSoilData(latitude, longitude)[0] } }))
+      ]);
       
-      // Load weather data
-      const weatherResponse = await getWeatherData(latitude, longitude);
-      setWeatherData(weatherResponse);
+      if (weatherRes.status === 'fulfilled') {
+        const weather = weatherRes.value?.data?.data || weatherRes.value;
+        setWeatherData({
+          temperature: weather.temperature || weather.temp || 25,
+          humidity: weather.humidity || 60,
+          precipitation: weather.rainfall || weather.precipitation || 0,
+          windSpeed: weather.windSpeed || 10,
+          condition: weather.condition || weather.weather || 'Clear',
+          lastUpdated: new Date().toISOString()
+        });
+      } else {
+        const weatherResponse = await getWeatherData(latitude, longitude);
+        setWeatherData(weatherResponse);
+      }
+      
+      if (cropRes.status === 'fulfilled' && cropRes.value?.data?.recommendations) {
+        const recommendations = cropRes.value.data.recommendations;
+        const realCropData = recommendations.slice(0, 10).map((rec, idx) => ({
+          id: `crop-${idx}`,
+          name: rec.crop_name || rec.name || rec.crop || 'Unknown',
+          location: [latitude + (Math.random() - 0.5) * 0.1, longitude + (Math.random() - 0.5) * 0.1],
+          area: `${Math.round(Math.random() * 5000 + 1000)} hectares`,
+          season: rec.season || 'Kharif',
+          suitability: rec.suitability || rec.score || 75,
+          color: '#4CAF50'
+        }));
+        setCropData(realCropData.length > 0 ? realCropData : getMockCropData());
+      } else {
+        setCropData(getMockCropData());
+      }
+      
+      if (soilRes.status === 'fulfilled' && soilRes.value?.data?.soil) {
+        const soil = soilRes.value.data.soil;
+        setSoilData([{
+          location: [latitude, longitude],
+          ph: soil.ph || 6.5,
+          type: soil.type || soil.soil_type || 'Loam',
+          nitrogen: soil.nitrogen || 50,
+          phosphorus: soil.phosphorus || 40,
+          potassium: soil.potassium || 50
+        }]);
+      } else {
+        setSoilData(getMockSoilData(latitude, longitude));
+      }
+      
+      setFarmData(getMockFarmData(latitude, longitude));
       
     } catch (error) {
       console.error('Error loading map data:', error);
       
-      // Load mock data as fallback
       setCropData(getMockCropData());
       setFarmData(getMockFarmData(latitude, longitude));
       setSoilData(getMockSoilData(latitude, longitude));
+      
+      try {
+        const weatherResponse = await getWeatherData(latitude, longitude);
+        setWeatherData(weatherResponse);
+      } catch (weatherError) {
+        logger.error('Weather data error', weatherError);
+      }
       
     } finally {
       setMapLoading(false);
     }
   }, [getMockCropData, getMockFarmData, getMockSoilData, getWeatherData]);
 
-  // Location helper functions - must be defined before initializeMap
   const getIPLocation = useCallback(async () => {
     try {
       const response = await fetch('https://ipapi.co/json/');
@@ -316,13 +359,11 @@ const AgriMap = () => {
           resolve(location);
         },
         (error) => {
-          console.warn('Location error:', error);
+          logger.warn('Location error', error);
           
-          // Fallback to IP location
           getIPLocation()
             .then(resolve)
             .catch(() => {
-              // Final fallback
               resolve({
                 latitude: 20.5937,
                 longitude: 78.9629,
@@ -342,7 +383,6 @@ const AgriMap = () => {
     });
   }, [getIPLocation]);
 
-  // ADDRESS LOOKUP FUNCTIONS - Must be defined before initializeMap
   const formatAddressString = useCallback((address) => {
     const parts = [];
     
@@ -396,7 +436,6 @@ const AgriMap = () => {
         )
       ].slice(0, 10); // Keep only 10 most recent
       
-      // Save to localStorage
       localStorage.setItem('recentAddresses', JSON.stringify(updatedAddresses));
       
       return updatedAddresses;
@@ -414,7 +453,6 @@ const AgriMap = () => {
       if (data && data.address) {
         const formattedAddress = formatOSMAddress(data.address, data.display_name, latitude, longitude);
         
-        // Add to recent addresses
         addToRecentAddresses(formattedAddress);
         
         setAddressInfo(formattedAddress);
@@ -423,7 +461,7 @@ const AgriMap = () => {
       
       return null;
     } catch (error) {
-      console.error('OSM reverse geocode error:', error);
+      logger.error('OSM reverse geocode error', error);
       enqueueSnackbar(t('map.addressLookupFailed') || 'Failed to get address', { variant: 'error' });
       return null;
     }
@@ -445,7 +483,6 @@ const AgriMap = () => {
         const addressData = response.data.address;
         setAddressInfo(addressData);
         
-        // Add to recent addresses
         addToRecentAddresses(addressData);
         
         return addressData;
@@ -453,52 +490,38 @@ const AgriMap = () => {
       
       return null;
     } catch (error) {
-      console.error('Reverse geocode error:', error);
+      logger.error('Reverse geocode error', error);
       
-      // Try with OpenStreetMap directly
       return getAddressFromOSM(latitude, longitude);
     } finally {
       setAddressLoading(false);
     }
   }, [language, addToRecentAddresses, getAddressFromOSM]);
 
-  // Initialize map function - must be defined after address lookup functions
   const initializeMap = useCallback(async () => {
     try {
-      // Starting location detection
       setLoading(true);
       
-      // Get user's current location
       const location = await getUserLocation();
-      // Location obtained
       setUserLocation(location);
       
-      // Center map on user location
       if (location.latitude && location.longitude) {
         setMapCenter([location.latitude, location.longitude]);
         setMapZoom(12);
-        // Map centered on location
         
-        // Get address for current location
         getAddressFromCoordinates(location.latitude, location.longitude);
       }
       
-      // Load initial data
-      // Loading map data
       await loadMapData(location.latitude, location.longitude);
-      // Map data loaded
       
     } catch (err) {
-      console.error('❌ Map initialization error:', err);
+      logger.error('Map initialization error', err);
       setError('Failed to initialize map');
       
-      // Load data for default location
-      // Loading default location data
       await loadMapData(20.5937, 78.9629);
       
     } finally {
       setLoading(false);
-      // Map initialization complete
     }
   }, [loadMapData, getUserLocation, getAddressFromCoordinates]);
 
@@ -506,11 +529,9 @@ const AgriMap = () => {
     const { lat, lng } = latlng;
     setClickedLocation({ latitude: lat, longitude: lng });
     
-    // Show dialog
     setAddressDialogOpen(true);
     setAddressLoading(true);
     
-    // Get address for clicked location
     const address = await getAddressFromCoordinates(lat, lng);
     
     if (address) {
@@ -520,11 +541,9 @@ const AgriMap = () => {
 
   const handleUseThisLocation = useCallback(() => {
     if (addressInfo) {
-      // Update map center
       setMapCenter([addressInfo.latitude, addressInfo.longitude]);
       setMapZoom(15);
       
-      // Update selected location
       setSelectedLocation({
         latitude: addressInfo.latitude,
         longitude: addressInfo.longitude,
@@ -552,11 +571,9 @@ const AgriMap = () => {
       if (response.data.success && response.data.results.length > 0) {
         const result = response.data.results[0];
         
-        // Update map center
         setMapCenter([result.latitude, result.longitude]);
         setMapZoom(14);
         
-        // Get detailed address
         const address = await getAddressFromCoordinates(result.latitude, result.longitude);
         
         enqueueSnackbar(t('map.locationFound') || 'Location found', { variant: 'success' });
@@ -571,7 +588,6 @@ const AgriMap = () => {
     }
   }, [searchQuery, language, getAddressFromCoordinates, t, enqueueSnackbar]);
 
-  // Map Click Handler Component
   const MapClickHandler = () => {
     useMapEvents({
       click(e) {
@@ -582,31 +598,26 @@ const AgriMap = () => {
     return null;
   };
 
-  // Initialize map and get user location
   useEffect(() => {
-    // AgriMap component mounted, initializing
     let mounted = true;
     
-    // Load recent addresses from localStorage
     const savedAddresses = localStorage.getItem('recentAddresses');
     if (savedAddresses) {
       try {
         setRecentAddresses(JSON.parse(savedAddresses));
       } catch (e) {
-        console.error('Error loading recent addresses:', e);
+        logger.error('Error loading recent addresses', e);
       }
     }
     
     const init = async () => {
       try {
-        // Starting map initialization
         await initializeMap();
         if (mounted) {
-          // Map initialized successfully
           setMapReady(true);
         }
       } catch (err) {
-        console.error('❌ Map initialization error:', err);
+        logger.error('Map initialization error', err);
         if (mounted) {
           setError('Failed to initialize map. Please refresh the page.');
           setLoading(false);
@@ -642,7 +653,6 @@ const AgriMap = () => {
     setLegendAnchor(null);
   };
 
-  // Map Controls Component
   const MapControls = () => {
     const map = useMap();
     
@@ -653,7 +663,6 @@ const AgriMap = () => {
     return null;
   };
 
-  // Location Marker Component - Must be separate component for React-Leaflet hooks
   const LocationMarker = ({ userLocation }) => {
     if (!userLocation || !userLocation.latitude || !userLocation.longitude) return null;
 
@@ -712,7 +721,6 @@ const AgriMap = () => {
     );
   };
 
-  // Render soil moisture circles
   const renderSoilMoistureLayers = () => {
     if (!showSoil || !soilData.length) return null;
     
@@ -742,7 +750,6 @@ const AgriMap = () => {
     });
   };
 
-  // Render crop zones
   const renderCropZones = () => {
     if (!showCrops || !cropData.length) return null;
     
@@ -770,7 +777,6 @@ const AgriMap = () => {
     ));
   };
 
-  // Render farm markers
   const renderFarmMarkers = () => {
     if (!showFarms || !farmData.length) return null;
     
@@ -804,7 +810,6 @@ const AgriMap = () => {
     ));
   };
 
-  // Helper functions
   const getSoilMoistureColor = (moisture) => {
     if (moisture < 30) return '#FF5722';
     if (moisture < 60) return '#FF9800';
@@ -834,7 +839,6 @@ const AgriMap = () => {
     return showSatellite ? tileProviders.satellite : tileProviders[mapType];
   };
 
-  // Address Lookup Dialog - Must be defined before return statement
   const renderAddressDialog = () => (
     <Dialog 
       open={addressDialogOpen} 
@@ -921,7 +925,6 @@ const AgriMap = () => {
               </CardContent>
             </Card>
             
-            {/* Recent Addresses */}
             {recentAddresses.length > 0 && (
               <Box>
                 <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -997,14 +1000,13 @@ const AgriMap = () => {
     </Dialog>
   );
 
-  // Show loading state
   if (loading) {
     return (
       <Container maxWidth="lg" sx={{ py: 8 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <CircularProgress size={60} />
           <Typography variant="h6" sx={{ mt: 3 }}>
-            {t('nav.map') || 'Loading Map...'}
+            {t('nav.agriMap') || 'Loading Map...'}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
             Initializing map and loading your location
@@ -1016,7 +1018,6 @@ const AgriMap = () => {
 
   return (
       <Container maxWidth={false} sx={{ p: 0, height: 'calc(100vh - 64px)' }}>
-        {/* Header */}
         <Paper sx={{ p: 2, borderRadius: 0, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
           <Grid container alignItems="center" spacing={2}>
             <Grid item>
@@ -1024,14 +1025,13 @@ const AgriMap = () => {
             </Grid>
             <Grid item xs>
               <Typography variant="h5" component="h1">
-                {t('nav.map') || 'Map'}
+                {t('nav.agriMap') || 'Map'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 {t('map.subtitle') || 'Interactive agricultural map with real-time data'} • {t('map.clickForAddress') || 'Click on map to get address'}
               </Typography>
             </Grid>
             
-            {/* Search Bar with Address Lookup */}
             <Grid item xs={12} md={4}>
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <TextField
@@ -1061,7 +1061,6 @@ const AgriMap = () => {
               </Box>
             </Grid>
             
-            {/* Address Lookup Button */}
             <Grid item>
               <Tooltip title={t('map.findAddress') || 'Click on map to get address'}>
                 <Button
@@ -1075,7 +1074,6 @@ const AgriMap = () => {
               </Tooltip>
             </Grid>
             
-            {/* Location Button */}
             <Grid item>
               <Button
                 variant="contained"
@@ -1090,13 +1088,11 @@ const AgriMap = () => {
         </Paper>
 
         <Box sx={{ display: 'flex', height: 'calc(100% - 80px)' }}>
-          {/* Left Sidebar - Controls */}
           <Paper sx={{ width: 300, m: 2, p: 2, bgcolor: 'background.paper', display: 'flex', flexDirection: 'column', gap: 2 }}>
             <Typography variant="h6" gutterBottom>
-              Map Controls
+              Map Controls & Analysis
             </Typography>
             
-            {/* Map Type Selection */}
             <Box>
               <Typography variant="subtitle2" gutterBottom>
                 Map Type
@@ -1134,7 +1130,6 @@ const AgriMap = () => {
             
             <Divider />
             
-            {/* Layer Controls */}
             <Box>
               <Typography variant="subtitle2" gutterBottom>
                 Layers
@@ -1205,7 +1200,6 @@ const AgriMap = () => {
               />
             </Box>
             
-            {/* Weather Info */}
             {weatherData && showWeather && (
               <Card variant="outlined" sx={{ bgcolor: 'background.default' }}>
                 <CardContent>
@@ -1223,7 +1217,6 @@ const AgriMap = () => {
             )}
           </Paper>
 
-          {/* Main Map Area */}
           <Box sx={{ flexGrow: 1, position: 'relative', m: 2 }}>
             {error && (
               <Alert severity="error" sx={{ mb: 2 }}>
@@ -1231,7 +1224,6 @@ const AgriMap = () => {
               </Alert>
             )}
             
-            {/* Map Loading Overlay */}
             {mapLoading && (
               <Box sx={{
                 position: 'absolute',
@@ -1250,7 +1242,6 @@ const AgriMap = () => {
               </Box>
             )}
             
-            {/* Map Container */}
             {mapReady ? (
               <MapContainer
                 center={mapCenter}
@@ -1264,18 +1255,14 @@ const AgriMap = () => {
                   url={getMapTileUrl()}
                 />
                 
-                {/* Controls */}
                 <MapControls />
                 <ZoomControl position="bottomright" />
                 <ScaleControl position="bottomleft" />
                 
-                {/* Map Click Handler for Address Lookup */}
                 <MapClickHandler />
                 
-                {/* User Location */}
                 <LocationMarker userLocation={userLocation} />
                 
-                {/* Selected Location Marker */}
                 {selectedLocation && (
                   <Marker
                     position={[selectedLocation.latitude, selectedLocation.longitude]}
@@ -1303,13 +1290,10 @@ const AgriMap = () => {
                   </Marker>
                 )}
                 
-                {/* Crop Zones */}
                 {renderCropZones()}
                 
-                {/* Farm Markers */}
                 {renderFarmMarkers()}
                 
-                {/* Soil Moisture Layers */}
                 {renderSoilMoistureLayers()}
                 
               </MapContainer>
@@ -1326,7 +1310,6 @@ const AgriMap = () => {
               </Box>
             )}
             
-            {/* Map Controls Overlay */}
             <Paper sx={{
               position: 'absolute',
               top: 16,
@@ -1356,10 +1339,8 @@ const AgriMap = () => {
           </Box>
         </Box>
         
-        {/* Address Lookup Dialog */}
         {renderAddressDialog()}
         
-        {/* Selected Location Info Card */}
         {selectedLocation && (
           <Fade in={!!selectedLocation}>
             <Paper sx={{

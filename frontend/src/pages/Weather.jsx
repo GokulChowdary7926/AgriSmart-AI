@@ -72,7 +72,6 @@ export default function Weather() {
     { id: 5, name: 'Punjab Farmlands', lat: 31.1471, lng: 75.3412 }
   ];
 
-  // Auto-detect user location on mount
   useEffect(() => {
     const detectLocation = () => {
       if (navigator.geolocation) {
@@ -85,7 +84,7 @@ export default function Weather() {
             setLocationLoading(false);
           },
           (error) => {
-            console.error('Geolocation error:', error);
+            logger.error('Geolocation error', error);
             setLocation({ lat: '28.6139', lng: '77.2090' });
             setLocationLoading(false);
           },
@@ -132,7 +131,7 @@ export default function Weather() {
         }
         return [];
       } catch (error) {
-        console.error('Error fetching forecast:', error);
+        logger.error('Error fetching forecast', error);
         return [];
       }
     },
@@ -158,19 +157,15 @@ export default function Weather() {
     queryKey: ['weather', 'alerts', location?.lat, location?.lng],
     queryFn: async () => {
       try {
-        // Always use weather/alerts endpoint for weather-specific alerts
         const response = await api.get('/weather/alerts', {
           params: { lat: location.lat, lng: location.lng }
         });
         const alerts = response.data.data?.alerts || response.data.data || [];
-        // Filter to ensure only weather-based alerts
         return alerts.filter(alert => {
-          // Check if it's a weather alert by title, type, or source
           const title = (alert.title || alert.message || '').toLowerCase();
           const type = (alert.type || '').toLowerCase();
           const source = (alert.source || '').toLowerCase();
           
-          // Weather-related keywords
           const weatherKeywords = ['rain', 'rainfall', 'storm', 'thunder', 'wind', 'heat', 'cold', 'frost', 'temperature', 'weather', 'meteorological', 'imd', 'climate'];
           
           return type === 'weather' || 
@@ -178,7 +173,6 @@ export default function Weather() {
                  alert.severity; // If it has severity, it's likely a weather alert
         });
       } catch {
-        // Fallback to mock weather alerts only
         return getMockAlerts();
       }
     },
@@ -373,7 +367,6 @@ export default function Weather() {
   const highTemp = Math.round(weather.temperature?.max || 0);
   const lowTemp = Math.round(weather.temperature?.min || 0);
 
-  // Prepare hourly data for chart
   const chartData = hourlyForecast?.slice(0, 12).map((hour, index) => ({
     time: index === 0 ? 'Now' : formatTime(hour.time),
     temp: Math.round(hour.temperature || 0),
@@ -388,7 +381,6 @@ export default function Weather() {
       pb: 4,
       transition: 'background 0.5s ease'
     }}>
-      {/* Header */}
       <Container maxWidth="lg" sx={{ pt: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -418,7 +410,6 @@ export default function Weather() {
           </Box>
         </Box>
 
-        {/* Current Weather */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -449,7 +440,6 @@ export default function Weather() {
         </motion.div>
       </Container>
 
-      {/* Weather Details Cards */}
       <Container maxWidth="lg">
         <Grid container spacing={2} sx={{ mb: 4 }}>
           {[
@@ -489,7 +479,6 @@ export default function Weather() {
           ))}
         </Grid>
 
-        {/* Tabs */}
         <Paper sx={{ 
           mb: 3, 
           borderRadius: 2,
@@ -513,9 +502,7 @@ export default function Weather() {
           </Tabs>
         </Paper>
 
-        {/* Tab Content */}
         <Box sx={{ mb: 4 }}>
-          {/* Hourly Forecast */}
           {tabValue === 0 && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -555,7 +542,6 @@ export default function Weather() {
                   </Box>
                 </Box>
                 
-                {/* Temperature Chart */}
                 {chartData.length > 0 && (
                   <Box sx={{ mt: 4, height: 150 }}>
                     <Typography variant="subtitle2" sx={{ mb: 1, opacity: 0.7 }}>
@@ -602,7 +588,6 @@ export default function Weather() {
             </motion.div>
           )}
 
-          {/* 10-Day Forecast */}
           {tabValue === 1 && forecast && Array.isArray(forecast) && forecast.length > 0 && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -691,7 +676,6 @@ export default function Weather() {
             </motion.div>
           )}
 
-          {/* Alerts */}
           {tabValue === 2 && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -858,7 +842,6 @@ export default function Weather() {
         </Box>
       </Container>
 
-      {/* Floating Action Button */}
       <Fab
         color="primary"
         sx={{
@@ -876,7 +859,6 @@ export default function Weather() {
         <RefreshIcon />
       </Fab>
 
-      {/* Locations Menu */}
       <Menu
         anchorEl={locationsMenuAnchor}
         open={Boolean(locationsMenuAnchor)}
@@ -911,7 +893,6 @@ export default function Weather() {
         </MenuItem>
       </Menu>
 
-      {/* Settings Menu */}
       <Menu
         anchorEl={settingsMenuAnchor}
         open={Boolean(settingsMenuAnchor)}

@@ -119,7 +119,6 @@ export default function Crops() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Format data for backend - ensure area is properly structured
     const submitData = {
       ...formData,
       area: {

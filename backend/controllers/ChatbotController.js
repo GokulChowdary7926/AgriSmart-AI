@@ -6,16 +6,13 @@ const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
 class ChatbotController {
-  // Start new chat session
   static async startChat(req, res) {
     try {
       const userId = req.user._id;
       const { context = {} } = req.body;
       
-      // Detect language from user preference or request
       const language = context.language || req.user?.preferences?.language || req.language || 'en';
       
-      // Create new session
       const session = new ChatSession({
         user: userId,
         sessionId: uuidv4(),
@@ -30,7 +27,6 @@ class ChatbotController {
         status: 'active'
       });
       
-      // Generate welcome message in user's language
       const welcomeMessage = {
         role: 'assistant',
         content: translate('chatbot.responses.welcome', language),
@@ -64,7 +60,6 @@ class ChatbotController {
     }
   }
   
-  // Send message and get AI response
   static async sendMessage(req, res) {
     try {
       const { sessionId } = req.params || {};
@@ -78,18 +73,15 @@ class ChatbotController {
         });
       }
       
-      // Support both URL param and body sessionId
       const actualSessionId = sessionId || bodySessionId;
       
       if (!actualSessionId) {
-        // Create or get active session for user
         let session = await ChatSession.findOne({
           user: userId,
           status: 'active'
         }).sort({ createdAt: -1 });
         
         if (!session) {
-          // Create new session
           const language = req.user?.preferences?.language || req.language || 'en';
           session = new ChatSession({
             user: userId,
@@ -100,7 +92,6 @@ class ChatbotController {
           await session.save();
         }
         
-        // Use this session
         const userMessage = {
           role: 'user',
           content: content,
@@ -109,7 +100,6 @@ class ChatbotController {
         
         session.messages.push(userMessage);
         
-        // Generate AI response (simplified)
         const aiResponse = {
           role: 'assistant',
           content: translate('chatbot.responses.unknown', session.language),
@@ -128,7 +118,6 @@ class ChatbotController {
         });
       }
       
-      // Find session by sessionId
       let session = await ChatSession.findOne({
         sessionId: actualSessionId,
         user: userId
@@ -143,7 +132,6 @@ class ChatbotController {
       
       const language = session.language || req.user?.preferences?.language || 'en';
       
-      // Add user message
       const userMessage = {
         role: 'user',
         content: content,
@@ -157,10 +145,8 @@ class ChatbotController {
       
       session.messages.push(userMessage);
       
-      // Process with AI service (placeholder - integrate with actual AI service)
       const aiResponse = await this.processWithAI(content, language, session.context);
       
-      // Add AI response
       const assistantMessage = {
         role: 'assistant',
         content: aiResponse.content,
@@ -175,7 +161,6 @@ class ChatbotController {
       
       session.messages.push(assistantMessage);
       
-      // Update context
       if (aiResponse.intent) {
         session.context.previousIntents.push(aiResponse.intent);
       }
@@ -205,7 +190,6 @@ class ChatbotController {
     }
   }
   
-  // Get chat history
   static async getHistory(req, res) {
     try {
       const { sessionId } = req.params;
@@ -246,7 +230,6 @@ class ChatbotController {
     }
   }
   
-  // List user's chat sessions
   static async listSessions(req, res) {
     try {
       const userId = req.user._id;
@@ -284,7 +267,6 @@ class ChatbotController {
     }
   }
   
-  // Update chat session
   static async updateSession(req, res) {
     try {
       const { sessionId } = req.params;
@@ -303,7 +285,6 @@ class ChatbotController {
         });
       }
       
-      // Update allowed fields
       if (updates.context) {
         session.context = { ...session.context, ...updates.context };
       }
@@ -329,7 +310,6 @@ class ChatbotController {
     }
   }
   
-  // Delete chat session
   static async deleteSession(req, res) {
     try {
       const { sessionId } = req.params;
@@ -360,13 +340,11 @@ class ChatbotController {
     }
   }
   
-  // Get AI recommendations
   static async getRecommendations(req, res) {
     try {
       const { query, context = {} } = req.body;
       const language = context.language || req.user?.preferences?.language || req.language || 'en';
       
-      // Generate recommendations based on query and context
       const recommendations = await this.generateRecommendations(query, context, language);
       
       res.json({
@@ -385,16 +363,11 @@ class ChatbotController {
     }
   }
   
-  // Private methods
   
-  // Process message with AI (placeholder - integrate with actual AI service)
   static async processWithAI(message, language, context) {
-    // TODO: Integrate with actual AI service (GPT, custom ML model, etc.)
-    // For now, return intelligent placeholder responses
     
     const lowerMessage = message.toLowerCase();
     
-    // Simple intent detection
     let intent = 'general';
     let response = '';
     
@@ -424,11 +397,9 @@ class ChatbotController {
     };
   }
   
-  // Detect intent from message
   static async detectIntent(message, language) {
     const lowerMessage = message.toLowerCase();
     
-    // Simple keyword-based intent detection
     if (lowerMessage.includes('disease') || lowerMessage.includes('रोग') || lowerMessage.includes('நோய்')) {
       return 'disease';
     }
@@ -445,9 +416,7 @@ class ChatbotController {
     return 'general';
   }
   
-  // Generate recommendations
   static async generateRecommendations(query, context, language) {
-    // Generate context-aware recommendations
     const suggestions = translate('chatbot.suggestions', language);
     
     return Object.values(suggestions || {}).slice(0, 4);

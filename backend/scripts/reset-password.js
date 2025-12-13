@@ -6,11 +6,9 @@ const User = require('../models/User');
 
 async function resetPassword() {
   try {
-    // Connect to MongoDB
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/agri-smart-ai');
     console.log('Connected to MongoDB');
 
-    // Get email and new password from command line
     const email = process.argv[2];
     const newPassword = process.argv[3];
 
@@ -20,7 +18,6 @@ async function resetPassword() {
       process.exit(1);
     }
 
-    // Find user
     const user = await User.findOne({ email: email.toLowerCase() });
     
     if (!user) {
@@ -28,11 +25,9 @@ async function resetPassword() {
       process.exit(1);
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
     
-    // Update directly to bypass pre-save hook (which would double-hash)
     await User.updateOne(
       { _id: user._id },
       { $set: { password: hashedPassword } }

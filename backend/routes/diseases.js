@@ -5,7 +5,6 @@ const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 
-// Configure multer for image uploads
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
@@ -25,7 +24,6 @@ const upload = multer({
   }
 });
 
-// Public routes - specific routes first
 router.get('/', DiseaseController.getAll);
 router.get('/search', DiseaseController.search);
 router.get('/crop/:cropName', DiseaseController.getByCrop);
@@ -68,33 +66,10 @@ router.get('/:id/medication', async (req, res) => {
 });
 router.get('/:id', DiseaseController.getById);
 
-// Disease detection (can be public or protected)
 router.post('/detect', DiseaseController.detect);
-router.post('/detect-image', upload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image file is required'
-      });
-    }
-    
-    // Convert file buffer to base64
-    const imageBase64 = req.file.buffer.toString('base64');
-    const imageData = `data:${req.file.mimetype};base64,${imageBase64}`;
-    
-    // Call detect with image
-    req.body.image = imageData;
-    return DiseaseController.detect(req, res);
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+router.post('/detect-image', upload.single('image'), DiseaseController.detectFromImage);
+router.post('/detect-multiple', upload.array('images', 5), DiseaseController.detectMultipleDiseases);
 
-// Protected routes
 router.post('/', authenticateToken, DiseaseController.create);
 router.put('/:id', authenticateToken, DiseaseController.update);
 router.delete('/:id', authenticateToken, DiseaseController.delete);

@@ -8,20 +8,21 @@ import {
   Typography,
   Box,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Chip
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSnackbar } from 'notistack';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [identifierType, setIdentifierType] = useState('auto'); // 'auto', 'email', 'phone', 'username'
   const { login, loading, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
 
-  // Redirect if already authenticated
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token && isAuthenticated && !loading) {
@@ -29,20 +30,64 @@ export default function Login() {
     }
   }, [isAuthenticated, loading, navigate]);
 
+  useEffect(() => {
+    if (!identifier) {
+      setIdentifierType('auto');
+      return;
+    }
+
+    const trimmed = identifier.trim();
+    
+    if (trimmed.includes('@')) {
+      setIdentifierType('email');
+    }
+    else if (/^[\d\s+\-]+$/.test(trimmed) && trimmed.replace(/[\s+\-]/g, '').length >= 10) {
+      setIdentifierType('phone');
+    }
+    else {
+      setIdentifierType('username');
+    }
+  }, [identifier]);
+
+  const getIdentifierLabel = () => {
+    switch (identifierType) {
+      case 'email':
+        return 'Email';
+      case 'phone':
+        return 'Phone Number';
+      case 'username':
+        return 'Username';
+      default:
+        return 'Email / Phone / Username';
+    }
+  };
+
+  const getIdentifierPlaceholder = () => {
+    switch (identifierType) {
+      case 'email':
+        return 'example@email.com';
+      case 'phone':
+        return '+91 9876543210';
+      case 'username':
+        return 'myusername';
+      default:
+        return 'Enter email, phone number, or username';
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (!email || !password) {
+    if (!identifier || !password) {
       setError('Please fill in all fields');
       return;
     }
     
-    const result = await login(email, password);
+    const result = await login(identifier, password);
     
     if (result && result.success) {
       enqueueSnackbar('Login successful!', { variant: 'success' });
-      // Small delay to ensure token is stored
       setTimeout(() => {
         navigate('/dashboard', { replace: true });
       }, 50);
@@ -70,15 +115,45 @@ export default function Login() {
         )}
 
         <Box component="form" onSubmit={handleSubmit}>
+          <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Chip 
+              label="📧 Email" 
+              size="small" 
+              color={identifierType === 'email' ? 'primary' : 'default'}
+              variant={identifierType === 'email' ? 'filled' : 'outlined'}
+            />
+            <Chip 
+              label="📱 Phone" 
+              size="small" 
+              color={identifierType === 'phone' ? 'primary' : 'default'}
+              variant={identifierType === 'phone' ? 'filled' : 'outlined'}
+            />
+            <Chip 
+              label="👤 Username" 
+              size="small" 
+              color={identifierType === 'username' ? 'primary' : 'default'}
+              variant={identifierType === 'username' ? 'filled' : 'outlined'}
+            />
+          </Box>
           <TextField
             fullWidth
-            label="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            label={getIdentifierLabel()}
+            type={identifierType === 'email' ? 'email' : identifierType === 'phone' ? 'tel' : 'text'}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             margin="normal"
             required
-            autoComplete="email"
+            placeholder={getIdentifierPlaceholder()}
+            autoComplete="username"
+            helperText={
+              identifierType === 'auto' 
+                ? 'Enter your email, phone number, or username' 
+                : identifierType === 'email'
+                ? 'Login with your email address'
+                : identifierType === 'phone'
+                ? 'Login with your phone number'
+                : 'Login with your username'
+            }
           />
           <TextField
             fullWidth

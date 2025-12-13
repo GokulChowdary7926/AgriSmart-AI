@@ -2,13 +2,8 @@ const agriChatService = require('../services/agriChatService');
 const logger = require('../utils/logger');
 
 class AgriChatController {
-  /**
-   * Get nearby sellers and dealers
-   * GET /api/agri-chat/nearby
-   */
   static async getNearbyUsers(req, res) {
     try {
-      // Get userId from req.user (set by authenticate middleware)
       const userId = req.user?._id || req.user?.userId || req.user?.id;
       
       if (!userId) {
@@ -26,7 +21,6 @@ class AgriChatController {
 
       const nearbyUsers = await agriChatService.findNearbySellersDealers(userId, radius, limit);
 
-      // Always return success, even if empty array
       res.json({
         success: true,
         data: nearbyUsers || [],
@@ -37,7 +31,6 @@ class AgriChatController {
       });
     } catch (error) {
       logger.error('Error getting nearby users:', error);
-      // Return empty array instead of error to prevent frontend crash
       res.json({
         success: true,
         data: [],
@@ -48,10 +41,6 @@ class AgriChatController {
     }
   }
 
-  /**
-   * Search for users
-   * GET /api/agri-chat/search
-   */
   static async searchUsers(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
@@ -80,10 +69,6 @@ class AgriChatController {
     }
   }
 
-  /**
-   * Get or create conversation
-   * POST /api/agri-chat/conversation
-   */
   static async getOrCreateConversation(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
@@ -111,10 +96,6 @@ class AgriChatController {
     }
   }
 
-  /**
-   * Get user's conversations
-   * GET /api/agri-chat/conversations
-   */
   static async getConversations(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
@@ -140,7 +121,6 @@ class AgriChatController {
       });
     } catch (error) {
       logger.error('Error getting conversations:', error);
-      // Return empty array instead of error to prevent frontend crash
       res.json({
         success: true,
         data: [],
@@ -151,10 +131,6 @@ class AgriChatController {
     }
   }
 
-  /**
-   * Get conversation messages
-   * GET /api/agri-chat/conversation/:conversationId/messages
-   */
   static async getMessages(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
@@ -183,10 +159,6 @@ class AgriChatController {
     }
   }
 
-  /**
-   * Send a message
-   * POST /api/agri-chat/message
-   */
   static async sendMessage(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
@@ -208,7 +180,6 @@ class AgriChatController {
         });
       }
 
-      // If conversationId not provided, create/get conversation
       let finalConversationId = conversationId;
       if (!finalConversationId && recipientId) {
         const conversation = await agriChatService.getOrCreateConversation(userId, recipientId);
@@ -224,7 +195,6 @@ class AgriChatController {
         });
       }
 
-      // Get recipient from conversation if not provided
       let finalRecipientId = recipientId;
       if (!finalRecipientId) {
         const Conversation = require('../models/Conversation');
@@ -235,7 +205,6 @@ class AgriChatController {
             const pId = p?._id?.toString ? p._id.toString() : (p?.toString ? p.toString() : String(p));
             return pId !== userIdStr;
           });
-          // If still not found, try first participant
           if (!finalRecipientId && conversation.participants.length > 0) {
             const firstParticipant = conversation.participants[0];
             const firstId = firstParticipant?._id?.toString ? firstParticipant._id.toString() : (firstParticipant?.toString ? firstParticipant.toString() : String(firstParticipant));

@@ -8,8 +8,8 @@ const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const path = require('path');
+const config = require('./config');
 
-// Import routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const cropRoutes = require('./routes/crops');
@@ -21,15 +21,15 @@ const chatbotRoutes = require('./routes/chatbot');
 const gpsRoutes = require('./routes/gps-services');
 const mapRoutes = require('./routes/map');
 const analyticsRoutes = require('./routes/analytics');
-// const trainingRoutes = require('./routes/training'); // Temporarily disabled - TrainingController is empty
 const agriGPTRoutes = require('./routes/agriGPT');
 const emergencyCropsRoutes = require('./routes/emergency_crops');
+const dataDrivenRoutes = require('./routes/dataDriven');
+const realtimeRoutes = require('./routes/realtime');
 
-// Import middleware
 const errorHandler = require('./middleware/errorHandler');
 const { authenticateToken } = require('./middleware/auth');
+const dataQualityMiddleware = require('./middleware/dataQualityMiddleware');
 
-// Import logger
 const logger = require('./utils/logger');
 
 class AgriSmartServer {
@@ -38,13 +38,12 @@ class AgriSmartServer {
     this.server = http.createServer(this.app);
     this.io = socketIO(this.server, {
       cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:3030',
+        origin: config.security.corsOrigins,
         methods: ['GET', 'POST'],
         credentials: true
       }
     });
-    // Force port 5001 for backend API
-    this.port = parseInt(process.env.PORT) || 5001;
+    this.port = config.app.port;
     if (this.port === 80 || this.port === 443) {
       this.port = 5001; // Override if accidentally set to HTTP/HTTPS ports
     }
@@ -53,36 +52,111 @@ class AgriSmartServer {
     this.initializeMiddlewares();
     this.initializeRoutes();
     this.initializeSocketIO();
+    this.initializeServices();
+  }
+
+  async initializeServices() {
+    try {
+      const modelRegistry = require('./services/ModelRegistryService');
+      await modelRegistry.initialize();
+      logger.info('Model registry initialized');
+      
+      const pythonService = require('./services/PythonService');
+      await pythonService.initialize();
+      logger.info('Python service initialized');
+      
+      logger.info('Application starting with configuration', {
+        env: config.app.env,
+        port: config.app.port,
+        features: config.features,
+        ml: { 
+          tensorflowEnabled: config.ml.tensorflowEnabled,
+          useGpu: config.ml.useGpu,
+          pythonAvailable: pythonService.isAvailable
+        }
+      });
+      
+    } catch (error) {
+      logger.error('Failed to initialize services', error);
+    }
+  }
+
+  async connectMongoDB() {
+    const maxRetries = 3;
+    let retries = 0;
+    const mongoURI = config.database.mongodbUri;
+    
+    while (retries < maxRetries) {
+      try {
+        const conn = await mongoose.connect(mongoURI, {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+          maxPoolSize: 10,
+          minPoolSize: 5,
+          socketTimeoutMS: 45000,
+          serverSelectionTimeoutMS: 5000,
+          family: 4,
+          heartbeatFrequencyMS: 10000,
+          retryWrites: true,
+          retryReads: true
+        });
+        
+        logger.info(`✅ MongoDB Connected: ${conn.connection.host}`);
+        
+        try {
+          await conn.connection.db.admin().ping();
+          logger.info('✅ MongoDB connection verified');
+        } catch (pingError) {
+          logger.warn('⚠️ MongoDB ping failed, but connection exists');
+        }
+        
+        mongoose.connection.on('error', (err) => {
+          logger.error('MongoDB connection error:', err);
+        });
+        
+        mongoose.connection.on('disconnected', () => {
+          logger.warn('MongoDB disconnected. Attempting to reconnect...');
+        });
+        
+        mongoose.connection.on('reconnected', () => {
+          logger.info('MongoDB reconnected');
+        });
+        
+        mongoose.connection.on('connected', () => {
+          logger.info('MongoDB connection established');
+        });
+        
+        return conn;
+      } catch (error) {
+        retries++;
+        logger.error(`❌ MongoDB connection attempt ${retries} failed:`, error.message);
+        
+        if (retries === maxRetries) {
+          logger.error('❌ FATAL: Could not connect to MongoDB after maximum retries');
+          
+          if (config.app.env === 'production') {
+            logger.error('❌ Production environment requires MongoDB. Exiting.');
+            process.exit(1);
+          } else {
+            logger.warn('⚠️ Development mode: Continuing without MongoDB (features will be limited)');
+            return null;
+          }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries)));
+      }
+    }
   }
 
   async initializeDatabase() {
     try {
-      // MongoDB Connection - Make it non-blocking
-      const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/agrismart';
-      mongoose.connect(mongoURI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        maxPoolSize: 10,
-        serverSelectionTimeoutMS: 5000,
-      }).then(() => {
-        logger.info('✅ MongoDB Connected');
-      }).catch((err) => {
-        logger.warn('⚠️ MongoDB connection failed (continuing without DB):', err.message);
-        // Continue without MongoDB - emergency routes will still work
-      });
+      await this.connectMongoDB();
 
-      // PostgreSQL Connection (if needed)
-      // const { Pool } = require('pg');
-      // this.pgPool = new Pool({
-      //   connectionString: process.env.POSTGRES_URL
-      // });
 
-      // Redis Connection (non-blocking, optional)
       this.redisClient = null;
       const cache = require('./utils/cache');
       cache.init(null); // Initialize cache without Redis by default
       
-      // Try to connect to Redis in background, but don't block startup
       setImmediate(() => {
         try {
           const redis = require('redis');
@@ -110,25 +184,20 @@ class AgriSmartServer {
             cache.init(client);
           });
           
-          // Try to connect, but don't wait or throw
           client.connect().catch(() => {
-            // Connection failed silently, continue without Redis
             client.quit().catch(() => {});
           });
         } catch (error) {
-          // Redis module not available or other error - continue without it
           logger.warn('⚠️ Redis not available, continuing without cache');
         }
       });
     } catch (error) {
       logger.error('❌ Database Connection Error:', error);
-      // Don't exit - continue without database connections
       logger.warn('⚠️ Continuing without some database connections');
     }
   }
 
   initializeMiddlewares() {
-    // Security
     this.app.use(helmet({
       contentSecurityPolicy: {
         directives: {
@@ -142,65 +211,202 @@ class AgriSmartServer {
       }
     }));
 
-    // CORS
+    const allowedOrigins = [
+      process.env.FRONTEND_URL || 'http://localhost:3030',
+      'http://localhost:5173', // Vite default
+      'http://localhost:3000', // React default
+      'http://localhost:8080', // Alternative port
+      ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+    ];
+    
     this.app.use(cors({
-      origin: process.env.FRONTEND_URL || 'http://localhost:3030',
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept-Language']
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-language', 'Accept-Language'],
+      exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Per-Page'],
+      maxAge: 86400 // 24 hours
     }));
 
-    // Compression
+    this.app.options('*', cors());
+
+    const rateLimit = require('express-rate-limit');
+    
+    const limiter = rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 100, // Limit each IP to 100 requests per windowMs
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: {
+        success: false,
+        error: 'Too many requests from this IP, please try again later.'
+      },
+      skip: (req) => {
+        return req.path === '/health' || req.path === '/api/health';
+      }
+    });
+
+    const authLimiter = rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 20, // Limit to 20 requests per 15 minutes
+      message: {
+        success: false,
+        error: 'Too many authentication attempts. Please try again later.'
+      },
+      standardHeaders: true,
+      legacyHeaders: false
+    });
+
+    this.app.use('/api/', limiter);
+    this.app.use('/api/auth/', authLimiter);
+
     this.app.use(compression());
 
-    // Body Parser
     this.app.use(express.json({ limit: '50mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-    // Logging
     this.app.use(morgan('combined', {
       stream: {
         write: (message) => logger.info(message.trim())
       }
     }));
 
-    // Static Files
     this.app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-    // Request Logging
     this.app.use((req, res, next) => {
-      logger.info(`${req.method} ${req.path}`);
+      const start = Date.now();
+      
+      logger.info(`[${new Date().toISOString()}] ${req.method} ${req.url}`, {
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.get('User-Agent'),
+        contentType: req.get('Content-Type'),
+        authorization: req.get('Authorization') ? 'Present' : 'Missing',
+        body: req.method !== 'GET' && req.method !== 'DELETE' ? 
+          (req.body && Object.keys(req.body).length > 0 ? 
+            { ...req.body, password: req.body.password ? '***' : undefined } : undefined) : undefined
+      });
+      
+      const originalSend = res.send;
+      res.send = function(body) {
+        const responseTime = Date.now() - start;
+        
+        const logData = {
+          responseTime: `${responseTime}ms`,
+          statusCode: res.statusCode,
+          contentLength: res.get('Content-Length'),
+          contentType: res.get('Content-Type')
+        };
+        
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          logger.info(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} (${responseTime}ms)`, logData);
+        } else if (res.statusCode >= 400) {
+          logger.error(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} (${responseTime}ms)`, {
+            ...logData,
+            error: typeof body === 'string' ? body.substring(0, 200) : JSON.stringify(body).substring(0, 200)
+          });
+        }
+        
+        originalSend.call(this, body);
+      };
+      
       next();
     });
 
-    // Language Detection Middleware (should be early but after auth)
+    const { cacheMiddleware } = require('./middleware/cache');
+    
+    
+    const securityMiddleware = require('./middleware/security');
+    this.app.use(securityMiddleware.security());
+
     const LanguageMiddleware = require('./middleware/language');
     this.app.use(LanguageMiddleware.detectLanguage);
+
+    if (config.features.realtimeAnalytics) {
+      this.app.use('/api', dataQualityMiddleware);
+    }
   }
 
   initializeRoutes() {
-    // Health Check
     this.app.get('/health', (req, res) => {
       res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        port: this.port
+        port: this.port,
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+        }
       });
     });
 
-    // API Health Check
+    this.app.get('/api/health', async (req, res) => {
+      try {
+        const modelRegistry = require('./services/ModelRegistryService');
+        const pythonService = require('./services/PythonService');
+        const models = await modelRegistry.getAllModels();
+        
+        const health = {
+          status: 'healthy',
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+          port: this.port,
+          memory: {
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+          },
+          services: {
+            mongodb: mongoose.connection.readyState === 1,
+            redis: !!this.redisClient && (this.redisClient.isReady || this.redisClient.isOpen),
+            python: pythonService.isAvailable,
+            pythonVersion: pythonService.pythonVersion,
+            models: {
+              registered: Object.keys(models).length,
+              available: Object.values(models).filter(m => m.valid !== false).length
+            }
+          },
+          features: config.features,
+          environment: config.app.env
+        };
+        
+        res.json(health);
+      } catch (error) {
+        res.status(500).json({
+          status: 'degraded',
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
     this.app.get('/api/health', (req, res) => {
+      const { getCacheStats } = require('./middleware/cache');
+      const cacheStats = getCacheStats();
+      
       res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         port: this.port,
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB',
+          rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB'
+        },
+        cache: cacheStats,
+        environment: process.env.NODE_ENV || 'development'
       });
     });
 
-    // API Routes
     this.app.use('/api/auth', authRoutes);
     this.app.use('/api/language', require('./routes/language'));
     this.app.use('/api/users', authenticateToken, userRoutes);
@@ -218,7 +424,19 @@ class AgriSmartServer {
     this.app.use('/api/analytics', analyticsRoutes);
     this.app.use('/api/agri-gpt', agriGPTRoutes); // AGRI-GPT routes (some require auth)
     this.app.use('/api/government-schemes', require('./routes/governmentSchemes')); // Government schemes
-    // AgriChat routes - peer-to-peer messaging
+    this.app.use('/api/government', require('./routes/governmentRoutes')); // Government API routes (PM-KISAN, MSP, etc.)
+    this.app.use('/api/iot', require('./routes/iotRoutes')); // IoT sensor routes
+    this.app.use('/api/realtime', realtimeRoutes); // Real-time agriculture data
+    this.app.use('/api/payments', require('./routes/paymentRoutes')); // Payment gateway routes
+    this.app.use('/api/messaging', require('./routes/messagingRoutes')); // Messaging routes (SMS/WhatsApp/Voice)
+    this.app.use('/api/monitoring', require('./routes/monitoring')); // API monitoring routes
+    try {
+      const dataDrivenRoutes = require('./routes/dataDriven');
+      this.app.use('/api/data-driven', dataDrivenRoutes);
+      logger.info('✅ Data-driven routes registered at /api/data-driven');
+    } catch (error) {
+      logger.error('❌ Failed to load data-driven routes:', error);
+    }
     try {
       const agriChatRoutes = require('./routes/agriChat');
       this.app.use('/api/agri-chat', agriChatRoutes);
@@ -226,14 +444,11 @@ class AgriSmartServer {
     } catch (error) {
       logger.error('❌ Failed to load AgriChat routes:', error);
     }
-    // this.app.use('/api/training', trainingRoutes); // Temporarily disabled
 
-    // 404 Handler
     this.app.use((req, res) => {
       res.status(404).json({ error: 'Route not found' });
     });
 
-    // Error Handler (must be last)
     this.app.use(errorHandler);
   }
 
@@ -261,10 +476,8 @@ class AgriSmartServer {
     this.io.on('connection', (socket) => {
       logger.info('Client connected:', socket.id, 'User:', socket.userId);
 
-      // Join user's personal room
       socket.join(`user:${socket.userId}`);
 
-      // Handle sending messages
       socket.on('agri-chat:send-message', async (data) => {
         try {
           const { conversationId, recipientId, content, type, attachments, product, location, replyTo } = data;
@@ -273,7 +486,6 @@ class AgriSmartServer {
             return socket.emit('agri-chat:error', { error: 'Message content is required' });
           }
 
-          // Get or create conversation
           let finalConversationId = conversationId;
           if (!finalConversationId && recipientId) {
             const conversation = await agriChatService.getOrCreateConversation(socket.userId, recipientId);
@@ -284,12 +496,10 @@ class AgriSmartServer {
             return socket.emit('agri-chat:error', { error: 'Conversation or recipient required' });
           }
 
-          // Get conversation to find recipient
           const conversation = await Conversation.findById(finalConversationId);
           const recipient = conversation.participants.find(p => p.toString() !== socket.userId.toString());
           const finalRecipientId = recipientId || recipient;
 
-          // Send message
           const message = await agriChatService.sendMessage(
             finalConversationId,
             socket.userId,
@@ -302,17 +512,13 @@ class AgriSmartServer {
             replyTo
           );
 
-          // Populate message
           await message.populate('sender', 'name email role');
           await message.populate('recipient', 'name email role');
 
-          // Emit to sender (confirmation)
           socket.emit('agri-chat:message-sent', message);
 
-          // Emit to recipient (new message)
           this.io.to(`user:${finalRecipientId}`).emit('agri-chat:new-message', message);
 
-          // Emit conversation update to both users
           const updatedConversation = await Conversation.findById(finalConversationId)
             .populate('participants', 'name email role')
             .populate('lastMessage.sender', 'name');
@@ -325,7 +531,6 @@ class AgriSmartServer {
         }
       });
 
-      // Handle typing indicator
       socket.on('agri-chat:typing', async (data) => {
         try {
           const { conversationId, recipientId } = data;
@@ -342,7 +547,6 @@ class AgriSmartServer {
         }
       });
 
-      // Handle stop typing
       socket.on('agri-chat:stop-typing', async (data) => {
         try {
           const { conversationId, recipientId } = data;
@@ -359,14 +563,12 @@ class AgriSmartServer {
         }
       });
 
-      // Handle message read
       socket.on('agri-chat:mark-read', async (data) => {
         try {
           const { messageId } = data;
           const message = await Message.findById(messageId);
           if (message && message.recipient.toString() === socket.userId.toString()) {
             await message.markAsRead();
-            // Notify sender that message was read
             this.io.to(`user:${message.sender}`).emit('agri-chat:message-read', {
               messageId: message._id,
               readAt: message.readAt
@@ -418,52 +620,24 @@ class AgriSmartServer {
 ║   Port: ${this.port}                              ║
 ║   Health: http://localhost:${this.port}/health    ║
 ║   API: http://localhost:${this.port}/api         ║
-║   AgriChat: /api/agri-chat/*          ║
 ╚════════════════════════════════════════╝
       `);
-      
-      // Log all registered routes
-      logger.info('📋 Registered API Routes:');
-      logger.info('   - /api/agri-chat/* (AgriChat - peer-to-peer messaging)');
-      logger.info('   - /api/government-schemes/* (Government Schemes)');
-      logger.info('   - /api/analytics/* (Analytics)');
-      logger.info('   - /api/crops/* (Crops)');
-      logger.info('   - /api/diseases/* (Diseases)');
-      logger.info('   - /api/weather/* (Weather)');
-      logger.info('   - /api/market/* (Market Prices)');
-      logger.info('   - /api/chatbot/* (Chatbot)');
-      logger.info('   - /api/agri-gpt/* (AGRI-GPT)');
-      
-      // Start training scheduler
-      try {
-        const TrainingScheduler = require('./services/ai/TrainingScheduler');
-        TrainingScheduler.start();
-        logger.info('✅ Training scheduler started');
-      } catch (error) {
-        logger.warn('⚠️ Could not start training scheduler:', error.message);
-      }
+      logger.info(`✅ Server running on port ${this.port}`);
+      logger.info(`📡 WebSocket ready for connections`);
     });
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received, shutting down gracefully');
-      this.server.close(() => {
-        logger.info('Process terminated');
-        mongoose.connection.close();
-        if (this.redisClient) {
-          this.redisClient.quit();
-        }
-        process.exit(0);
-      });
+    this.server.on('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        logger.error(`Port ${this.port} is already in use. Please use a different port.`);
+        process.exit(1);
+      } else {
+        logger.error('Server error:', error);
+      }
     });
   }
 }
 
-// Start server
-if (require.main === module) {
-  const server = new AgriSmartServer();
-  server.start();
-}
+const server = new AgriSmartServer();
+server.start();
 
-module.exports = AgriSmartServer;
-
+module.exports = server;

@@ -3,7 +3,6 @@ const logger = require('../utils/logger');
 
 class MedicationService {
   constructor() {
-    // Treatment effectiveness scores
     this.treatmentWeights = {
       chemical: 1.0,
       organic: 0.8,
@@ -13,14 +12,12 @@ class MedicationService {
 
   async getMedicationRecommendations(diseaseName, cropType, severity, location = {}) {
     try {
-      // Get disease info from database
       const disease = await this.getDiseaseInfo(diseaseName);
       
       if (!disease) {
         return await this.getFallbackRecommendations(diseaseName, cropType);
       }
 
-      // Generate personalized recommendations
       const recommendations = {
         disease_info: {
           name: disease.name,
@@ -49,10 +46,8 @@ class MedicationService {
   }
 
   async getDiseaseInfo(diseaseName) {
-    // Normalize disease name
     const normalizedName = diseaseName.toLowerCase().trim();
     
-    // Try exact match
     let disease = await Disease.findOne({
       $or: [
         { name: { $regex: new RegExp(`^${normalizedName}$`, 'i') } },
@@ -60,7 +55,6 @@ class MedicationService {
       ]
     });
 
-    // Try partial match
     if (!disease) {
       disease = await Disease.findOne({
         $or: [
@@ -70,7 +64,6 @@ class MedicationService {
       });
     }
 
-    // Try regional names
     if (!disease) {
       disease = await Disease.findOne({
         $or: [
@@ -154,12 +147,10 @@ class MedicationService {
 
       return treatments
       .filter(treatment => {
-        // Check severity compatibility
         if (treatment.suitableSeverity && !treatment.suitableSeverity.includes(severity)) {
           return false;
         }
 
-        // Check crop compatibility
         if (cropType && treatment.suitableCrops && !treatment.suitableCrops.includes(cropType.toLowerCase())) {
           return false;
         }
@@ -167,13 +158,11 @@ class MedicationService {
         return true;
       })
       .map(treatment => {
-        // Extract dosage and frequency from products array or use defaults
         let dosage = 'N/A';
         let frequency = 'N/A';
         let brands = [];
         let preparation = '';
         
-        // If treatment has products array, use first product's details
         if (treatment.products && treatment.products.length > 0) {
           const product = treatment.products[0];
           dosage = product.dosage || treatment.dosage || this.getDefaultDosage(treatment.name, treatment.type);
@@ -181,7 +170,6 @@ class MedicationService {
           brands = treatment.products.map(p => p.name).filter(Boolean);
           preparation = product.preparation || treatment.applicationMethod || '';
         } else {
-          // Use treatment-level dosage/frequency or generate defaults
           dosage = treatment.dosage || this.getDefaultDosage(treatment.name, treatment.type);
           frequency = treatment.frequency || this.getDefaultFrequency(severity, treatment.type);
           preparation = treatment.applicationMethod || treatment.timing || '';
@@ -207,7 +195,6 @@ class MedicationService {
   calculateTreatmentScore(treatment, severity) {
     let score = treatment.effectiveness || 70;
 
-    // Adjust for severity
     if (severity === 'critical') {
       score += 30;
     } else if (severity === 'high') {
@@ -216,7 +203,6 @@ class MedicationService {
       score += 10;
     }
 
-    // Type-based adjustments
     if (treatment.type === 'organic') {
       score += 15; // Safety bonus
     }
@@ -225,7 +211,6 @@ class MedicationService {
   }
 
   getDefaultDosage(treatmentName, type) {
-    // Default dosages based on treatment name and type
     const dosageMap = {
       'Chlorothalonil': '2-3 g/liter of water',
       'Mancozeb': '2-2.5 g/liter of water',
@@ -238,7 +223,6 @@ class MedicationService {
       'Propiconazole': '0.5-1 ml/liter of water'
     };
     
-    // Try to match treatment name
     if (treatmentName) {
       for (const [key, value] of Object.entries(dosageMap)) {
         if (treatmentName.toLowerCase().includes(key.toLowerCase())) {
@@ -247,7 +231,6 @@ class MedicationService {
       }
     }
     
-    // Type-based defaults
     if (type === 'chemical') {
       return '2-3 g/liter of water';
     } else if (type === 'organic') {
@@ -320,7 +303,6 @@ class MedicationService {
   }
 
   estimatePrice(treatmentName, type) {
-    // Rough price estimates in INR
     const priceMap = {
       'Chlorothalonil': '₹200-400 per 100g',
       'Mancozeb': '₹150-300 per 100g',
@@ -333,7 +315,6 @@ class MedicationService {
       'Propiconazole': '₹400-600 per 100ml'
     };
     
-    // Try to match treatment name
     if (treatmentName) {
       for (const [key, value] of Object.entries(priceMap)) {
         if (treatmentName.toLowerCase().includes(key.toLowerCase())) {
@@ -342,7 +323,6 @@ class MedicationService {
       }
     }
     
-    // Type-based defaults
     if (type === 'chemical') {
       return '₹200-500 per 100g/100ml';
     } else if (type === 'organic') {
@@ -430,7 +410,6 @@ class MedicationService {
       }
     }
 
-    // Add common practices
     practices.push(
       'Use disease-free certified seeds',
       'Practice crop rotation',
@@ -518,7 +497,6 @@ class MedicationService {
     const costs = [];
     let totalCost = 0;
 
-    // Chemical treatment costs
     const primaryTreatment = disease.treatments?.find(t => t.type === 'chemical') || this.getDefaultTreatments(severity)[0];
     
     if (primaryTreatment) {
@@ -535,14 +513,12 @@ class MedicationService {
       totalCost += treatmentCost;
     }
 
-    // Equipment costs
     costs.push({
       item: 'Sprayer rental/usage',
       estimated_cost: 200
     });
     totalCost += 200;
 
-    // Labor costs (estimated)
     costs.push({
       item: 'Labor for application',
       estimated_cost: 500

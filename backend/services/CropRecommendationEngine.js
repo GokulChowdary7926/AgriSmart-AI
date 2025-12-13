@@ -3,10 +3,6 @@ const path = require('path');
 const logger = require('../utils/logger');
 const { LocationAwareCropEngine } = require('./LocationAwareCropEngine');
 
-/**
- * Comprehensive Crop Recommendation Engine
- * Uses real agricultural data and ML-like algorithms for crop recommendations
- */
 class CropRecommendationEngine {
   constructor() {
     this.cropData = [];
@@ -15,7 +11,6 @@ class CropRecommendationEngine {
     this.diseaseData = [];
     this.dataPath = path.join(__dirname, '../../data');
     
-    // Initialize location-aware engine
     try {
       this.locationAwareEngine = new LocationAwareCropEngine();
       logger.info('✅ Location-aware crop engine initialized');
@@ -24,16 +19,11 @@ class CropRecommendationEngine {
       this.locationAwareEngine = null;
     }
     
-    // Initialize with fallback data
     this.initializeData();
   }
 
-  /**
-   * Initialize all datasets
-   */
   initializeData() {
     try {
-      // Try to load from files
       this.loadCropData();
       this.loadSoilData();
       this.loadMarketData();
@@ -46,9 +36,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Load crop data from CSV or JSON
-   */
   loadCropData() {
     const cropDataPath = path.join(this.dataPath, 'crop_data.json');
     
@@ -61,9 +48,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Load soil data
-   */
   loadSoilData() {
     const soilDataPath = path.join(this.dataPath, 'soil_data.json');
     
@@ -76,9 +60,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Load market data
-   */
   loadMarketData() {
     const marketDataPath = path.join(this.dataPath, 'market_prices.json');
     
@@ -91,9 +72,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Load disease data
-   */
   loadDiseaseData() {
     const diseaseDataPath = path.join(this.dataPath, 'disease_data.json');
     
@@ -106,9 +84,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Create fallback crop data (Indian crops)
-   */
   createFallbackCropData() {
     this.cropData = [
       { N: 90, P: 42, K: 43, temperature: 20.8, humidity: 82.0, ph: 6.5, rainfall: 202.9, label: 'rice' },
@@ -130,9 +105,6 @@ class CropRecommendationEngine {
     logger.info('✅ Created fallback crop data');
   }
 
-  /**
-   * Create fallback soil data (Indian states)
-   */
   createFallbackSoilData() {
     this.soilData = [
       { state: 'Punjab', district: 'Multiple', soil_type: 'Alluvial', ph_range: '6.5-8.5', organic_carbon: '0.5-0.8' },
@@ -154,9 +126,6 @@ class CropRecommendationEngine {
     logger.info('✅ Created fallback soil data');
   }
 
-  /**
-   * Create fallback market data
-   */
   createFallbackMarketData() {
     this.marketData = [
       { commodity: 'Rice', price: 2200, unit: 'Quintal', market: 'Delhi', date: new Date().toISOString().split('T')[0] },
@@ -175,9 +144,6 @@ class CropRecommendationEngine {
     logger.info('✅ Created fallback market data');
   }
 
-  /**
-   * Create fallback disease data
-   */
   createFallbackDiseaseData() {
     this.diseaseData = [
       { disease_name: 'Leaf Blight', crop_affected: 'Rice', symptoms: 'Yellow-brown spots on leaves', treatment: 'Copper-based fungicide' },
@@ -196,9 +162,6 @@ class CropRecommendationEngine {
     logger.info('✅ Created fallback disease data');
   }
 
-  /**
-   * Create all fallback data
-   */
   createFallbackData() {
     this.createFallbackCropData();
     this.createFallbackSoilData();
@@ -206,9 +169,6 @@ class CropRecommendationEngine {
     this.createFallbackDiseaseData();
   }
 
-  /**
-   * Get state from coordinates (approximate for India)
-   */
   getStateFromCoords(lat, lon) {
     const statesCoords = {
       'Punjab': { lat: 31.1471, lon: 75.3412 },
@@ -242,9 +202,6 @@ class CropRecommendationEngine {
     return closestState;
   }
 
-  /**
-   * Get soil data for location
-   */
   getSoilData(state, district = null) {
     const soilInfo = this.soilData.find(s => 
       s.state.toLowerCase() === state.toLowerCase() ||
@@ -269,7 +226,6 @@ class CropRecommendationEngine {
       };
     }
 
-    // Fallback based on state
     const soilByState = {
       'punjab': { type: 'Alluvial', ph: 7.5 },
       'haryana': { type: 'Alluvial', ph: 7.8 },
@@ -298,7 +254,6 @@ class CropRecommendationEngine {
       };
     }
 
-    // Default
     return {
       soil_type: 'Alluvial',
       soilType: 'Alluvial',
@@ -311,9 +266,6 @@ class CropRecommendationEngine {
     };
   }
 
-  /**
-   * Get drainage characteristics for soil type
-   */
   getDrainageForSoilType(soilType) {
     const drainageMap = {
       'Alluvial': 'Well-drained to moderately well-drained',
@@ -331,12 +283,6 @@ class CropRecommendationEngine {
     return drainageMap[soilType] || 'Moderately well-drained';
   }
 
-  /**
-   * Multi-layered Crop Recommendation System
-   * Layer 1: Location & Season Filtering
-   * Layer 2: Soil & Weather Suitability Scoring
-   * Layer 3: Economic & Practicality Analysis
-   */
   getCropRecommendations(temperature, humidity, ph, rainfall, soilType, state = null, season = null) {
     try {
     const recommendations = [];
@@ -344,41 +290,32 @@ class CropRecommendationEngine {
       const currentDate = new Date();
       const month = currentDate.getMonth() + 1;
 
-      // Ensure we have valid crop data
       if (!this.cropData || this.cropData.length === 0) {
         logger.warn('No crop data available, using fallback');
         this.createFallbackCropData();
       }
 
-      // Layer 1: Location & Season Filtering
-      // Get crops suitable for current season and region
       const seasonCrops = this.getCropsForSeason(currentSeason, state);
 
-    // Score each crop using multi-layered approach
     for (const crop of this.cropData) {
       const cropName = crop.label.charAt(0).toUpperCase() + crop.label.slice(1);
       
-      // Skip if crop not suitable for current season (unless season is "Year-round" or "All")
       const cropDetails = this.getCropDetails(crop.label);
       if (cropDetails.season !== 'Year-round' && cropDetails.season !== 'All' && 
           seasonCrops.length > 0 && !seasonCrops.includes(cropName.toLowerCase())) {
         continue; // Skip crops not suitable for current season
       }
 
-      // Layer 2: Soil & Weather Suitability Scoring
       const suitabilityScores = this.calculateSuitabilityScores(
         crop, temperature, humidity, ph, rainfall, soilType
       );
 
-      // Layer 3: Economic & Practicality Analysis
       const economicAnalysis = this.calculateEconomicAnalysis(
         crop.label, cropDetails, state
       );
 
-      // Calculate Risk Factor
       const riskScore = this.calculateRiskScore(crop, cropDetails, temperature, rainfall);
 
-      // Total Score Calculation
       const totalScore = Math.min(100, Math.round(
         suitabilityScores.soilScore + 
         suitabilityScores.weatherScore + 
@@ -386,12 +323,10 @@ class CropRecommendationEngine {
         riskScore
       ));
 
-      // Only recommend crops with score >= 50
       if (totalScore >= 50) {
         const suitableSoils = this.getSuitableSoilsForCrop(crop.label);
         const advantages = this.getCropAdvantages(crop.label);
         
-        // Generate detailed reasons
         const reasons = this.generateDetailedReasons(
           suitabilityScores, economicAnalysis, riskScore, 
           ph, soilType, temperature, rainfall, cropDetails.season, state
@@ -455,20 +390,15 @@ class CropRecommendationEngine {
       }
     }
 
-      // Sort by total score and return top recommendations
       return recommendations
         .sort((a, b) => b.score - a.score)
         .slice(0, 10); // Return top 10 instead of 5 for better options
     } catch (error) {
       logger.error('Error in getCropRecommendations:', error);
-      // Return fallback recommendations
       return this.getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType);
     }
   }
 
-  /**
-   * Get fallback recommendations when main algorithm fails
-   */
   getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType) {
     const fallbackCrops = [
       { crop: 'Rice', score: 75, season: 'Kharif', duration: '120-150 days', yield: '4-6 tons/ha', advantages: ['Staple food', 'High demand'] },
@@ -492,16 +422,12 @@ class CropRecommendationEngine {
     }));
   }
 
-  /**
-   * Layer 2: Calculate Soil & Weather Suitability Scores
-   */
   calculateSuitabilityScores(crop, temperature, humidity, ph, rainfall, soilType) {
     let soilScore = 0;
     let weatherScore = 0;
     const soilDetails = [];
     const weatherDetails = [];
 
-    // Soil Compatibility Scoring (25 points max)
     const suitableSoils = this.getSuitableSoilsForCrop(crop.label);
     const soilMatch = suitableSoils.includes(soilType.toLowerCase());
     
@@ -513,7 +439,6 @@ class CropRecommendationEngine {
       soilDetails.push(`Acceptable soil type (${soilType})`);
       }
 
-    // pH match (10 points)
       const phDiff = Math.abs(ph - crop.ph);
       if (phDiff <= 0.5) {
       soilScore += 10;
@@ -526,8 +451,6 @@ class CropRecommendationEngine {
       soilDetails.push(`Acceptable pH (Your pH: ${ph}, Required: ${crop.ph})`);
     }
 
-    // Weather Alignment Scoring (30 points max)
-    // Temperature match (15 points)
     const tempDiff = Math.abs(temperature - crop.temperature);
     if (tempDiff <= 5) {
       weatherScore += 15;
@@ -540,7 +463,6 @@ class CropRecommendationEngine {
       weatherDetails.push(`Moderate temperature match (${temperature}°C, Required: ${crop.temperature}°C)`);
     }
 
-    // Rainfall match (10 points)
       const rainDiff = Math.abs(rainfall - crop.rainfall) / crop.rainfall;
       if (rainDiff <= 0.2) {
       weatherScore += 10;
@@ -553,7 +475,6 @@ class CropRecommendationEngine {
       weatherDetails.push(`Acceptable rainfall (${rainfall}mm, Required: ${crop.rainfall}mm)`);
       }
 
-    // Humidity match (5 points)
       const humidityDiff = Math.abs(humidity - crop.humidity);
       if (humidityDiff <= 10) {
       weatherScore += 5;
@@ -573,26 +494,19 @@ class CropRecommendationEngine {
     };
   }
 
-  /**
-   * Layer 3: Calculate Economic & Practicality Analysis
-   */
   calculateEconomicAnalysis(cropName, cropDetails, state) {
     const marketPrice = this.getCropPrice(cropName);
     const priceRange = this.extractPriceRange(marketPrice);
     const yieldRange = this.extractYieldRange(cropDetails.yield);
     
-    // Calculate potential revenue (per hectare)
     const minRevenue = (yieldRange.min * priceRange.min) / 10; // Convert quintal to ton if needed
     const maxRevenue = (yieldRange.max * priceRange.max) / 10;
     
-    // Estimate profit margin (assuming 30-40% profit after costs)
     const minProfit = minRevenue * 0.30;
     const maxProfit = maxRevenue * 0.40;
     
-    // Price trend (simulated - in production, use real market data)
     const priceTrend = this.getPriceTrend(cropName);
     
-    // Economic score (25 points max)
     let economicScore = 15; // Base score
     if (priceTrend === 'increasing') economicScore += 5;
     if (priceTrend === 'stable') economicScore += 3;
@@ -624,14 +538,10 @@ class CropRecommendationEngine {
     };
   }
 
-  /**
-   * Calculate Risk Factor Score
-   */
   calculateRiskScore(crop, cropDetails, temperature, rainfall) {
     let riskScore = 15; // Base score (low risk)
     const duration = this.parseDuration(cropDetails.duration);
     
-    // Short duration crops have lower risk
     if (duration <= 90) {
       riskScore += 5; // Low risk
     } else if (duration <= 150) {
@@ -640,7 +550,6 @@ class CropRecommendationEngine {
       riskScore -= 2; // Higher risk for long duration
     }
 
-    // Weather risk assessment
     const tempRisk = Math.abs(temperature - crop.temperature) > 10 ? -3 : 0;
     const rainRisk = Math.abs(rainfall - crop.rainfall) / crop.rainfall > 0.5 ? -3 : 0;
     
@@ -649,15 +558,11 @@ class CropRecommendationEngine {
     return Math.max(0, Math.min(20, Math.round(riskScore)));
   }
 
-  /**
-   * Generate detailed reasons for recommendation
-   */
   generateDetailedReasons(suitabilityScores, economicAnalysis, riskScore, 
                           ph, soilType, temperature, rainfall, season, state) {
     const detailed = [];
     const summary = [];
 
-    // Soil compatibility
     detailed.push({
       category: 'Soil Compatibility',
       score: `${suitabilityScores.soilScore}/25`,
@@ -666,7 +571,6 @@ class CropRecommendationEngine {
     });
     summary.push(`Soil compatibility: ${suitabilityScores.soilScore}/25`);
 
-    // Weather alignment
     detailed.push({
       category: 'Weather Alignment',
       score: `${suitabilityScores.weatherScore}/30`,
@@ -675,7 +579,6 @@ class CropRecommendationEngine {
     });
     summary.push(`Weather alignment: ${suitabilityScores.weatherScore}/30`);
 
-    // Economic viability
     detailed.push({
       category: 'Economic Viability',
       score: `${economicAnalysis.economicScore}/25`,
@@ -684,7 +587,6 @@ class CropRecommendationEngine {
     });
     summary.push(`Economic viability: ${economicAnalysis.economicScore}/25`);
 
-    // Risk factor
     detailed.push({
       category: 'Risk Factor',
       score: `${riskScore}/20`,
@@ -699,9 +601,6 @@ class CropRecommendationEngine {
     };
   }
 
-  /**
-   * Helper methods
-   */
   getCurrentSeasonForLocation(state) {
     const month = new Date().getMonth() + 1;
     if (month >= 6 && month <= 10) return 'Kharif';
@@ -710,7 +609,6 @@ class CropRecommendationEngine {
   }
 
   getCropsForSeason(season, state) {
-    // Return crops suitable for the season
     const seasonCrops = {
       'Kharif': ['rice', 'maize', 'cotton', 'sugarcane', 'groundnut', 'soybean', 'pulses'],
       'Rabi': ['wheat', 'barley', 'potato', 'chickpea', 'lentil', 'mustard'],
@@ -743,7 +641,6 @@ class CropRecommendationEngine {
   }
 
   getPriceTrend(cropName) {
-    // Simulated - in production, use real market data
     const trends = ['increasing', 'stable', 'decreasing'];
     return trends[Math.floor(Math.random() * trends.length)];
   }
@@ -780,9 +677,6 @@ class CropRecommendationEngine {
     return windows[season] || 'Check local agricultural calendar';
   }
 
-  /**
-   * Get suitable soils for crop
-   */
   getSuitableSoilsForCrop(cropName) {
     const cropSoilMap = {
       'rice': ['alluvial', 'clayey'],
@@ -805,9 +699,6 @@ class CropRecommendationEngine {
     return cropSoilMap[cropName.toLowerCase()] || ['alluvial'];
   }
 
-  /**
-   * Get crop details
-   */
   getCropDetails(cropName) {
     const details = {
       'rice': { season: 'Kharif', duration: '90-150 days', yield: '4-6 tons/ha', water: 'High' },
@@ -838,9 +729,6 @@ class CropRecommendationEngine {
     };
   }
 
-  /**
-   * Get crop advantages
-   */
   getCropAdvantages(cropName) {
     const advantagesMap = {
       'rice': [
@@ -980,9 +868,6 @@ class CropRecommendationEngine {
     ];
   }
 
-  /**
-   * Get crop market price
-   */
   getCropPrice(cropName) {
     const cropPrices = {
       'rice': '₹2200-₹2500/Quintal',
@@ -1008,9 +893,6 @@ class CropRecommendationEngine {
     return cropPrices[cropName.toLowerCase()] || '₹2000-₹3000/Quintal';
   }
 
-  /**
-   * Get market prices for state
-   */
   getMarketPrices(state = null) {
     let prices = this.marketData;
 
@@ -1032,9 +914,6 @@ class CropRecommendationEngine {
     }));
   }
 
-  /**
-   * Get common diseases for state/crop
-   */
   getCommonDiseases(state = null, crop = null) {
     let diseases = this.diseaseData;
 
@@ -1044,7 +923,6 @@ class CropRecommendationEngine {
       );
     }
 
-    // Get crops common in state
     if (state && !crop) {
       const stateCrops = {
         'punjab': ['wheat', 'rice', 'maize'],
@@ -1069,14 +947,9 @@ class CropRecommendationEngine {
     }));
   }
 
-  /**
-   * Get complete location data with recommendations (enhanced with location-aware engine)
-   */
   async getLocationData(latitude, longitude, weatherData = null, state = null, region = null, country = 'India') {
     try {
-      // Get state from coordinates if not provided
       if (!state) {
-        // Try to get state from location service first
         try {
           const locationService = require('./locationService');
           const locInfo = await locationService.getLocationFromCoordinates(latitude, longitude);
@@ -1093,15 +966,12 @@ class CropRecommendationEngine {
         }
       }
       
-      // Ensure region is set
       if (!region) {
         region = state;
       }
 
-      // Get soil data
       const soil = this.getSoilData(state);
 
-      // Use provided weather data or fallback
       const weather = weatherData || {
         temperature: 25.0,
         humidity: 65.0,
@@ -1110,16 +980,13 @@ class CropRecommendationEngine {
         source: 'fallback'
       };
 
-      // Try location-aware recommendations first
       let recommendations = [];
       if (this.locationAwareEngine) {
         try {
-          // Analyze location context
           const locationContext = this.locationAwareEngine.analyzeLocation(
             latitude, longitude, state, region || state, country
           );
 
-          // Get location-specific recommendations
           recommendations = this.locationAwareEngine.generateRecommendations(
             locationContext,
             soil,
@@ -1130,7 +997,6 @@ class CropRecommendationEngine {
           logger.info(`✅ Location-aware engine returned ${recommendations.length} recommendations for ${locationContext.region || state || 'unknown'}`);
         } catch (locationError) {
           logger.warn('Location-aware engine failed, using fallback:', locationError.message);
-          // Fallback to original method
           recommendations = this.getCropRecommendations(
             weather.temperature,
             weather.humidity,
@@ -1142,7 +1008,6 @@ class CropRecommendationEngine {
           );
         }
       } else {
-        // Use original method if location-aware engine not available
         recommendations = this.getCropRecommendations(
           weather.temperature,
           weather.humidity,
@@ -1154,10 +1019,8 @@ class CropRecommendationEngine {
         );
       }
 
-      // Get market prices
       const marketPrices = this.getMarketPrices(state);
 
-      // Get common diseases
       const diseases = this.getCommonDiseases(state);
 
       return {
@@ -1181,9 +1044,6 @@ class CropRecommendationEngine {
     }
   }
 
-  /**
-   * Get fallback data
-   */
   getFallbackData(latitude, longitude) {
     const state = this.getStateFromCoords(latitude, longitude);
     const soil = this.getSoilData(state);
@@ -1213,7 +1073,6 @@ class CropRecommendationEngine {
   }
 }
 
-// Export singleton instance
 module.exports = new CropRecommendationEngine();
 
 

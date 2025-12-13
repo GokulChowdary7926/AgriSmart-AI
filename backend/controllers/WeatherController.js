@@ -1,20 +1,18 @@
 const WeatherData = require('../models/WeatherData');
 const WeatherService = require('../services/WeatherService');
 const logger = require('../utils/logger');
+const axios = require('axios');
 
 class WeatherController {
-  // Get current weather
   static async getCurrent(req, res) {
     try {
       const { lat, lng, latitude, longitude, city } = req.query;
       
-      // Support both lat/lng and latitude/longitude
       const latValue = lat || latitude;
       const lngValue = lng || longitude;
       
       let weather = null;
       
-      // Use WeatherService for real-time data
       if (latValue && lngValue) {
         try {
           const weatherData = await WeatherService.getWeatherByCoords(
@@ -59,7 +57,6 @@ class WeatherController {
         }
       }
       
-      // Fallback to mock data
       if (!weather) {
         weather = {
           temperature: { current: 25, min: 20, max: 30, feels_like: 24 },
@@ -93,14 +90,12 @@ class WeatherController {
     }
   }
   
-  // Helper to get wind direction
   static getWindDirection(degree) {
     const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
     const index = Math.round(degree / 45) % 8;
     return directions[index];
   }
   
-  // Get weather history
   static async getHistory(req, res) {
     try {
       const { lat, lng, startDate, endDate } = req.query;
@@ -118,7 +113,6 @@ class WeatherController {
       
       let history = [];
       
-      // Try to get history from database if available
       try {
         if (WeatherData && typeof WeatherData.getHistory === 'function') {
           history = await WeatherData.getHistory(coordinates, start, end);
@@ -140,7 +134,6 @@ class WeatherController {
     }
   }
   
-  // Create weather data
   static async create(req, res) {
     try {
       const { lat, lng, ...weatherData } = req.body;
@@ -177,7 +170,6 @@ class WeatherController {
     }
   }
   
-  // Get weather forecast
   static async getForecast(req, res) {
     try {
       const { lat, lng, days = 10 } = req.query;
@@ -189,7 +181,6 @@ class WeatherController {
         });
       }
       
-      // Use WeatherService for forecast
       let forecastData = null;
       try {
         const forecast = await WeatherService.getWeatherForecast(
@@ -197,9 +188,7 @@ class WeatherController {
           parseFloat(lng)
         );
         
-        // Ensure forecast is an array
         if (Array.isArray(forecast) && forecast.length > 0) {
-          // Format forecast data
           forecastData = forecast.map(item => ({
             date: item.date || new Date().toISOString(),
             temperature: {
@@ -226,7 +215,6 @@ class WeatherController {
         logger.warn('Forecast API error:', apiError.message);
       }
       
-      // Fallback to mock forecast
       if (!forecastData || !Array.isArray(forecastData) || forecastData.length === 0) {
         forecastData = [];
         for (let i = 0; i < parseInt(days); i++) {
@@ -256,7 +244,6 @@ class WeatherController {
         }
       }
       
-      // Ensure we always return an array
       const forecastArray = Array.isArray(forecastData) ? forecastData : [];
       
       res.json({
@@ -272,7 +259,6 @@ class WeatherController {
     }
   }
   
-  // Get hourly forecast
   static async getHourlyForecast(req, res) {
     try {
       const { lat, lng, hours = 24 } = req.query;
@@ -284,7 +270,6 @@ class WeatherController {
         });
       }
       
-      // Generate hourly forecast
       const hourlyForecast = [];
       const now = new Date();
       
@@ -322,7 +307,6 @@ class WeatherController {
     }
   }
 
-  // Get weather alerts
   static async getAlerts(req, res) {
     try {
       const { lat, lng } = req.query;
@@ -334,7 +318,45 @@ class WeatherController {
         });
       }
 
-      // Get current weather to generate contextual alerts
+      let realTimeAlerts = [];
+      const openweatherApiKey = process.env.OPENWEATHER_API_KEY;
+      
+      if (openweatherApiKey && openweatherApiKey !== 'your_api_key_here') {
+        try {
+          const response = await axios.get('http://api.openweathermap.org/data/2.5/onecall', {
+            params: {
+              lat: parseFloat(lat),
+              lon: parseFloat(lng),
+              appid: openweatherApiKey,
+              units: 'metric',
+              exclude: 'minutely,daily'
+            },
+            timeout: 10000
+          });
+
+          if (response.data && response.data.alerts && Array.isArray(response.data.alerts)) {
+            realTimeAlerts = response.data.alerts.map(alert => ({
+              id: `owm_${alert.start}_${alert.end}`,
+              title: alert.event || 'Weather Alert',
+              description: alert.description,
+              severity: alert.severity || 'moderate',
+              start: new Date(alert.start * 1000).toISOString(),
+              end: new Date(alert.end * 1000).toISOString(),
+              areas: [alert.tags || 'Current Location'],
+              source: 'OpenWeatherMap',
+              agricultural_impact: {
+                affected_crops: ['All crops'],
+                recommended_actions: getRecommendedActions(alert.event),
+                risk_level: alert.severity === 'extreme' ? 'high' : 'medium'
+              }
+            }));
+            logger.info(`✅ Got ${realTimeAlerts.length} real-time alerts from OpenWeatherMap`);
+          }
+        } catch (error) {
+          logger.warn('OpenWeatherMap alerts API error:', error.message);
+        }
+      }
+
       let currentWeather = null;
       try {
         const weatherData = await WeatherService.getWeatherByCoords(
@@ -346,15 +368,18 @@ class WeatherController {
         logger.warn('Could not fetch weather for alerts:', error.message);
       }
 
-      // Generate agricultural alerts based on weather conditions
-      const alerts = generateAgriculturalAlerts(currentWeather, lat, lng);
+      const agriculturalAlerts = generateAgriculturalAlerts(currentWeather, lat, lng);
+
+      const allAlerts = [...realTimeAlerts, ...agriculturalAlerts];
 
       res.json({
         success: true,
         data: {
-          alerts,
-          alert_count: alerts.length,
-          severe_alerts: alerts.filter(a => a.severity === 'severe').length,
+          alerts: allAlerts,
+          alert_count: allAlerts.length,
+          severe_alerts: allAlerts.filter(a => a.severity === 'severe' || a.severity === 'extreme').length,
+          real_time_alerts: realTimeAlerts.length,
+          agricultural_alerts: agriculturalAlerts.length,
           timestamp: new Date().toISOString()
         }
       });
@@ -365,14 +390,15 @@ class WeatherController {
         data: {
           alerts: getMockAlerts(lat, lng),
           alert_count: 0,
-          severe_alerts: 0
+          severe_alerts: 0,
+          real_time_alerts: 0,
+          agricultural_alerts: 0
         }
       });
     }
   }
 }
 
-// Helper function to generate agricultural alerts
 function generateAgriculturalAlerts(weather, lat, lng) {
   const alerts = [];
   
@@ -380,7 +406,6 @@ function generateAgriculturalAlerts(weather, lat, lng) {
     return getMockAlerts(lat, lng);
   }
 
-  // Temperature-based alerts
   if (weather.temperature > 35) {
     alerts.push({
       id: 'heatwave_' + Date.now(),
@@ -417,7 +442,6 @@ function generateAgriculturalAlerts(weather, lat, lng) {
     });
   }
   
-  // Rainfall-based alerts
   if (weather.weather && (weather.weather.toLowerCase().includes('rain') || weather.rainfall > 20)) {
     alerts.push({
       id: 'rainfall_' + Date.now(),
@@ -436,7 +460,6 @@ function generateAgriculturalAlerts(weather, lat, lng) {
     });
   }
   
-  // Wind-based alerts
   if (weather.wind_speed > 30) {
     alerts.push({
       id: 'wind_' + Date.now(),
@@ -455,7 +478,6 @@ function generateAgriculturalAlerts(weather, lat, lng) {
     });
   }
 
-  // If no alerts generated, return mock alerts
   if (alerts.length === 0) {
     return getMockAlerts(lat, lng);
   }
@@ -463,7 +485,29 @@ function generateAgriculturalAlerts(weather, lat, lng) {
   return alerts;
 }
 
-// Mock alerts for demonstration
+function getRecommendedActions(alertType) {
+  const actions = {
+    'Rain': ['Check drainage systems', 'Delay fertilizer application', 'Monitor for waterlogging'],
+    'Thunderstorm': ['Secure structures', 'Avoid field work', 'Protect equipment'],
+    'Heat': ['Increase irrigation', 'Use shade protection', 'Monitor crop stress'],
+    'Cold': ['Use frost protection', 'Cover sensitive crops', 'Delay planting'],
+    'Wind': ['Secure plants and structures', 'Delay spraying', 'Protect greenhouses'],
+    'Fog': ['Delay field operations', 'Use proper lighting', 'Be cautious on roads'],
+    'Snow': ['Clear pathways', 'Protect crops', 'Monitor temperature']
+  };
+  
+  if (!alertType) return ['Monitor conditions', 'Take necessary precautions'];
+  
+  const alertLower = alertType.toLowerCase();
+  for (const [key, value] of Object.entries(actions)) {
+    if (alertLower.includes(key.toLowerCase())) {
+      return value;
+    }
+  }
+  
+  return ['Monitor conditions', 'Follow weather updates', 'Take necessary precautions'];
+}
+
 function getMockAlerts(lat, lng) {
   return [
     {

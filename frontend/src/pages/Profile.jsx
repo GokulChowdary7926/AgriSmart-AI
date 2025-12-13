@@ -85,7 +85,6 @@ export default function Profile() {
       if (response.data.success) {
         setMessage({ type: 'success', text: 'Profile updated successfully' });
         setIsEditing(false);
-        // Reload user data
         window.location.reload();
       }
     } catch (error) {
@@ -100,7 +99,6 @@ export default function Profile() {
 
   const handleCancel = () => {
     setIsEditing(false);
-    // Reset form data
     if (user || farmer) {
       setFormData({
         name: user?.name || '',
@@ -138,7 +136,6 @@ export default function Profile() {
       )}
 
       <Grid container spacing={3}>
-        {/* Profile Header */}
         <Grid item xs={12}>
           <Card>
             <CardContent>
@@ -189,7 +186,6 @@ export default function Profile() {
           </Card>
         </Grid>
 
-        {/* Personal Information */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -234,7 +230,6 @@ export default function Profile() {
           </Card>
         </Grid>
 
-        {/* Location Information */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -290,7 +285,6 @@ export default function Profile() {
           </Card>
         </Grid>
 
-        {/* Farmer Details */}
         {farmer && (
           <Grid item xs={12}>
             <Card>
@@ -347,7 +341,6 @@ export default function Profile() {
           </Grid>
         )}
 
-        {/* Save Button */}
         {isEditing && (
           <Grid item xs={12}>
             <Box display="flex" justifyContent="flex-end" gap={2}>
@@ -373,6 +366,19 @@ export default function Profile() {
     </Container>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

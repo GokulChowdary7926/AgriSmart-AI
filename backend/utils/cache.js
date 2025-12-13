@@ -58,7 +58,6 @@ class Cache {
   }
 }
 
-// Singleton instance - will be initialized in server.js
 let cacheInstance = null;
 
 module.exports = {
@@ -68,7 +67,6 @@ module.exports = {
   },
   getInstance: () => {
     if (!cacheInstance) {
-      // Fallback to disabled cache if not initialized
       cacheInstance = new Cache(null);
     }
     return cacheInstance;

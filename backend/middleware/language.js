@@ -3,9 +3,7 @@ const Translation = require('../models/Translation');
 const cache = require('../utils/cache').getInstance();
 
 class LanguageMiddleware {
-  // Detect language from request
   static detectLanguage(req, res, next) {
-    // Priority: 1. Query param 2. Header 3. User preference 4. Default
     const langParam = req.query.lang || req.query.language;
     const acceptLanguage = req.headers['accept-language'];
     const userLanguage = req.user?.preferences?.language || req.user?.language;
@@ -29,20 +27,17 @@ class LanguageMiddleware {
     next();
   }
   
-  // Parse Accept-Language header
   static parseAcceptLanguage(header) {
     const languages = header.split(',');
     const preferred = languages[0].split(';')[0].trim();
     return preferred.substring(0, 2).toLowerCase();
   }
   
-  // Validate language code
   static isValidLanguage(code) {
     const validCodes = ['en', 'hi', 'ta', 'te', 'kn', 'ml', 'bn', 'mr', 'gu', 'pa'];
     return validCodes.includes(code.toLowerCase());
   }
   
-  // Get all supported languages
   static async getSupportedLanguages(req, res) {
     try {
       const cacheKey = 'supported_languages';
@@ -68,7 +63,6 @@ class LanguageMiddleware {
         countryCode: lang.countryCode
       }));
       
-      // Cache for 24 hours
       await cache.setex(cacheKey, 86400, JSON.stringify(formatted));
       
       res.json({
@@ -84,7 +78,6 @@ class LanguageMiddleware {
     }
   }
   
-  // Translate text
   static async translate(key, language = 'en', variables = {}) {
     try {
       const lang = language.toLowerCase();
@@ -104,7 +97,6 @@ class LanguageMiddleware {
       
       const text = translation.getTranslation(lang);
       
-      // Cache for 1 hour
       await cache.setex(cacheKey, 3600, JSON.stringify(text));
       
       return this.replaceVariables(text, variables);
@@ -114,7 +106,6 @@ class LanguageMiddleware {
     }
   }
   
-  // Replace variables in translation
   static replaceVariables(text, variables) {
     if (!text || typeof text !== 'string') return text;
     
@@ -127,7 +118,6 @@ class LanguageMiddleware {
     return text;
   }
   
-  // Batch translate multiple keys
   static async batchTranslate(keys, language = 'en') {
     try {
       const translations = await Translation.find({ 
@@ -139,7 +129,6 @@ class LanguageMiddleware {
         result[t.key] = t.getTranslation(language.toLowerCase());
       });
       
-      // Add missing keys
       keys.forEach(key => {
         if (!result[key]) {
           result[key] = key;
@@ -156,7 +145,6 @@ class LanguageMiddleware {
     }
   }
   
-  // Get translations for module
   static async getModuleTranslations(module, language = 'en') {
     try {
       const lang = language.toLowerCase();
@@ -174,7 +162,6 @@ class LanguageMiddleware {
         result[t.key] = t.getTranslation(lang);
       });
       
-      // Cache for 30 minutes
       await cache.setex(cacheKey, 1800, JSON.stringify(result));
       
       return result;

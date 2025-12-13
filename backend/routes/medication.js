@@ -1,14 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const medicationService = require('../services/medicationService');
-const diseaseDetectionService = require('../services/diseaseDetectionService');
+const DiseaseDetectionService = require('../services/DiseaseDetectionService');
 const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const logger = require('../utils/logger');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Get treatment for specific disease
 router.get('/treat/:diseaseName', async (req, res) => {
   try {
     const { diseaseName } = req.params;
@@ -35,7 +34,6 @@ router.get('/treat/:diseaseName', async (req, res) => {
   }
 });
 
-// Detect disease and get medication (from image)
 router.post('/detect-and-treat', authenticateToken, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -48,30 +46,31 @@ router.post('/detect-and-treat', authenticateToken, upload.single('image'), asyn
     const language = req.headers['accept-language']?.split(',')[0]?.split('-')[0] || 'en';
     const { cropType, severity } = req.body;
 
-    // Detect disease
-    const detectionResult = await diseaseDetectionService.detectDisease(
-      req.file.buffer,
-      language
+    const detectionResult = await DiseaseDetectionService.detectDiseaseFromImage(
+      req.file.buffer
     );
 
-    if (!detectionResult || !detectionResult.detection) {
+    if (!detectionResult || !detectionResult.primaryDisease) {
       return res.status(404).json({
         success: false,
         error: 'Could not detect disease in image'
       });
     }
 
-    // Get medication recommendations
     const medication = await medicationService.getMedicationRecommendations(
-      detectionResult.detection.class,
+      detectionResult.primaryDisease.name,
       cropType || 'general',
-      severity || (detectionResult.detection.confidence > 0.8 ? 'high' : 'medium'),
+      severity || (detectionResult.confidence > 80 ? 'high' : 'medium'),
       { language }
     );
 
     res.json({
       success: true,
-      detection: detectionResult.detection,
+      detection: {
+        class: detectionResult.primaryDisease.name,
+        confidence: detectionResult.confidence / 100
+      },
+      diseaseInfo: detectionResult.primaryDisease,
       medication: medication
     });
   } catch (error) {
@@ -83,7 +82,6 @@ router.post('/detect-and-treat', authenticateToken, upload.single('image'), asyn
   }
 });
 
-// Get emergency helpline
 router.get('/emergency/helpline', async (req, res) => {
   try {
     const contacts = medicationService.getEmergencyContacts();
@@ -99,13 +97,11 @@ router.get('/emergency/helpline', async (req, res) => {
   }
 });
 
-// Get product recommendations (placeholder)
 router.get('/products/:diseaseName', async (req, res) => {
   try {
     const { diseaseName } = req.params;
     const { state, district } = req.query;
 
-    // Mock product data - can be integrated with actual APIs
     const products = {
       online: [
         {

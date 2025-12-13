@@ -3,19 +3,12 @@ const axios = require('axios');
 const logger = require('../utils/logger');
 const marketPriceAPIService = require('./marketPriceAPIService');
 
-/**
- * Real-time Analytics Service
- * Provides comprehensive analytics with real-time data
- */
 class AnalyticsService {
   constructor() {
     this.cache = new Map();
     this.updateInterval = 5 * 60 * 1000; // 5 minutes
   }
 
-  /**
-   * Get comprehensive dashboard analytics
-   */
   async getDashboardAnalytics(userId) {
     const cacheKey = `dashboard_${userId}`;
     const cached = this.cache.get(cacheKey);
@@ -49,15 +42,11 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get user statistics
-   */
   async getUserStatistics(userId) {
     try {
       const User = mongoose.model('User');
       const user = await User.findById(userId);
       
-      // Try to get counts from models
       let totalRecommendations = 0;
       let totalDiseases = 0;
       let totalSchemes = 0;
@@ -91,9 +80,6 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get system statistics
-   */
   async getSystemStatistics() {
     try {
       let totalUsers = 0;
@@ -132,9 +118,6 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get crop analytics
-   */
   async getCropAnalytics() {
     try {
       let topCrops = [];
@@ -159,9 +142,6 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get disease analytics
-   */
   async getDiseaseAnalytics() {
     try {
       let commonDiseases = [];
@@ -186,12 +166,8 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get market analytics with real-time data
-   */
   async getMarketAnalytics() {
     try {
-      // Fetch real-time market data
       const marketData = await this.fetchRealTimeMarketData();
       
       return {
@@ -207,12 +183,8 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Fetch real-time market data
-   */
   async fetchRealTimeMarketData() {
     try {
-      // Use market price API service
       const commodities = ['rice', 'wheat', 'tomato', 'potato', 'onion', 'cotton'];
       const allPrices = [];
       
@@ -227,7 +199,6 @@ class AnalyticsService {
         }
       }
 
-      // Group by commodity
       const commodityData = {};
       allPrices.forEach(price => {
         const comm = price.commodity.toLowerCase();
@@ -263,9 +234,6 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get weather analytics
-   */
   async getWeatherAnalytics() {
     try {
       return {
@@ -280,9 +248,6 @@ class AnalyticsService {
     }
   }
 
-  /**
-   * Get predictions
-   */
   async getPredictions() {
     return {
       cropYield: await this.predictCropYield(),
@@ -293,7 +258,6 @@ class AnalyticsService {
     };
   }
 
-  // Helper methods
   calculatePriceChange(prices) {
     if (prices.length < 2) return 0;
     const first = prices[0];
@@ -313,7 +277,6 @@ class AnalyticsService {
   }
 
   async getRecentActivity(userId) {
-    // Return recent activity
     return [
       'Crop recommendation (Rice)',
       'Disease detection (Leaf Blight)',
@@ -582,5 +545,18 @@ class AnalyticsService {
 }
 
 module.exports = new AnalyticsService();
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

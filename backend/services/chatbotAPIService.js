@@ -1,21 +1,12 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 
-/**
- * Real-time Chatbot API Service
- * Integrates with AI chatbot APIs for intelligent responses
- */
 class ChatbotAPIService {
   constructor() {
-    // AI Chatbot API endpoints
     this.apis = {
-      // OpenAI-compatible API
       openai: process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions',
-      // Alternative: Hugging Face
       huggingface: 'https://api-inference.huggingface.co/models',
-      // Alternative: Custom AI service
       custom: process.env.CUSTOM_AI_API_URL,
-      // Fallback to local NLP
       fallback: true
     };
     
@@ -24,9 +15,6 @@ class ChatbotAPIService {
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
   }
 
-  /**
-   * Get response from OpenAI-compatible API
-   */
   async getOpenAIResponse(message, context = {}) {
     if (!this.apiKey) {
       return null;
@@ -81,9 +69,6 @@ For Indian context, consider regional variations and local practices.`;
     }
   }
 
-  /**
-   * Get response from Hugging Face API
-   */
   async getHuggingFaceResponse(message, context = {}) {
     try {
       const model = 'microsoft/DialoGPT-medium';
@@ -119,9 +104,6 @@ For Indian context, consider regional variations and local practices.`;
     }
   }
 
-  /**
-   * Get intelligent response using real-time AI APIs
-   */
   async getAIResponse(message, context = {}) {
     const cacheKey = `${message}_${context.language || 'en'}`;
     const cached = this.cache.get(cacheKey);
@@ -131,21 +113,17 @@ For Indian context, consider regional variations and local practices.`;
       return cached.data;
     }
 
-    // Try OpenAI first
     let response = await this.getOpenAIResponse(message, context);
     
-    // If OpenAI fails, try Hugging Face
     if (!response) {
       response = await this.getHuggingFaceResponse(message, context);
     }
     
-    // If both fail, return null to use local NLP
     if (!response) {
       logger.info('AI APIs unavailable, using local NLP');
       return null;
     }
 
-    // Cache the response
     this.cache.set(cacheKey, {
       data: response,
       timestamp: Date.now()
@@ -154,12 +132,8 @@ For Indian context, consider regional variations and local practices.`;
     return response;
   }
 
-  /**
-   * Process image for disease detection
-   */
   async detectDiseaseFromImage(imageBase64, context = {}) {
     try {
-      // Try OpenAI Vision API
       if (this.apiKey && this.apis.openai) {
         const response = await axios.post(
           this.apis.openai.replace('/chat/completions', '/chat/completions'),

@@ -40,6 +40,9 @@ import {
 } from '@mui/icons-material';
 import api from '../services/api';
 import { useTheme } from '@mui/material/styles';
+import logger from '../services/logger';
+import DataQualityIndicator from '../components/common/DataQualityIndicator';
+import LoadingState from '../components/common/LoadingState';
 
 export default function CropRecommendation() {
   const theme = useTheme();
@@ -53,7 +56,6 @@ export default function CropRecommendation() {
   const [locationSearchResults, setLocationSearchResults] = useState([]);
   const [locationSearchLoading, setLocationSearchLoading] = useState(false);
 
-  // Get coordinates from URL params if available
   useEffect(() => {
     const lat = searchParams.get('lat');
     const lng = searchParams.get('lng');
@@ -67,7 +69,6 @@ export default function CropRecommendation() {
     }
   }, [searchParams]);
 
-  // Get user's current location
   const getCurrentLocation = useCallback(() => {
     setLocationLoading(true);
     setLocationError(null);
@@ -90,8 +91,7 @@ export default function CropRecommendation() {
         setLocationLoading(false);
       },
       (error) => {
-        console.error('Location error:', error);
-        // Fallback to IP-based location
+        logger.error('Location error', error, { service: 'CropRecommendation' });
         fetch('https://ipapi.co/json/')
           .then(res => res.json())
           .then(data => {
@@ -118,14 +118,12 @@ export default function CropRecommendation() {
     );
   }, []);
 
-  // Load location on mount if not in URL
   useEffect(() => {
     if (!location && !searchParams.get('lat')) {
       getCurrentLocation();
     }
   }, [location, searchParams, getCurrentLocation]);
 
-  // Location search function
   const searchLocation = useCallback(async (query) => {
     if (!query || query.length < 3) {
       setLocationSearchResults([]);
@@ -144,14 +142,13 @@ export default function CropRecommendation() {
         setLocationSearchResults([]);
       }
     } catch (error) {
-      console.error('Location search error:', error);
+      logger.error('Location search error', error, { query: locationSearchQuery });
       setLocationSearchResults([]);
     } finally {
       setLocationSearchLoading(false);
     }
   }, []);
 
-  // Handle location selection from search
   const handleLocationSelect = (selectedLocation) => {
     if (selectedLocation && selectedLocation.latitude && selectedLocation.longitude) {
       setLocation({
@@ -168,7 +165,6 @@ export default function CropRecommendation() {
     }
   };
 
-  // Fetch crop recommendations
   const { data: recommendations, isLoading: recommendationsLoading, error: recommendationsError, refetch } = useQuery({
     queryKey: ['cropRecommendations', location?.lat, location?.lng],
     queryFn: async () => {
@@ -189,7 +185,6 @@ export default function CropRecommendation() {
     staleTime: 5 * 60 * 1000
   });
 
-  // Handle manual coordinate submission
   const handleManualSubmit = () => {
     const lat = parseFloat(manualCoords.lat);
     const lng = parseFloat(manualCoords.lng);
@@ -210,13 +205,23 @@ export default function CropRecommendation() {
   const weatherInfo = recommendationData?.weather || recommendationData?.conditions || {};
   const soilInfo = recommendationData?.soil || {};
 
+  useEffect(() => {
+    if (recommendations && crops.length > 0) {
+      logger.info('Crop recommendations generated', {
+        count: crops.length,
+        location: location,
+        modelUsed: recommendations._quality?.source || 'rule-based',
+        confidence: recommendations._quality?.confidence
+      });
+    }
+  }, [recommendations, crops, location]);
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
         Crop Recommendation
       </Typography>
 
-      {/* Location Section */}
       <Paper sx={{ p: 3, mb: 3, bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Location</Typography>
@@ -240,7 +245,6 @@ export default function CropRecommendation() {
           </Box>
         </Box>
 
-        {/* Location Search Bar */}
         <Box sx={{ mb: 2 }}>
           <Autocomplete
             fullWidth
@@ -355,7 +359,6 @@ export default function CropRecommendation() {
           </Alert>
         )}
 
-        {/* Manual Coordinate Input */}
         <Box sx={{ mt: 3, pt: 2, borderTop: 1, borderColor: 'divider' }}>
           <Typography variant="subtitle2" gutterBottom>
             Or Enter Coordinates Manually
@@ -397,7 +400,6 @@ export default function CropRecommendation() {
         </Box>
       </Paper>
 
-      {/* Weather & Soil Info */}
       {(weatherInfo.temperature || soilInfo.soilType) && (
         <Grid container spacing={3} sx={{ mb: 3 }}>
           {weatherInfo.temperature && (
@@ -494,20 +496,26 @@ export default function CropRecommendation() {
         </Grid>
       )}
 
-      {/* Recommendations */}
-      {recommendationsLoading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
+      {/* Data Quality Indicator */}
+      {recommendations && recommendations._quality && (
+        <Box sx={{ mb: 3 }}>
+          <DataQualityIndicator 
+            data={recommendations}
+            showDetails={true}
+            onRefresh={() => refetch()}
+          />
         </Box>
       )}
 
-      {recommendationsError && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {recommendationsError.message || 'Failed to fetch crop recommendations. Please try again.'}
-        </Alert>
-      )}
-
-      {!recommendationsLoading && !recommendationsError && crops.length > 0 && (
+      <LoadingState
+        isLoading={recommendationsLoading}
+        error={recommendationsError}
+        retry={() => refetch()}
+        dataLength={crops.length}
+        type="card"
+        emptyMessage="No crop recommendations available for this location. Please try a different location."
+      >
+      {crops.length > 0 && (
         <Paper sx={{ p: 3, bgcolor: 'background.paper' }}>
           <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>
             Recommended Crops
@@ -531,7 +539,6 @@ export default function CropRecommendation() {
                       )}
                     </Box>
 
-                    {/* Detailed Scoring Breakdown */}
                     {crop.scoringBreakdown && (
                       <Accordion sx={{ mb: 2, bgcolor: 'background.default' }}>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -544,7 +551,6 @@ export default function CropRecommendation() {
                         </AccordionSummary>
                         <AccordionDetails>
                           <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
-                            {/* Soil Compatibility */}
                             {crop.scoringBreakdown.soilCompatibility && (
                               <Box sx={{ mb: 2 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -560,7 +566,7 @@ export default function CropRecommendation() {
                                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                                   {crop.scoringBreakdown.soilCompatibility.details?.description || ''}
                                 </Typography>
-                                {crop.scoringBreakdown.soilCompatibility.details?.details && (
+                                {crop.scoringBreakdown.soilCompatibility.details?.details && Array.isArray(crop.scoringBreakdown.soilCompatibility.details.details) && (
                                   <List dense>
                                     {crop.scoringBreakdown.soilCompatibility.details.details.map((detail, idx) => (
                                       <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
@@ -575,7 +581,6 @@ export default function CropRecommendation() {
                               </Box>
                             )}
 
-                            {/* Weather Alignment */}
                             {crop.scoringBreakdown.weatherAlignment && (
                               <Box sx={{ mb: 2 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -591,7 +596,7 @@ export default function CropRecommendation() {
                                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                                   {crop.scoringBreakdown.weatherAlignment.details?.description || ''}
                                 </Typography>
-                                {crop.scoringBreakdown.weatherAlignment.details?.details && (
+                                {crop.scoringBreakdown.weatherAlignment.details?.details && Array.isArray(crop.scoringBreakdown.weatherAlignment.details.details) && (
                                   <List dense>
                                     {crop.scoringBreakdown.weatherAlignment.details.details.map((detail, idx) => (
                                       <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
@@ -606,7 +611,6 @@ export default function CropRecommendation() {
                               </Box>
                             )}
 
-                            {/* Economic Viability */}
                             {crop.scoringBreakdown.economicViability && (
                               <Box sx={{ mb: 2 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -622,7 +626,7 @@ export default function CropRecommendation() {
                                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                                   {crop.scoringBreakdown.economicViability.details?.description || ''}
                                 </Typography>
-                                {crop.scoringBreakdown.economicViability.details?.details && (
+                                {crop.scoringBreakdown.economicViability.details?.details && Array.isArray(crop.scoringBreakdown.economicViability.details.details) && (
                                   <List dense>
                                     {crop.scoringBreakdown.economicViability.details.details.map((detail, idx) => (
                                       <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
@@ -637,7 +641,6 @@ export default function CropRecommendation() {
                               </Box>
                             )}
 
-                            {/* Risk Factor */}
                             {crop.scoringBreakdown.riskFactor && (
                               <Box sx={{ mb: 2 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -653,7 +656,7 @@ export default function CropRecommendation() {
                                 <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                                   {crop.scoringBreakdown.riskFactor.details?.description || ''}
                                 </Typography>
-                                {crop.scoringBreakdown.riskFactor.details?.details && (
+                                {crop.scoringBreakdown.riskFactor.details?.details && Array.isArray(crop.scoringBreakdown.riskFactor.details.details) && (
                                   <List dense>
                                     {crop.scoringBreakdown.riskFactor.details.details.map((detail, idx) => (
                                       <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
@@ -672,7 +675,6 @@ export default function CropRecommendation() {
                       </Accordion>
                     )}
 
-                    {/* Reasons for Recommendation (Fallback) */}
                     {!crop.scoringBreakdown && crop.reasons && (Array.isArray(crop.reasons) ? crop.reasons : [crop.reasons]).length > 0 && (
                       <Accordion sx={{ mb: 2, bgcolor: 'background.default' }}>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -701,8 +703,7 @@ export default function CropRecommendation() {
                       </Accordion>
                     )}
 
-                    {/* Advantages */}
-                    {crop.advantages && crop.advantages.length > 0 && (
+                    {crop.advantages && Array.isArray(crop.advantages) && crop.advantages.length > 0 && (
                       <Box sx={{ mb: 2 }}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <TrendingUpIcon fontSize="small" color="primary" />
@@ -804,11 +805,7 @@ export default function CropRecommendation() {
         </Paper>
       )}
 
-      {!recommendationsLoading && !recommendationsError && crops.length === 0 && location && (
-        <Alert severity="info">
-          No crop recommendations available for this location. Please try a different location.
-        </Alert>
-      )}
+      </LoadingState>
     </Container>
   );
 }

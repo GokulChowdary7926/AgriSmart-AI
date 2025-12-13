@@ -4,12 +4,22 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 const userSchema = new mongoose.Schema({
-  // Basic Information
   name: {
     type: String,
     required: [true, 'Please provide name'],
     trim: true,
     maxlength: [50, 'Name cannot be more than 50 characters']
+  },
+  
+  username: {
+    type: String,
+    required: [true, 'Please provide username'],
+    unique: true,
+    trim: true,
+    lowercase: true,
+    minlength: [3, 'Username must be at least 3 characters'],
+    maxlength: [30, 'Username cannot be more than 30 characters'],
+    match: [/^[a-z0-9_]+$/, 'Username can only contain lowercase letters, numbers, and underscores']
   },
   
   email: {
@@ -30,11 +40,7 @@ const userSchema = new mongoose.Schema({
     validate: {
       validator: function(v) {
         if (!v) return false;
-        // Remove +, spaces, and dashes
         const cleaned = v.replace(/[\s+\-]/g, '');
-        // Check if it's a valid Indian phone number:
-        // 1. 10 digits starting with 6-9 (e.g., 8682922431)
-        // 2. 12 digits starting with 91 followed by 10 digits starting with 6-9 (e.g., 918682922431 from +918682922431)
         const tenDigitPattern = /^[6-9]\d{9}$/; // 10 digits starting with 6-9
         const twelveDigitPattern = /^91[6-9]\d{9}$/; // 91 followed by 10 digits starting with 6-9 (12 total)
         
@@ -44,10 +50,7 @@ const userSchema = new mongoose.Schema({
     },
     set: function(v) {
       if (!v) return v;
-      // Store phone number without + and spaces for consistency
       const cleaned = v.replace(/[\s+\-]/g, '');
-      // Normalize: if it's 12 digits starting with 91, store as is (91 + 10 digits)
-      // If it's 10 digits, store as is
       return cleaned;
     }
   },
@@ -59,14 +62,12 @@ const userSchema = new mongoose.Schema({
     select: false
   },
   
-  // User Role
   role: {
     type: String,
     enum: ['farmer', 'expert', 'admin', 'agent', 'seller', 'dealer'],
     default: 'farmer'
   },
   
-  // Farmer Specific Fields
   farmerProfile: {
     location: {
       state: String,
@@ -100,7 +101,6 @@ const userSchema = new mongoose.Schema({
     education: String
   },
   
-  // Preferences
   preferences: {
     language: {
       type: String,
@@ -125,7 +125,6 @@ const userSchema = new mongoose.Schema({
     }
   },
   
-  // Authentication
   isVerified: {
     phone: { type: Boolean, default: false },
     email: { type: Boolean, default: false },
@@ -137,7 +136,6 @@ const userSchema = new mongoose.Schema({
   passwordResetToken: String,
   passwordResetExpires: Date,
   
-  // Activity Tracking
   lastLogin: Date,
   loginCount: { type: Number, default: 0 },
   devices: [{
@@ -146,7 +144,6 @@ const userSchema = new mongoose.Schema({
     lastActive: Date
   }],
   
-  // Timestamps
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 }, {
@@ -155,14 +152,13 @@ const userSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes
 userSchema.index({ email: 1 });
 userSchema.index({ phone: 1 });
+userSchema.index({ username: 1 });
 userSchema.index({ 'farmerProfile.location.coordinates': '2dsphere' });
 userSchema.index({ role: 1 });
 userSchema.index({ createdAt: -1 });
 
-// Password encryption middleware
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
@@ -175,12 +171,10 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Password comparison method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Generate JWT token
 userSchema.methods.generateAuthToken = function() {
   return jwt.sign(
     { 
@@ -193,7 +187,6 @@ userSchema.methods.generateAuthToken = function() {
   );
 };
 
-// Generate password reset token
 userSchema.methods.generatePasswordResetToken = function() {
   const resetToken = crypto.randomBytes(32).toString('hex');
   
@@ -207,7 +200,6 @@ userSchema.methods.generatePasswordResetToken = function() {
   return resetToken;
 };
 
-// Virtual for full address
 userSchema.virtual('fullAddress').get(function() {
   const loc = this.farmerProfile?.location;
   if (!loc) return '';
@@ -217,7 +209,6 @@ userSchema.virtual('fullAddress').get(function() {
     .join(', ');
 });
 
-// Static methods
 userSchema.statics.findByPhone = function(phone) {
   return this.findOne({ phone });
 };

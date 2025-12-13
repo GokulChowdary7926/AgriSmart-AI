@@ -51,7 +51,6 @@ export default function Layout({ children }) {
   const location = useLocation();
   const muiTheme = useMUITheme();
   
-  // Force re-render on language change
   const [, forceUpdate] = useState(0);
   
   useEffect(() => {
@@ -59,11 +58,9 @@ export default function Layout({ children }) {
       forceUpdate(prev => prev + 1);
     };
     
-    // Listen to multiple events to catch all language changes
     window.addEventListener('languagechange', handleLanguageChange);
     window.addEventListener('i18n:languageChanged', handleLanguageChange);
     
-    // Listen to i18n language changes
     if (i18n) {
       i18n.on('languageChanged', handleLanguageChange);
     }
@@ -77,7 +74,6 @@ export default function Layout({ children }) {
     };
   }, []);
   
-  // Menu items with translation keys
   const menuItems = [
     { textKey: 'nav.dashboard', icon: <DashboardIcon />, path: '/dashboard' },
     { textKey: 'nav.crops', icon: <CropIcon />, path: '/crops' },
@@ -89,7 +85,7 @@ export default function Layout({ children }) {
     { textKey: 'nav.chatbot', icon: <ChatIcon />, path: '/chat' },
     { textKey: 'nav.agriChat', icon: <ChatIcon />, path: '/agri-chat' },
     { textKey: 'nav.analytics', icon: <AnalyticsIcon />, path: '/analytics' },
-    { textKey: 'nav.map', icon: <MapIcon />, path: '/agri-map' },
+    { textKey: 'nav.agriMap', icon: <MapIcon />, path: '/agri-map' },
   ];
 
   const settingsItems = [
