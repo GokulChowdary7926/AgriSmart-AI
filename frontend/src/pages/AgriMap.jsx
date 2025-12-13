@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Container,
   Paper,
@@ -101,7 +100,6 @@ L.Icon.Default = createDefaultIcon();
 const AgriMap = () => {
   const { t, language } = useLanguage();
   const { enqueueSnackbar } = useSnackbar();
-  const navigate = useNavigate();
   
   const [loading, setLoading] = useState(true);
   const [mapLoading, setMapLoading] = useState(false);
@@ -302,7 +300,7 @@ const AgriMap = () => {
       setFarmData(getMockFarmData(latitude, longitude));
       
     } catch (error) {
-      console.error('Error loading map data:', error);
+      logger.error('Error loading map data', error);
       
       setCropData(getMockCropData());
       setFarmData(getMockFarmData(latitude, longitude));
@@ -581,7 +579,7 @@ const AgriMap = () => {
         enqueueSnackbar(t('map.searchFailed') || 'No results found', { variant: 'warning' });
       }
     } catch (error) {
-      console.error('Geocode error:', error);
+      logger.error('Geocode error', error);
       enqueueSnackbar(t('map.searchFailed') || 'Search failed', { variant: 'error' });
     } finally {
       setAddressLoading(false);

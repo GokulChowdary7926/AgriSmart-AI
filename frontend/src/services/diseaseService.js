@@ -159,7 +159,7 @@ class DiseaseService {
       const response = await api.get(`/diseases/${diseaseId}`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching disease by ID:', error);
+      logger.error('Error fetching disease by ID', error);
       throw error;
     }
   }
@@ -169,7 +169,7 @@ class DiseaseService {
       const response = await api.get('/diseases/search', { params });
       return response.data.data;
     } catch (error) {
-      console.error('Error searching diseases:', error);
+      logger.error('Error searching diseases', error);
       throw error;
     }
   }
@@ -189,7 +189,7 @@ class DiseaseService {
       const response = await api.get(`/diseases/crop/${encodeURIComponent(cropName)}`);
       return response.data.data;
     } catch (error) {
-      console.error('Error fetching diseases by crop:', error);
+      logger.error('Error fetching diseases by crop', error);
       throw error;
     }
   }
@@ -199,7 +199,7 @@ class DiseaseService {
       const response = await api.get('/diseases', { params });
       return response.data;
     } catch (error) {
-      console.error('Error fetching diseases:', error);
+      logger.error('Error fetching diseases', error);
       throw error;
     }
   }

@@ -62,9 +62,9 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
     setResult(null);
     
     try {
-      console.log('Starting disease detection...');
+      logger.info('Starting disease detection');
       const detectionResult = await diseaseService.detectDisease(image);
-      console.log('Detection result:', detectionResult);
+      logger.debug('Detection result', { result: detectionResult });
       
       setResult(detectionResult);
       if (onDetectionComplete) {

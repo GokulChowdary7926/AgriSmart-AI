@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Enhanced Crop Recommendation ML Model
 Uses trained models from ml-pipeline with real-time data integration

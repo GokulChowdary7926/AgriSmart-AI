@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Market Price Prediction Model Training Script
 Works with or without TensorFlow

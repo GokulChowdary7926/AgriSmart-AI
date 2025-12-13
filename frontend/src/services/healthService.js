@@ -55,6 +55,7 @@ export const checkAPIHealth = async () => {
 
 export const startHealthMonitoring = (callback, interval = 5 * 60 * 1000) => {
   let isRunning = true;
+  let timeoutId = null;
   
   const checkHealth = async () => {
     if (!isRunning) return;
@@ -88,7 +89,7 @@ export const startHealthMonitoring = (callback, interval = 5 * 60 * 1000) => {
     }
     
     if (isRunning) {
-      setTimeout(checkHealth, interval);
+      timeoutId = setTimeout(checkHealth, interval);
     }
   };
   
@@ -96,6 +97,10 @@ export const startHealthMonitoring = (callback, interval = 5 * 60 * 1000) => {
   
   return () => {
     isRunning = false;
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
   };
 };
 
@@ -123,6 +128,7 @@ export default {
   getHealthSummary,
   checkEndpointHealth
 };
+
 
 
 

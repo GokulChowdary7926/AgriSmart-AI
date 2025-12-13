@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const translationSchema = new mongoose.Schema({
   key: {
@@ -275,7 +276,7 @@ translationSchema.statics.initializeCommonTranslations = async function() {
     );
   }
 
-  console.log('✅ Common translations initialized');
+  logger.info('Common translations initialized');
 };
 
 module.exports = mongoose.model('Translation', translationSchema);

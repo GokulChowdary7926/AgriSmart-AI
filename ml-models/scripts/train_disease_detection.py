@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Disease Detection Model Training Script
 Works with or without TensorFlow

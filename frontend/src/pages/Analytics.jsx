@@ -41,6 +41,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import api from '../services/api';
+import logger from '../services/logger';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
 
@@ -80,7 +81,7 @@ const Analytics = () => {
         });
       }
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      logger.error('Error fetching dashboard data', error);
       setDashboardData({
         summary: { metrics: {} },
         marketTrends: [],
@@ -122,7 +123,7 @@ const Analytics = () => {
         setHistoricalData([]);
       }
     } catch (error) {
-      console.error('Error fetching historical data:', error);
+      logger.error('Error fetching historical data', error);
       setHistoricalData([]);
     }
   };
@@ -136,7 +137,7 @@ const Analytics = () => {
         setInsights([]);
       }
     } catch (error) {
-      console.error('Error fetching insights:', error);
+      logger.error('Error fetching insights', error);
       setInsights([]);
     }
   };
@@ -208,7 +209,7 @@ const Analytics = () => {
             onClick={() => {
               const newItem = prompt('Add new item:');
               if (newItem) {
-                console.log('Adding:', newItem);
+                logger.debug('Adding item', { item: newItem });
               }
             }}
             title="Add New Item"

@@ -49,7 +49,7 @@ export default function Dashboard() {
         const response = await api.get('/analytics/dashboard');
         return response.data.data || {};
       } catch (error) {
-        console.error('Failed to fetch analytics:', error);
+        logger.error('Failed to fetch analytics', error);
         return {};
       }
     },
@@ -65,7 +65,7 @@ export default function Dashboard() {
         const response = await api.get('/crops/analytics');
         return response.data.data || {};
       } catch (error) {
-        console.error('Failed to fetch crops:', error);
+        logger.error('Failed to fetch crops', error);
         return {};
       }
     },

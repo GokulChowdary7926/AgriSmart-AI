@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Crop Recommendation ML Model
 Uses trained model or rule-based fallback
@@ -112,6 +111,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

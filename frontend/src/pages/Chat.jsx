@@ -166,6 +166,7 @@ export default function Chat() {
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const streamIntervalRef = useRef(null);
 
   useEffect(() => {
     initializeChat();
@@ -180,6 +181,15 @@ export default function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, typing]);
+
+  useEffect(() => {
+    return () => {
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -249,11 +259,15 @@ export default function Chat() {
         setSessions(response.data.sessions || []);
       }
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      logger.error('Failed to load sessions', error);
     }
   };
 
   const streamResponse = (fullText, messageId) => {
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+    }
+    
     setStreamingMessage(messageId);
     setStreamingContent('');
     
@@ -261,7 +275,7 @@ export default function Chat() {
     const words = fullText.split(/(\s+)/);
     let currentText = '';
     
-    const streamInterval = setInterval(() => {
+    streamIntervalRef.current = setInterval(() => {
       if (currentIndex < words.length) {
         const wordsToAdd = Math.min(1 + Math.floor(Math.random() * 3), words.length - currentIndex);
         for (let i = 0; i < wordsToAdd && currentIndex < words.length; i++) {
@@ -270,7 +284,10 @@ export default function Chat() {
         }
         setStreamingContent(currentText);
       } else {
-        clearInterval(streamInterval);
+        if (streamIntervalRef.current) {
+          clearInterval(streamIntervalRef.current);
+          streamIntervalRef.current = null;
+        }
         const botMsg = {
           id: messageId,
           role: 'assistant',
@@ -284,7 +301,7 @@ export default function Chat() {
         setStreamingMessage(null);
         setStreamingContent('');
       }
-    }, 30); // 30ms per chunk for smooth streaming
+    }, 30);
   };
 
   const handleSendMessage = async (messageText = message) => {

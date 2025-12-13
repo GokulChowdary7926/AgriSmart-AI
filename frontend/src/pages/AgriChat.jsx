@@ -35,6 +35,7 @@ import { io } from 'socket.io-client';
 import { useAuth } from '../contexts/AuthContext';
 import { useSnackbar } from 'notistack';
 import api from '../services/api';
+import logger from '../services/logger';
 
 export default function AgriChat() {
   const { user } = useAuth();
@@ -153,7 +154,7 @@ export default function AgriChat() {
 
       newSocket.on('disconnect', (reason) => {
         if (isMounted) {
-          console.log('Socket disconnected:', reason);
+          logger.info('Socket disconnected', { reason });
           setIsConnected(false);
           if (reason === 'io server disconnect') {
             setTimeout(() => {
@@ -247,7 +248,7 @@ export default function AgriChat() {
       const response = await api.get(`/agri-chat/search?q=${encodeURIComponent(query)}`);
       setSearchResults(response.data.data || []);
     } catch (error) {
-      console.error('Error searching users:', error);
+      logger.error('Error searching users', error);
     }
   }, []);
 

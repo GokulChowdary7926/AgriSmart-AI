@@ -183,7 +183,7 @@ export const getCropRecommendationWithAutoLocation = async () => {
     return response.data;
     
   } catch (error) {
-    console.error('Auto location recommendation error:', error);
+    logger.error('Auto location recommendation error', error);
     
     const response = await api.post('/crops/recommend', {
       latitude: 28.6139,

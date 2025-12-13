@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Train Crop Recommendation ML Model
 Uses XGBoost on crop recommendation dataset
@@ -114,6 +113,7 @@ if __name__ == "__main__":
     else:
         print("\n❌ Model training failed!")
         exit(1)
+
 
 
 

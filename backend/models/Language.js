@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const languageSchema = new mongoose.Schema({
   code: {
@@ -137,7 +138,7 @@ languageSchema.statics.initializeLanguages = async function() {
     );
   }
 
-  console.log('✅ Indian languages initialized');
+  logger.info('Indian languages initialized');
 };
 
 module.exports = mongoose.model('Language', languageSchema);
