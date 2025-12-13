@@ -44,7 +44,7 @@ A full-stack agricultural intelligence platform providing real-time crop recomme
   - Planting window recommendations
   - Risk assessment with explanations
 
-📖 **Architecture Documentation:** See [CROP_RECOMMENDATION_ARCHITECTURE.md](./CROP_RECOMMENDATION_ARCHITECTURE.md) for detailed system architecture, alternative implementations, and best practices.
+
 
 ### 🌤️ **Weather Services**
 - **Apple Weather-Style UI**: Beautiful, modern weather interface
@@ -152,10 +152,6 @@ A full-stack agricultural intelligence platform providing real-time crop recomme
 - **ML Types:** Gradient Boosting, Bagging, Linear Models
 - **DL Types:** CNN, YOLO, LSTM
 - **Tasks:** Classification, Regression, Object Detection, Time Series Forecasting
-
-📖 **Detailed Documentation:** 
-- [ML_DL_MODELS.md](./ML_DL_MODELS.md) - Complete model architectures, training methods, and datasets
-- [CROP_RECOMMENDATION_ARCHITECTURE.md](./CROP_RECOMMENDATION_ARCHITECTURE.md) - Comprehensive architecture documentation including alternative Python/FastAPI patterns
 
 ---
 
