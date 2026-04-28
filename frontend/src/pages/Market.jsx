@@ -227,11 +227,15 @@ export default function Market() {
   const normalizeStateName = (value) => {
     const raw = String(value || '').trim();
     if (!raw) return '';
-    const compact = raw.toLowerCase().replace(/\s+/g, '');
+    const compact = raw
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+      .trim();
     const aliasMap = {
       தமிழ்நாடு: 'Tamil Nadu',
       tamilnadu: 'Tamil Nadu',
       tamilnaduindia: 'Tamil Nadu',
+      tn: 'Tamil Nadu',
       கேரளா: 'Kerala',
       kerala: 'Kerala',
       கர்நாடகா: 'Karnataka',
@@ -294,7 +298,7 @@ export default function Market() {
       let filteredPrices = filterByDateRange(actualPrices, currentRange);
 
       if (normalizedSelectedState) {
-        filteredPrices = filteredPrices.filter(item => {
+        const stateFilteredPrices = filteredPrices.filter(item => {
           const itemState = normalizeStateName(item.state || item.market?.state || item.market?.location || '');
           const stateLower = normalizedSelectedState.toLowerCase();
           const itemStateLower = String(itemState || '').toLowerCase();
@@ -302,6 +306,16 @@ export default function Market() {
                  itemStateLower.includes(stateLower) ||
                  stateLower.includes(itemStateLower);
         });
+
+        // Avoid blank market tables when provider state names differ slightly.
+        if (stateFilteredPrices.length > 0) {
+          filteredPrices = stateFilteredPrices;
+        } else {
+          logger.warn('State filter yielded no rows; returning unfiltered commodity set', {
+            requestedState: normalizedSelectedState,
+            totalBeforeFilter: filteredPrices.length
+          });
+        }
       }
 
       logger.info('Market prices fetched', {
@@ -915,7 +929,7 @@ export default function Market() {
                     dataKey="average"
                     stroke="#4caf50"
                     strokeWidth={2}
-                    name="Average Price"
+                    name={t('market.averagePriceLegend', 'Average Price')}
                   />
                 </LineChart>
               </ResponsiveContainer>

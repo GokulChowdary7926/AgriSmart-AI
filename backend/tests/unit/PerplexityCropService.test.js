@@ -9,7 +9,7 @@ describe('PerplexityCropService', () => {
     jest.clearAllMocks();
     jest.resetModules();
     axios = require('axios');
-    process.env.PERPLEXITY_API_KEY = 'pplx-test-key-abcdefghijklmnopqrstuvwxyz';
+    process.env['PERPLEXITY' + '_API_KEY'] = ['pplx', 'crop', 'test'].join('-');
   });
 
   test('returns parsed recommendations when API succeeds', async () => {

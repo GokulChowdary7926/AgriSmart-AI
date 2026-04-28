@@ -455,16 +455,16 @@ class AuthController {
 
   static async refreshToken(req, res) {
     try {
-      if (!process.env.JWT_SECRET) {
-        return serverError(res, 'Authentication misconfigured');
-      }
-
       const body = req.body || {};
       const headerToken = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
       const candidateToken = body.refreshToken || body.refresh_token || body.token || headerToken;
 
       if (!candidateToken) {
         return badRequest(res, 'Refresh token is required');
+      }
+
+      if (!process.env.JWT_SECRET) {
+        return serverError(res, 'Authentication misconfigured');
       }
 
       const authService = require('../services/AuthService');
