@@ -118,6 +118,7 @@ export const filterByDateRange = (items, range) => {
 };
 
 export default function Market() {
+  const TAMIL_NADU_STATE = 'Tamil Nadu';
   const { t, language } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const [commodity, setCommodity] = useState('');
@@ -125,7 +126,7 @@ export default function Market() {
   const [tabValue, setTabValue] = useState(0);
   const [expandedUpdates, setExpandedUpdates] = useState({});
   
-  const [selectedState, setSelectedState] = useState('');
+  const [selectedState, setSelectedState] = useState(TAMIL_NADU_STATE);
   const [selectedDate, setSelectedDate] = useState('');
   const [timePeriod, setTimePeriod] = useState('all'); // 'all', '7days', '30days', 'custom'
   const [customStartDate, setCustomStartDate] = useState('');
@@ -150,7 +151,7 @@ export default function Market() {
       try {
         const resolved = await getBestAvailableLocation(api, language);
         if (isMounted && resolved?.state) {
-          setSelectedState(resolved.state);
+          setSelectedState(TAMIL_NADU_STATE);
         }
       } catch (error) {
         logger.debug('Market location bootstrap skipped', error);
@@ -255,24 +256,13 @@ export default function Market() {
   };
 
   const normalizedSelectedState = useMemo(
-    () => normalizeStateName(selectedState),
+    () => normalizeStateName(selectedState || TAMIL_NADU_STATE),
     [selectedState]
   );
 
   const availableStates = useMemo(() => {
-    const statesFromData = new Set();
-    if (allPricesData) {
-      allPricesData.forEach(item => {
-        const state = item.state || item.market?.state || item.market?.location || '';
-        if (state && state !== '-') {
-          statesFromData.add(state);
-        }
-      });
-    }
-    
-    const combinedStates = new Set([...allIndianStates, ...statesFromData]);
-    return Array.from(combinedStates).sort();
-  }, [allPricesData]);
+    return [TAMIL_NADU_STATE];
+  }, []);
 
   const { data: prices, isLoading: pricesLoading, error: pricesError } = useQuery({
     queryKey: ['market', 'prices', commodity, selectedState, normalizedSelectedState, selectedDate, timePeriod, customStartDate, customEndDate],
@@ -509,50 +499,59 @@ export default function Market() {
   });
 
   const getMockMarketUpdates = () => {
+    const isTamil = language === 'ta';
     return [
       {
         id: 'update_1',
-        title: 'Wheat Prices Surge 5%',
-        message: 'Wheat prices have increased by 5% in major mandis due to increased demand and lower supply. Farmers are advised to monitor market trends.',
+        title: isTamil ? 'கோதுமை விலை 5% உயர்வு' : 'Wheat Prices Surge 5%',
+        message: isTamil
+          ? 'தேவை அதிகரிப்பு மற்றும் வழங்கல் குறைவு காரணமாக முக்கிய சந்தைகளில் கோதுமை விலை 5% உயர்ந்துள்ளது. விவசாயிகள் சந்தை போக்கை தொடர்ந்து கவனிக்கவும்.'
+          : 'Wheat prices have increased by 5% in major mandis due to increased demand and lower supply. Farmers are advised to monitor market trends.',
         type: 'market',
         severity: 'info',
         timestamp: new Date(),
-        commodity: 'Wheat',
+        commodity: isTamil ? 'கோதுமை' : 'Wheat',
         impact: 'positive',
-        source: 'Market Intelligence'
+        source: isTamil ? 'சந்தை நுண்ணறிவு' : 'Market Intelligence'
       },
       {
         id: 'update_2',
-        title: 'Rice Procurement Season Begins',
-        message: 'Government procurement of rice has started in major states. MSP rates are ₹2,040 per quintal for common paddy and ₹2,060 for Grade A.',
+        title: isTamil ? 'அரிசி கொள்முதல் பருவம் தொடங்கியது' : 'Rice Procurement Season Begins',
+        message: isTamil
+          ? 'முக்கிய மாநிலங்களில் அரசு அரிசி கொள்முதல் தொடங்கியுள்ளது. சாதாரண நெலுக்கான MSP ஒரு குவிண்டாலுக்கு ₹2,040 மற்றும் Grade A க்கு ₹2,060 ஆகும்.'
+          : 'Government procurement of rice has started in major states. MSP rates are ₹2,040 per quintal for common paddy and ₹2,060 for Grade A.',
         type: 'market',
         severity: 'info',
         timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-        commodity: 'Rice',
+        commodity: isTamil ? 'அரிசி' : 'Rice',
         impact: 'positive',
-        source: 'FCI Updates'
+        source: isTamil ? 'FCI புதுப்பிப்புகள்' : 'FCI Updates'
       },
       {
         id: 'update_3',
-        title: 'Cotton Export Demand Increases',
-        message: 'International demand for Indian cotton has increased. Export prices are favorable. Farmers with quality cotton can expect better returns.',
+        title: isTamil ? 'பருத்தி ஏற்றுமதி தேவை அதிகரிப்பு' : 'Cotton Export Demand Increases',
+        message: isTamil
+          ? 'இந்திய பருத்திக்கு சர்வதேச சந்தையில் தேவை அதிகரித்துள்ளது. ஏற்றுமதி விலை சாதகமாக உள்ளது. தரமான பருத்தி உள்ள விவசாயிகள் அதிக வருமானம் எதிர்பார்க்கலாம்.'
+          : 'International demand for Indian cotton has increased. Export prices are favorable. Farmers with quality cotton can expect better returns.',
         type: 'market',
         severity: 'info',
         timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000),
-        commodity: 'Cotton',
+        commodity: isTamil ? 'பருத்தி' : 'Cotton',
         impact: 'positive',
-        source: 'Export Market Intelligence'
+        source: isTamil ? 'ஏற்றுமதி சந்தை நுண்ணறிவு' : 'Export Market Intelligence'
       },
       {
         id: 'update_4',
-        title: 'Sugarcane MSP Announced',
-        message: 'New MSP for sugarcane has been announced at ₹315 per quintal. Sugar mills are expected to start procurement soon.',
+        title: isTamil ? 'கரும்பு MSP அறிவிப்பு' : 'Sugarcane MSP Announced',
+        message: isTamil
+          ? 'கரும்புக்கான புதிய MSP ஒரு குவிண்டாலுக்கு ₹315 என அறிவிக்கப்பட்டுள்ளது. சர்க்கரை ஆலைகள் விரைவில் கொள்முதல் தொடங்கும் என எதிர்பார்க்கப்படுகிறது.'
+          : 'New MSP for sugarcane has been announced at ₹315 per quintal. Sugar mills are expected to start procurement soon.',
         type: 'market',
         severity: 'info',
         timestamp: new Date(Date.now() - 6 * 60 * 60 * 1000),
-        commodity: 'Sugarcane',
+        commodity: isTamil ? 'கரும்பு' : 'Sugarcane',
         impact: 'positive',
-        source: 'Government Announcement'
+        source: isTamil ? 'அரசு அறிவிப்பு' : 'Government Announcement'
       }
     ];
   };
@@ -692,11 +691,9 @@ export default function Market() {
               <Select
                         value={selectedState}
                         label={t('market.state', 'State')}
-                        onChange={(e) => setSelectedState(e.target.value)}
+                        onChange={(e) => setSelectedState(e.target.value || TAMIL_NADU_STATE)}
+                        disabled
                       >
-                        <MenuItem value="">
-                          <em>{t('market.allStates', 'All States')}</em>
-                        </MenuItem>
                         {availableStates.map((state) => (
                           <MenuItem key={state} value={state}>
                             {state}
@@ -785,13 +782,13 @@ export default function Market() {
                     onClick={() => {
                       setCommodity('');
                       setSelectedCommodity('');
-                      setSelectedState('');
+                      setSelectedState(TAMIL_NADU_STATE);
                       setSelectedDate('');
                       setTimePeriod('all');
                       setCustomStartDate('');
                       setCustomEndDate('');
                     }}
-                    disabled={!commodity && !selectedState && !selectedDate && timePeriod === 'all' && !customStartDate && !customEndDate}
+                    disabled={!commodity && !selectedDate && timePeriod === 'all' && !customStartDate && !customEndDate}
                   >
                     {t('market.clearAll', 'Clear All')}
             </Button>
@@ -808,7 +805,6 @@ export default function Market() {
                   label={t('market.stateChip', { state: selectedState, defaultValue: 'State: {{state}}' })}
                   size="small"
                   color="primary"
-                  onDelete={() => setSelectedState('')}
                 />
               )}
               {selectedDate && (

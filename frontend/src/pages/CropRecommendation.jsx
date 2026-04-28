@@ -375,6 +375,25 @@ export default function CropRecommendation() {
       .replace(/\byears?\b/gi, 'ஆண்டுகள்');
   }, [language]);
 
+  const localizeSoilType = useCallback((value) => {
+    const text = String(value || '').trim();
+    if (!text || language !== 'ta') return text;
+    const key = text.toLowerCase().replace(/[^a-z]/g, '');
+    const map = {
+      alluvial: 'வண்டல் மண்',
+      blacksoil: 'கரிமண்',
+      redsoil: 'சிவப்பு மண்',
+      laterite: 'லேடரைட் மண்',
+      sandy: 'மணல் மண்',
+      clay: 'களிமண்',
+      loamy: 'இருமண்',
+      silty: 'வண்டல் மண்',
+      peaty: 'கரிமச் சத்து மண்',
+      saline: 'உப்புத்தன்மை மண்'
+    };
+    return map[key] || text;
+  }, [language]);
+
   const formatMarketPrice = useCallback((crop) => {
     const cropKey = normalizeCommodityKey(crop?.name || crop?.label || crop?.crop);
     const live = cropKey ? marketReference?.[cropKey] : null;
@@ -624,7 +643,7 @@ export default function CropRecommendation() {
                   <Grid item xs={12}>
                     <Typography variant="body2" color="text.secondary">{t('profile.soilType', 'Soil Type')}</Typography>
                     <Chip
-                      label={soilInfo.soilType}
+                      label={localizeSoilType(soilInfo.soilType)}
                       color="primary"
                       sx={{ mt: 0.5, fontWeight: 600, fontSize: '1rem', py: 2.5 }}
                     />

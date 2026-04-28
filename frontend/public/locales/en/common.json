@@ -206,7 +206,7 @@
     "affectedCrops": "Affected Crops",
     "scientificName": "Scientific Name",
     "type": "Type",
-    "category": "Category",
+    "categoryLabel": "Category",
     "spreadRate": "Spread Rate",
     "yieldImpact": "Yield Impact",
     "severity": "Severity",

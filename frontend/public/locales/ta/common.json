@@ -927,7 +927,7 @@
     "filterBy": "வடிகட்டு",
     "state": "மாநிலம்",
     "district": "மாவட்டம்",
-    "category": "வகை",
+    "categoryLabel": "வகை",
     "searchSchemes": "திட்டங்களைத் தேடு",
     "noSchemes": "திட்டங்கள் கிடைக்கவில்லை",
     "noApplications": "விண்ணப்பங்கள் கிடைக்கவில்லை",
