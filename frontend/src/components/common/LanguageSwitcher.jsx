@@ -12,8 +12,8 @@ import {
 } from '@mui/icons-material';
 import { useLanguage } from '../../contexts/LanguageContext';
 
-export default function LanguageSwitcher({ variant = 'icon' }) {
-  const { language, languageInfo, changeLanguage, getSupportedLanguages } = useLanguage();
+export default function LanguageSwitcher() {
+  const { language, changeLanguage, getSupportedLanguages } = useLanguage();
   const [anchorEl, setAnchorEl] = React.useState(null);
   const open = Boolean(anchorEl);
 
@@ -31,6 +31,7 @@ export default function LanguageSwitcher({ variant = 'icon' }) {
   };
 
   const languages = getSupportedLanguages();
+  if (languages.length <= 1) return null;
 
   return (
     <>

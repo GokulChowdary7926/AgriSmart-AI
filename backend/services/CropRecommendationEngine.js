@@ -303,7 +303,7 @@ class CropRecommendationEngine {
       const cropDetails = this.getCropDetails(crop.label);
       if (cropDetails.season !== 'Year-round' && cropDetails.season !== 'All' && 
           seasonCrops.length > 0 && !seasonCrops.includes(cropName.toLowerCase())) {
-        continue; // Skip crops not suitable for current season
+        continue;
       }
 
       const suitabilityScores = this.calculateSuitabilityScores(
@@ -392,21 +392,21 @@ class CropRecommendationEngine {
 
       return recommendations
         .sort((a, b) => b.score - a.score)
-        .slice(0, 10); // Return top 10 instead of 5 for better options
+        .slice(0, 10);
     } catch (error) {
       logger.error('Error in getCropRecommendations:', error);
       return this.getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType);
     }
   }
 
-  getFallbackRecommendations(temperature, humidity, ph, rainfall, soilType) {
+  getFallbackRecommendations(_temperature, _humidity, _ph, _rainfall, _soilType) {
     const fallbackCrops = [
       { crop: 'Rice', score: 75, season: 'Kharif', duration: '120-150 days', yield: '4-6 tons/ha', advantages: ['Staple food', 'High demand'] },
       { crop: 'Wheat', score: 70, season: 'Rabi', duration: '110-120 days', yield: '3-4 tons/ha', advantages: ['High protein', 'Good storage'] },
       { crop: 'Maize', score: 65, season: 'Kharif', duration: '90-100 days', yield: '2-3 tons/ha', advantages: ['Fast growing', 'Multiple uses'] }
     ];
 
-    return fallbackCrops.map((crop, index) => ({
+    return fallbackCrops.map((crop, _index) => ({
       crop: crop.crop,
       name: crop.crop,
       score: crop.score,
@@ -432,7 +432,7 @@ class CropRecommendationEngine {
     const soilMatch = suitableSoils.includes(soilType.toLowerCase());
     
     if (soilMatch) {
-      soilScore += 15; // Soil type match
+      soilScore += 15;
       soilDetails.push(`Ideal soil type (${soilType})`);
       } else {
       soilScore += 5;
@@ -494,12 +494,12 @@ class CropRecommendationEngine {
     };
   }
 
-  calculateEconomicAnalysis(cropName, cropDetails, state) {
+  calculateEconomicAnalysis(cropName, cropDetails, _state) {
     const marketPrice = this.getCropPrice(cropName);
     const priceRange = this.extractPriceRange(marketPrice);
     const yieldRange = this.extractYieldRange(cropDetails.yield);
     
-    const minRevenue = (yieldRange.min * priceRange.min) / 10; // Convert quintal to ton if needed
+    const minRevenue = (yieldRange.min * priceRange.min) / 10;
     const maxRevenue = (yieldRange.max * priceRange.max) / 10;
     
     const minProfit = minRevenue * 0.30;
@@ -507,10 +507,10 @@ class CropRecommendationEngine {
     
     const priceTrend = this.getPriceTrend(cropName);
     
-    let economicScore = 15; // Base score
+    let economicScore = 15;
     if (priceTrend === 'increasing') economicScore += 5;
     if (priceTrend === 'stable') economicScore += 3;
-    if (minRevenue > 50000) economicScore += 5; // High value crop bonus
+    if (minRevenue > 50000) economicScore += 5;
 
     const economicDetails = [
       `Current market price: ${marketPrice}`,
@@ -539,15 +539,15 @@ class CropRecommendationEngine {
   }
 
   calculateRiskScore(crop, cropDetails, temperature, rainfall) {
-    let riskScore = 15; // Base score (low risk)
+    let riskScore = 15;
     const duration = this.parseDuration(cropDetails.duration);
     
     if (duration <= 90) {
-      riskScore += 5; // Low risk
+      riskScore += 5;
     } else if (duration <= 150) {
-      riskScore += 2; // Moderate risk
+      riskScore += 2;
       } else {
-      riskScore -= 2; // Higher risk for long duration
+      riskScore -= 2;
     }
 
     const tempRisk = Math.abs(temperature - crop.temperature) > 10 ? -3 : 0;
@@ -559,7 +559,7 @@ class CropRecommendationEngine {
   }
 
   generateDetailedReasons(suitabilityScores, economicAnalysis, riskScore, 
-                          ph, soilType, temperature, rainfall, season, state) {
+                          ph, soilType, temperature, rainfall, _season, _state) {
     const detailed = [];
     const summary = [];
 
@@ -601,14 +601,14 @@ class CropRecommendationEngine {
     };
   }
 
-  getCurrentSeasonForLocation(state) {
+  getCurrentSeasonForLocation(_state) {
     const month = new Date().getMonth() + 1;
     if (month >= 6 && month <= 10) return 'Kharif';
     if (month >= 11 || month <= 3) return 'Rabi';
     return 'Zaid';
   }
 
-  getCropsForSeason(season, state) {
+  getCropsForSeason(season, _state) {
     const seasonCrops = {
       'Kharif': ['rice', 'maize', 'cotton', 'sugarcane', 'groundnut', 'soybean', 'pulses'],
       'Rabi': ['wheat', 'barley', 'potato', 'chickpea', 'lentil', 'mustard'],
@@ -640,7 +640,7 @@ class CropRecommendationEngine {
     return { min: 2, max: 3 };
   }
 
-  getPriceTrend(cropName) {
+  getPriceTrend(_cropName) {
     const trends = ['increasing', 'stable', 'decreasing'];
     return trends[Math.floor(Math.random() * trends.length)];
   }
@@ -650,7 +650,7 @@ class CropRecommendationEngine {
     return match ? parseInt(match[1]) : 90;
   }
 
-  getRiskDetails(crop, cropDetails, temperature, rainfall) {
+  getRiskDetails(_crop, cropDetails, _temperature, _rainfall) {
     const details = [];
     if (cropDetails) {
       const duration = this.parseDuration(cropDetails.duration);
@@ -666,7 +666,7 @@ class CropRecommendationEngine {
     return details;
   }
 
-  getPlantingWindow(season, currentMonth, state) {
+  getPlantingWindow(season, _currentMonth, _state) {
     const windows = {
       'Kharif': 'June - July (sowing)',
       'Rabi': 'October - November (sowing)',

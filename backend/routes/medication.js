@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const medicationService = require('../services/medicationService');
-const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+const DiseaseDetectionService = require('../services/diseaseDetectionService');
 const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const logger = require('../utils/logger');
+const { badRequest, notFound, serverError, ok } = require('../utils/httpResponses');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -21,26 +22,17 @@ router.get('/treat/:diseaseName', async (req, res) => {
       { language }
     );
 
-    res.json({
-      success: true,
-      data: medication
-    });
+    return ok(res, medication, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error fetching medication:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 router.post('/detect-and-treat', authenticateToken, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image is required'
-      });
+      return badRequest(res, 'Image is required');
     }
 
     const language = req.headers['accept-language']?.split(',')[0]?.split('-')[0] || 'en';
@@ -51,10 +43,7 @@ router.post('/detect-and-treat', authenticateToken, upload.single('image'), asyn
     );
 
     if (!detectionResult || !detectionResult.primaryDisease) {
-      return res.status(404).json({
-        success: false,
-        error: 'Could not detect disease in image'
-      });
+      return notFound(res, 'Could not detect disease in image');
     }
 
     const medication = await medicationService.getMedicationRecommendations(
@@ -64,43 +53,36 @@ router.post('/detect-and-treat', authenticateToken, upload.single('image'), asyn
       { language }
     );
 
-    res.json({
-      success: true,
-      detection: {
-        class: detectionResult.primaryDisease.name,
-        confidence: detectionResult.confidence / 100
+    return ok(
+      res,
+      {
+        detection: {
+          class: detectionResult.primaryDisease.name,
+          confidence: detectionResult.confidence / 100
+        },
+        diseaseInfo: detectionResult.primaryDisease,
+        medication: medication
       },
-      diseaseInfo: detectionResult.primaryDisease,
-      medication: medication
-    });
+      { source: 'AgriSmart AI', isFallback: false }
+    );
   } catch (error) {
     logger.error('Detection and treatment error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to process request'
-    });
+    return serverError(res, error.message || 'Failed to process request');
   }
 });
 
 router.get('/emergency/helpline', async (req, res) => {
   try {
     const contacts = medicationService.getEmergencyContacts();
-    res.json({
-      success: true,
-      data: contacts
-    });
+    return ok(res, contacts, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 router.get('/products/:diseaseName', async (req, res) => {
   try {
     const { diseaseName } = req.params;
-    const { state, district } = req.query;
 
     const products = {
       online: [
@@ -132,15 +114,9 @@ router.get('/products/:diseaseName', async (req, res) => {
       ]
     };
 
-    res.json({
-      success: true,
-      data: products
-    });
+    return ok(res, products, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 

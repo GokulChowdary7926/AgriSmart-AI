@@ -7,9 +7,16 @@ const logger = require('../utils/logger');
 
 class AuthService {
   constructor() {
-    this.secretKey = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+    if (!process.env.JWT_SECRET) {
+      const message = 'JWT_SECRET is not configured. AuthService cannot issue or verify tokens.';
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(message);
+      }
+      logger.error(`[AuthService] ${message}`);
+    }
+    this.secretKey = process.env.JWT_SECRET || null;
     this.algorithm = 'HS256';
-    this.accessTokenExpireMinutes = 60 * 24 * 7; // 7 days
+    this.accessTokenExpireMinutes = 60 * 24 * 7;
     this.refreshTokenExpireDays = 30;
     
     this.redisClient = null;
@@ -23,7 +30,7 @@ class AuthService {
             reconnectStrategy: false
           }
       });
-      this.redisClient.on('error', (err) => {
+      this.redisClient.on('error', (_err) => {
           if (!this.redisErrorLogged) {
             logger.warn('⚠️ Redis not available, continuing without OTP cache');
             this.redisErrorLogged = true;
@@ -44,30 +51,91 @@ class AuthService {
     }
   }
 
+  _assertSecret() {
+    if (!this.secretKey) {
+      throw new Error('JWT_SECRET is not configured');
+    }
+  }
+
   createAccessToken(data) {
+    this._assertSecret();
     const toEncode = { ...data };
     const expire = new Date();
     expire.setMinutes(expire.getMinutes() + this.accessTokenExpireMinutes);
     
     toEncode.exp = Math.floor(expire.getTime() / 1000);
     toEncode.type = 'access';
-    
+    toEncode.jti = data.jti || crypto.randomUUID();
+
     return jwt.sign(toEncode, this.secretKey, { algorithm: this.algorithm });
   }
 
   createRefreshToken(data) {
+    this._assertSecret();
     const toEncode = { ...data };
     const expire = new Date();
     expire.setDate(expire.getDate() + this.refreshTokenExpireDays);
     
     toEncode.exp = Math.floor(expire.getTime() / 1000);
     toEncode.type = 'refresh';
-    
+    toEncode.jti = data.jti || crypto.randomUUID();
+
     return jwt.sign(toEncode, this.secretKey, { algorithm: this.algorithm });
+  }
+
+  _refreshAllowlistKey(userId, jti) {
+    return `refresh_allow:${userId}:${jti}`;
+  }
+
+  async _isRefreshAllowed(userId, jti) {
+    if (!this.redisClient || !jti) {
+      return null;
+    }
+    try {
+      const value = await this.redisClient.get(this._refreshAllowlistKey(userId, jti));
+      return value === '1';
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async _allowRefresh(userId, jti, ttlSeconds) {
+    if (!this.redisClient || !jti) return;
+    try {
+      await this.redisClient.setEx(
+        this._refreshAllowlistKey(userId, jti),
+        ttlSeconds || this.refreshTokenExpireDays * 24 * 3600,
+        '1'
+      );
+    } catch (_err) {
+      // best effort
+    }
+  }
+
+  async _revokeRefresh(userId, jti) {
+    if (!this.redisClient || !jti) return;
+    try {
+      await this.redisClient.del(this._refreshAllowlistKey(userId, jti));
+    } catch (_err) {
+      // best effort
+    }
+  }
+
+  async _revokeAllUserRefresh(userId) {
+    if (!this.redisClient) return;
+    try {
+      const keys = await this.redisClient.keys(`refresh_allow:${userId}:*`);
+      for (const key of keys) {
+        await this.redisClient.del(key);
+      }
+    } catch (_err) {
+      // best effort
+    }
   }
 
   verifyToken(token) {
     try {
+      this._assertSecret();
       return jwt.verify(token, this.secretKey, { algorithms: [this.algorithm] });
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
@@ -88,7 +156,7 @@ class AuthService {
     return bcrypt.compare(plainPassword, hashedPassword);
   }
 
-  generateOTP(length = 6) {
+  generateOTP(_length = 6) {
     return crypto.randomInt(100000, 999999).toString();
   }
 
@@ -99,13 +167,13 @@ class AuthService {
     }
     
     const key = `otp:${purpose}:${phone}`;
-    await this.redisClient.setEx(key, 600, otp); // 10 minutes
+    await this.redisClient.setEx(key, 600, otp);
   }
 
   async verifyOTP(phone, otp, purpose = 'login') {
     if (!this.redisClient) {
       logger.warn('Redis not available, OTP verification skipped');
-      return true; // In development, allow without Redis
+      return true;
     }
     
     const key = `otp:${purpose}:${phone}`;
@@ -119,25 +187,34 @@ class AuthService {
   }
 
   async createSession(userId, deviceId = null) {
-    const tokenData = {
+    const refreshJti = crypto.randomUUID();
+    const accessJti = crypto.randomUUID();
+
+    const baseTokenData = {
       sub: userId.toString(),
       uid: `user_${userId}`,
       role: 'farmer',
       device_id: deviceId
     };
-    
-    const accessToken = this.createAccessToken(tokenData);
-    const refreshToken = this.createRefreshToken(tokenData);
-    
+
+    const accessToken = this.createAccessToken({ ...baseTokenData, jti: accessJti });
+    const refreshToken = this.createRefreshToken({ ...baseTokenData, jti: refreshJti });
+
+    await this._allowRefresh(userId.toString(), refreshJti);
+
     if (this.redisClient) {
       const refreshKey = deviceId 
         ? `refresh_token:${userId}:${deviceId}` 
         : `refresh_token:${userId}`;
-      await this.redisClient.setEx(
-        refreshKey, 
-        30 * 24 * 3600, 
-        refreshToken
-      ); // 30 days
+      try {
+        await this.redisClient.setEx(
+          refreshKey, 
+          30 * 24 * 3600, 
+          refreshToken
+        );
+      } catch (_err) {
+        // best effort; allowlist is the primary source of truth
+      }
     }
     
     return {
@@ -149,66 +226,84 @@ class AuthService {
   }
 
   async refreshAccessToken(refreshToken) {
+    let payload;
     try {
-      const payload = this.verifyToken(refreshToken);
-      
-      if (payload.type !== 'refresh') {
-        throw new Error('Invalid token type');
-      }
-      
-      const userId = payload.sub;
-      const deviceId = payload.device_id;
-      
-      if (this.redisClient) {
-        const refreshKey = deviceId 
-          ? `refresh_token:${userId}:${deviceId}` 
-          : `refresh_token:${userId}`;
-        const storedRefresh = await this.redisClient.get(refreshKey);
-        
-        if (!storedRefresh || storedRefresh !== refreshToken) {
-          throw new Error('Invalid refresh token');
-        }
-      }
-      
-      const newTokenData = {
-        sub: userId,
-        uid: payload.uid,
-        role: payload.role,
-        device_id: deviceId
-      };
-      
-      const newAccessToken = this.createAccessToken(newTokenData);
-      const newRefreshToken = this.createRefreshToken(newTokenData);
-      
-      if (this.redisClient) {
-        const refreshKey = deviceId 
-          ? `refresh_token:${userId}:${deviceId}` 
-          : `refresh_token:${userId}`;
-        await this.redisClient.setEx(refreshKey, 30 * 24 * 3600, newRefreshToken);
-      }
-      
-      return {
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
-        token_type: 'bearer'
-      };
-    } catch (error) {
+      payload = this.verifyToken(refreshToken);
+    } catch (_err) {
       throw new Error('Invalid refresh token');
     }
+
+    if (!payload || payload.type !== 'refresh') {
+      throw new Error('Invalid refresh token');
+    }
+
+    const userId = payload.sub;
+    const deviceId = payload.device_id;
+    const oldJti = payload.jti;
+
+    const allowed = await this._isRefreshAllowed(userId, oldJti);
+    if (allowed === false) {
+      logger.warn('[AuthService] Refresh token reuse detected, revoking all sessions', { userId });
+      await this._revokeAllUserRefresh(userId);
+      throw new Error('Refresh token reuse detected');
+    }
+
+    if (allowed === true) {
+      await this._revokeRefresh(userId, oldJti);
+    }
+
+    const newRefreshJti = crypto.randomUUID();
+    const newAccessJti = crypto.randomUUID();
+
+    const baseTokenData = {
+      sub: userId,
+      uid: payload.uid,
+      role: payload.role,
+      device_id: deviceId
+    };
+
+    const newAccessToken = this.createAccessToken({ ...baseTokenData, jti: newAccessJti });
+    const newRefreshToken = this.createRefreshToken({ ...baseTokenData, jti: newRefreshJti });
+
+    await this._allowRefresh(userId, newRefreshJti);
+
+    if (this.redisClient) {
+      const refreshKey = deviceId
+        ? `refresh_token:${userId}:${deviceId}`
+        : `refresh_token:${userId}`;
+      try {
+        await this.redisClient.setEx(refreshKey, 30 * 24 * 3600, newRefreshToken);
+      } catch (_err) {
+        // best effort
+      }
+    }
+
+    return {
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken,
+      token_type: 'bearer',
+      expires_in: this.accessTokenExpireMinutes * 60
+    };
   }
 
   async logout(userId, deviceId = null) {
     if (!this.redisClient) return;
-    
-    if (deviceId) {
-      await this.redisClient.del(`refresh_token:${userId}:${deviceId}`);
-    } else {
-      const keys = await this.redisClient.keys(`refresh_token:${userId}:*`);
-      for (const key of keys) {
-        await this.redisClient.del(key);
+
+    try {
+      if (deviceId) {
+        await this.redisClient.del(`refresh_token:${userId}:${deviceId}`);
+      } else {
+        const keys = await this.redisClient.keys(`refresh_token:${userId}:*`);
+        for (const key of keys) {
+          await this.redisClient.del(key);
+        }
+        await this.redisClient.del(`refresh_token:${userId}`);
       }
-      await this.redisClient.del(`refresh_token:${userId}`);
+    } catch (_err) {
+      // best effort
     }
+
+    await this._revokeAllUserRefresh(userId);
   }
 
   getCurrentUser(token) {
@@ -244,6 +339,9 @@ class AuthService {
 }
 
 module.exports = new AuthService();
+
+
+
 
 
 

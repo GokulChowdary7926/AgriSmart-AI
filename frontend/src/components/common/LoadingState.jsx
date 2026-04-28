@@ -10,11 +10,10 @@ import {
 } from '@mui/material';
 import {
   Refresh as RefreshCw,
-  ErrorOutline as AlertCircle,
-  CheckCircle,
-  HourglassEmpty as Loader2
+  CheckCircle
 } from '@mui/icons-material';
 import logger from '../../services/logger';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 const LoadingState = ({
   isLoading,
@@ -25,6 +24,31 @@ const LoadingState = ({
   type = 'default',
   children
 }) => {
+  const { t } = useLanguage();
+  const getFriendlyMessage = (value) => {
+    if (!value) return t('errors.generic', 'Something went wrong. Please try again.');
+    if (typeof value === 'string') return value;
+    if (value instanceof Error && typeof value.message === 'string') return value.message;
+    if (typeof value.message === 'string') return value.message;
+    if (typeof value.error === 'string') return value.error;
+    if (value.error && typeof value.error.message === 'string') return value.error.message;
+    if (value.message && typeof value.message === 'object') {
+      if (typeof value.message.message === 'string') return value.message.message;
+      if (typeof value.message.error === 'string') return value.message.error;
+    }
+    if (value.response?.data) {
+      const apiData = value.response.data;
+      if (typeof apiData === 'string') return apiData;
+      if (typeof apiData.message === 'string') return apiData.message;
+      if (typeof apiData.error === 'string') return apiData.error;
+      if (apiData.message && typeof apiData.message === 'object') {
+        if (typeof apiData.message.message === 'string') return apiData.message.message;
+        if (typeof apiData.message.error === 'string') return apiData.message.error;
+      }
+    }
+    return t('errors.generic', 'Something went wrong. Please try again.');
+  };
+
   React.useEffect(() => {
     if (isLoading) {
       logger.debug('Loading state: started loading');
@@ -84,10 +108,10 @@ const LoadingState = ({
           >
             <CircularProgress size={48} />
             <Typography variant="body2" color="text.secondary">
-              Loading data...
+              {t('common.loading', 'Loading...')}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              This may take a few moments
+              {t('common.pleaseWait', 'This may take a few moments')}
             </Typography>
           </Box>
         );
@@ -95,6 +119,7 @@ const LoadingState = ({
   };
 
   if (error) {
+    const friendlyMessage = getFriendlyMessage(error);
     return (
       <Box
         sx={{
@@ -107,15 +132,10 @@ const LoadingState = ({
         }}
       >
         <Alert severity="error" sx={{ maxWidth: 500, width: '100%' }}>
-          <AlertTitle>Unable to Load Data</AlertTitle>
+          <AlertTitle>{t('common.unableToLoadData', 'Unable to load data')}</AlertTitle>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            {error.message || 'An unexpected error occurred'}
+            {friendlyMessage}
           </Typography>
-          {error.code && (
-            <Typography variant="caption" color="text.secondary">
-              Error code: {error.code}
-            </Typography>
-          )}
         </Alert>
         {retry && (
           <Button
@@ -124,18 +144,9 @@ const LoadingState = ({
             onClick={retry}
             sx={{ mt: 2 }}
           >
-            Try Again
+            {t('common.tryAgain', 'Try Again')}
           </Button>
         )}
-        <Button
-          variant="text"
-          size="small"
-          onClick={() => {
-            logger.error('User viewed error details', error);
-          }}
-        >
-          View Technical Details
-        </Button>
       </Box>
     );
   }
@@ -153,9 +164,9 @@ const LoadingState = ({
         }}
       >
         <Alert severity="info" sx={{ maxWidth: 500, width: '100%' }}>
-          <AlertTitle>No Data Available</AlertTitle>
+          <AlertTitle>{t('common.noDataAvailable', 'No Data Available')}</AlertTitle>
           <Typography variant="body2">
-            {emptyMessage || 'No data found for your request'}
+            {emptyMessage || t('common.noDataFound', 'No data found for your request')}
           </Typography>
         </Alert>
         {retry && (
@@ -165,7 +176,7 @@ const LoadingState = ({
             onClick={retry}
             sx={{ mt: 2 }}
           >
-            Refresh
+            {t('common.refresh', 'Refresh')}
           </Button>
         )}
       </Box>
@@ -193,7 +204,7 @@ const LoadingState = ({
         >
           <CircularProgress size={16} />
           <Typography variant="caption" color="text.secondary">
-            Loading...
+            {t('common.loading', 'Loading...')}
           </Typography>
         </Box>
       </Box>
@@ -221,7 +232,7 @@ const LoadingState = ({
       >
         <CheckCircle sx={{ fontSize: 16 }} />
         <Typography variant="caption" sx={{ fontWeight: 500 }}>
-          Loaded successfully
+          {t('common.loadedSuccessfully', 'Loaded successfully')}
         </Typography>
       </Box>
     </Box>
@@ -281,6 +292,9 @@ export const withLoading = (Component, options = {}) => {
 };
 
 export default LoadingState;
+
+
+
 
 
 

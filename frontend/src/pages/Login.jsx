@@ -9,10 +9,12 @@ import {
   Box,
   Alert,
   CircularProgress,
-  Chip
+  Chip,
+  Stack
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSnackbar } from 'notistack';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function Login() {
   const [identifier, setIdentifier] = useState('');
@@ -22,6 +24,7 @@ export default function Login() {
   const { login, loading, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
+  const { t, language, changeLanguage } = useLanguage();
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -52,13 +55,13 @@ export default function Login() {
   const getIdentifierLabel = () => {
     switch (identifierType) {
       case 'email':
-        return 'Email';
+        return t('auth.email');
       case 'phone':
-        return 'Phone Number';
+        return t('auth.phone');
       case 'username':
-        return 'Username';
+        return t('auth.username', 'Username');
       default:
-        return 'Email / Phone / Username';
+        return t('auth.identifier', 'Email / Phone / Username');
     }
   };
 
@@ -71,7 +74,7 @@ export default function Login() {
       case 'username':
         return 'myusername';
       default:
-        return 'Enter email, phone number, or username';
+        return t('auth.identifierPlaceholder', 'Enter email, phone number, or username');
     }
   };
 
@@ -80,19 +83,19 @@ export default function Login() {
     setError('');
 
     if (!identifier || !password) {
-      setError('Please fill in all fields');
+      setError(t('auth.fillAllFields', 'Please fill in all fields'));
       return;
     }
     
     const result = await login(identifier, password);
     
     if (result && result.success) {
-      enqueueSnackbar('Login successful!', { variant: 'success' });
+      enqueueSnackbar(t('auth.loginSuccess', 'Login successful!'), { variant: 'success' });
       setTimeout(() => {
         navigate('/dashboard', { replace: true });
       }, 50);
     } else {
-      const errorMsg = result?.error || 'Login failed';
+      const errorMsg = result?.error || t('auth.loginFailed', 'Login failed');
       setError(errorMsg);
       enqueueSnackbar(errorMsg, { variant: 'error' });
     }
@@ -101,11 +104,29 @@ export default function Login() {
   return (
     <Container maxWidth="sm" sx={{ mt: 8 }}>
       <Paper elevation={3} sx={{ p: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+          <Stack direction="row" spacing={1}>
+            <Button
+              size="small"
+              variant={language === 'en' ? 'contained' : 'outlined'}
+              onClick={() => changeLanguage('en')}
+            >
+              English
+            </Button>
+            <Button
+              size="small"
+              variant={language === 'ta' ? 'contained' : 'outlined'}
+              onClick={() => changeLanguage('ta')}
+            >
+              தமிழ்
+            </Button>
+          </Stack>
+        </Box>
         <Typography variant="h4" component="h1" gutterBottom align="center">
           🌾 AgriSmart AI
         </Typography>
         <Typography variant="h5" component="h2" gutterBottom align="center" sx={{ mb: 3 }}>
-          Login
+          {t('auth.login')}
         </Typography>
 
         {error && (
@@ -117,19 +138,19 @@ export default function Login() {
         <Box component="form" onSubmit={handleSubmit}>
           <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             <Chip 
-              label="📧 Email" 
+              label={`📧 ${t('auth.email')}`} 
               size="small" 
               color={identifierType === 'email' ? 'primary' : 'default'}
               variant={identifierType === 'email' ? 'filled' : 'outlined'}
             />
             <Chip 
-              label="📱 Phone" 
+              label={`📱 ${t('auth.phone')}`} 
               size="small" 
               color={identifierType === 'phone' ? 'primary' : 'default'}
               variant={identifierType === 'phone' ? 'filled' : 'outlined'}
             />
             <Chip 
-              label="👤 Username" 
+              label={`👤 ${t('auth.username', 'Username')}`} 
               size="small" 
               color={identifierType === 'username' ? 'primary' : 'default'}
               variant={identifierType === 'username' ? 'filled' : 'outlined'}
@@ -147,17 +168,17 @@ export default function Login() {
             autoComplete="username"
             helperText={
               identifierType === 'auto' 
-                ? 'Enter your email, phone number, or username' 
+                ? t('auth.identifierHint', 'Enter your email, phone number, or username')
                 : identifierType === 'email'
-                ? 'Login with your email address'
+                ? t('auth.loginWithEmail', 'Login with your email address')
                 : identifierType === 'phone'
-                ? 'Login with your phone number'
-                : 'Login with your username'
+                ? t('auth.loginWithPhone', 'Login with your phone number')
+                : t('auth.loginWithUsername', 'Login with your username')
             }
           />
           <TextField
             fullWidth
-            label="Password"
+            label={t('auth.password')}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -165,6 +186,13 @@ export default function Login() {
             required
             autoComplete="current-password"
           />
+          <Box sx={{ textAlign: 'right', mt: 1 }}>
+            <Link to="/forgot-password" style={{ textDecoration: 'none' }}>
+              <Typography variant="body2" color="primary">
+                {t('auth.forgotPassword')}
+              </Typography>
+            </Link>
+          </Box>
           <Button
             type="submit"
             fullWidth
@@ -172,14 +200,14 @@ export default function Login() {
             sx={{ mt: 3, mb: 2 }}
             disabled={loading}
           >
-            {loading ? <CircularProgress size={24} /> : 'Login'}
+            {loading ? <CircularProgress size={24} /> : t('auth.login')}
           </Button>
         </Box>
 
         <Box sx={{ textAlign: 'center', mt: 2 }}>
           <Link to="/register" style={{ textDecoration: 'none' }}>
             <Typography variant="body2" color="primary">
-              Don't have an account? Register here
+              {t('auth.dontHaveAccount')} {t('auth.registerHere')}
             </Typography>
           </Link>
         </Box>

@@ -1,13 +1,52 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import api from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import api, { getApiErrorMessage } from '../services/api';
 import logger from '../services/logger';
 
 const AuthContext = createContext(null);
+let hasLoggedMissingProviderWarning = false;
+const USER_STORAGE_KEY = 'user';
+
+const readStoredUser = () => {
+  try {
+    const raw = localStorage.getItem(USER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const writeStoredUser = (user) => {
+  try {
+    if (user) {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(USER_STORAGE_KEY);
+    }
+  } catch (_) {
+    // Non-blocking storage failure.
+  }
+};
 
 const useAuth = () => {
   const context = useContext(AuthContext);
-  if (context === null || !context._isProvider) {
-    throw new Error('useAuth must be used within an AuthProvider');
+  if (context === null) {
+    if (!hasLoggedMissingProviderWarning) {
+      hasLoggedMissingProviderWarning = true;
+      logger.warn('useAuth accessed without AuthProvider; using safe fallback state');
+    }
+    const fallbackUser = readStoredUser();
+    return {
+      user: fallbackUser,
+      farmer: null,
+      loading: false,
+      error: null,
+      login: async () => ({ success: false, error: 'Authentication context unavailable' }),
+      register: async () => ({ success: false, error: 'Authentication context unavailable' }),
+      logout: () => {},
+      updateProfile: async () => ({ success: false, error: 'Authentication context unavailable' }),
+      isAuthenticated: Boolean(fallbackUser)
+    };
   }
   return context;
 };
@@ -15,7 +54,8 @@ const useAuth = () => {
 export { useAuth };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
+  const [user, setUser] = useState(() => readStoredUser());
   const [farmer, setFarmer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -30,21 +70,39 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      localStorage.removeItem('token');
+      writeStoredUser(null);
+      delete api.defaults.headers.common['Authorization'];
+      setUser(null);
+      setFarmer(null);
+      setError('Your session expired. Please login again.');
+      navigate('/login', { replace: true });
+    };
+
+    window.addEventListener('auth:expired', handleAuthExpired);
+    return () => window.removeEventListener('auth:expired', handleAuthExpired);
+  }, [navigate]);
+
   const fetchUserData = async () => {
     try {
       const response = await api.get('/auth/me');
       if (response.data.success && response.data.user) {
         setUser(response.data.user);
+        writeStoredUser(response.data.user);
         setFarmer(response.data.farmer || null);
         setError(null);
       } else {
         localStorage.removeItem('token');
+        writeStoredUser(null);
         setUser(null);
         setFarmer(null);
       }
     } catch (err) {
       if (err.response?.status === 401 || err.response?.status === 403) {
         localStorage.removeItem('token');
+        writeStoredUser(null);
         setUser(null);
         setFarmer(null);
       }
@@ -59,7 +117,7 @@ export const AuthProvider = ({ children }) => {
     
     try {
       const trimmedIdentifier = identifier?.trim() || '';
-      const normalizedPassword = password?.trim() || '';
+      const normalizedPassword = typeof password === 'string' ? password : '';
       
       if (!trimmedIdentifier || !normalizedPassword) {
         throw new Error('Email/Phone/User ID and password are required');
@@ -82,13 +140,14 @@ export const AuthProvider = ({ children }) => {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       
       setUser(user);
+      writeStoredUser(user);
       setFarmer(farmer);
       
       setLoading(false);
       
       return { success: true, user };
     } catch (err) {
-      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Login failed';
+      const errorMessage = getApiErrorMessage(err, 'Login failed');
       setError(errorMessage);
       setLoading(false);
       return { success: false, error: errorMessage };
@@ -98,6 +157,26 @@ export const AuthProvider = ({ children }) => {
   const register = async (userData) => {
     setLoading(true);
     setError(null);
+
+    const mapRegistrationFieldErrors = (message) => {
+      const normalizedMessage = String(message || '').toLowerCase();
+      const fieldErrors = {};
+
+      if (normalizedMessage.includes('email')) {
+        fieldErrors.email = message;
+      }
+      if (normalizedMessage.includes('phone')) {
+        fieldErrors.phone = message;
+      }
+      if (normalizedMessage.includes('username')) {
+        fieldErrors.username = message;
+      }
+      if (normalizedMessage.includes('password')) {
+        fieldErrors.password = message;
+      }
+
+      return fieldErrors;
+    };
     
     try {
       const response = await api.post('/auth/register', userData);
@@ -109,12 +188,17 @@ export const AuthProvider = ({ children }) => {
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         
         setUser(user);
+        writeStoredUser(user);
         
         return { success: true, user };
       } else {
-        const errorMessage = response.data.error || 'Registration failed';
+        const errorMessage = getApiErrorMessage(response.data, 'Registration failed');
         setError(errorMessage);
-        return { success: false, error: errorMessage };
+        return {
+          success: false,
+          error: errorMessage,
+          fieldErrors: mapRegistrationFieldErrors(errorMessage)
+        };
       }
     } catch (err) {
       let errorMessage = 'Registration failed. Please check your information and try again.';
@@ -125,7 +209,7 @@ export const AuthProvider = ({ children }) => {
       });
       
       if (err.response?.data) {
-        errorMessage = err.response.data.error || err.response.data.message || errorMessage;
+        errorMessage = getApiErrorMessage(err, errorMessage);
       } else if (err.error) {
         errorMessage = err.error || errorMessage;
       } else if (err.message) {
@@ -137,7 +221,11 @@ export const AuthProvider = ({ children }) => {
       }
       
       setError(errorMessage);
-      return { success: false, error: errorMessage };
+      return {
+        success: false,
+        error: errorMessage,
+        fieldErrors: mapRegistrationFieldErrors(errorMessage)
+      };
     } finally {
       setLoading(false);
     }
@@ -145,13 +233,13 @@ export const AuthProvider = ({ children }) => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    writeStoredUser(null);
     delete api.defaults.headers.common['Authorization'];
     
     setUser(null);
     setFarmer(null);
     setError(null);
-    
-    window.location.href = '/login';
+    navigate('/login', { replace: true });
   };
 
   const updateProfile = async (profileData) => {
@@ -163,13 +251,15 @@ export const AuthProvider = ({ children }) => {
       
       if (response.data.success) {
         setUser(response.data.user);
+        writeStoredUser(response.data.user);
         return { success: true, user: response.data.user };
       } else {
-        setError(response.data.error);
-        return { success: false, error: response.data.error };
+        const errorMessage = getApiErrorMessage(response.data, 'Update failed');
+        setError(errorMessage);
+        return { success: false, error: errorMessage };
       }
     } catch (err) {
-      const errorMessage = err.response?.data?.error || 'Update failed';
+      const errorMessage = getApiErrorMessage(err, 'Update failed');
       setError(errorMessage);
       return { success: false, error: errorMessage };
     } finally {
@@ -188,8 +278,7 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     updateProfile,
-    isAuthenticated,
-    _isProvider: true // Flag to identify if we're inside a provider
+    isAuthenticated
   }), [user, farmer, loading, error, isAuthenticated]);
 
   return (

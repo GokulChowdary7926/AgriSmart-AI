@@ -119,8 +119,8 @@ class APIErrorHandler {
   }
 
   getRetryDelay(retryCount, errorInfo) {
-    const baseDelay = 1000; // 1 second
-    const maxDelay = 10000; // 10 seconds
+    const baseDelay = 1000;
+    const maxDelay = 10000;
     
     if (errorInfo.status === 429) {
       const retryAfter = errorInfo.data?.retry_after || 5;
@@ -133,6 +133,9 @@ class APIErrorHandler {
 }
 
 module.exports = new APIErrorHandler();
+
+
+
 
 
 

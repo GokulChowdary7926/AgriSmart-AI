@@ -1,0 +1,45 @@
+# Development: MongoDB + Redis only. Run backend and frontend locally (npm run dev / node server.js).
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Backend .env: MONGODB_URI=mongodb://localhost:27017/agrismart, REDIS_URL=redis://localhost:6379
+
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6
+    container_name: agri-mongodb-dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data_dev:/data/db
+    networks:
+      - agri-dev
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: agri-redis-dev
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    networks:
+      - agri-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo_data_dev:
+  redis_data_dev:
+
+networks:
+  agri-dev:
+    driver: bridge

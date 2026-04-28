@@ -3,7 +3,7 @@ const cropRecommendationEngine = require('./CropRecommendationEngine');
 
 class EnhancedCropRecommendationService {
   constructor() {
-    this.engine = cropRecommendationEngine; // Use singleton instance
+    this.engine = cropRecommendationEngine;
     this.seasonData = this.initializeSeasonData();
   }
 
@@ -26,18 +26,21 @@ class EnhancedCropRecommendationService {
     };
   }
 
-  async getPerfectRecommendations(location, soilType, season, preferences = {}) {
+  async getPerfectRecommendations(location, soilType, season, _preferences = {}) {
     try {
       const { lat, lng } = location;
       const currentSeason = season || this.seasonData.current;
       
-      const recommendations = await this.engine.recommendCrops({
-        latitude: lat,
-        longitude: lng,
-        soilType: soilType || 'loam',
-        season: currentSeason,
-        preferences: preferences
-      });
+      const locationData = await this.engine.getLocationData(
+        lat,
+        lng,
+        null, // weatherData (will be fetched internally)
+        null, // state (will be detected)
+        null, // region
+        'India'
+      );
+      
+      const recommendations = locationData.recommendations || [];
 
       const enhanced = recommendations.map(crop => {
         const score = this.calculatePerfectScore(crop, location, soilType, currentSeason);
@@ -169,9 +172,9 @@ class EnhancedCropRecommendationService {
 
   getTemperatureForLocation(location) {
     const lat = location.lat;
-    if (lat > 25) return 28; // North India - warmer
-    if (lat > 20) return 30; // Central India - hot
-    return 32; // South India - very hot
+    if (lat > 25) return 28;
+    if (lat > 20) return 30;
+    return 32;
   }
 
   getRecommendationLevel(score) {
@@ -225,7 +228,7 @@ class EnhancedCropRecommendationService {
     }
     
     const revenuePerAcre = crop.marketPrice * crop.yield;
-    const costPerAcre = crop.costOfCultivation || (revenuePerAcre * 0.4); // Assume 40% cost
+    const costPerAcre = crop.costOfCultivation || (revenuePerAcre * 0.4);
     const profitPerAcre = revenuePerAcre - costPerAcre;
     const profitMargin = (profitPerAcre / revenuePerAcre) * 100;
     

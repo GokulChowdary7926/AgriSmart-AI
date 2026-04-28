@@ -3,15 +3,28 @@ const Translation = require('../models/Translation');
 const LanguageMiddleware = require('../middleware/language');
 const cache = require('../utils/cache').getInstance();
 const logger = require('../utils/logger');
+const { badRequest, notFound, serverError, ok, forbidden } = require('../utils/httpResponses');
 
 class LanguageController {
+  static success(res, data, { source = 'AgriSmart AI', isFallback = false, degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 200 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
   static async initializeLanguages(req, res) {
     try {
       if (req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Only admins can initialize languages'
-        });
+        return forbidden(res, 'Only admins can initialize languages');
       }
       
       await Language.initializeLanguages();
@@ -19,16 +32,14 @@ class LanguageController {
       
       await cache.del('supported_languages');
       
-      res.json({
-        success: true,
-        message: 'Languages and translations initialized successfully'
-      });
+      return LanguageController.success(
+        res,
+        { message: 'Languages and translations initialized successfully' },
+        { extra: { message: 'Languages and translations initialized successfully' } }
+      );
     } catch (error) {
       logger.error('Initialize languages error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to initialize languages'
-      });
+      return serverError(res, 'Failed to initialize languages');
     }
   }
   
@@ -53,51 +64,48 @@ class LanguageController {
         ];
       }
       
-      const skip = (page - 1) * limit;
+      const safePage = this.parsePositiveInt(page, 1, { min: 1, max: 100000 });
+      const safeLimit = this.parsePositiveInt(limit, 50, { min: 1, max: 200 });
+      const skip = (safePage - 1) * safeLimit;
       
       const translations = await Translation.find(query)
         .sort({ module: 1, key: 1 })
         .skip(skip)
-        .limit(parseInt(limit))
+        .limit(safeLimit)
         .select('-__v');
       
       const total = await Translation.countDocuments(query);
       
-      res.json({
-        success: true,
-        data: translations,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
+      return LanguageController.success(
+        res,
+        translations,
+        {
+          extra: {
+            pagination: {
+              page: safePage,
+              limit: safeLimit,
+              total,
+              pages: Math.ceil(total / safeLimit)
+            }
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('Get translations error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch translations'
-      });
+      return serverError(res, 'Failed to fetch translations');
     }
   }
   
   static async updateTranslation(req, res) {
     try {
       if (req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Only admins can update translations'
-        });
+        return forbidden(res, 'Only admins can update translations');
       }
       
       const { key, module, category, translations, description } = req.body;
       
       if (!key || !module || !translations || !translations.en) {
-        return res.status(400).json({
-          success: false,
-          error: 'Key, module, and English translation are required'
-        });
+        return badRequest(res, 'Key, module, and English translation are required');
       }
       
       const updateData = {
@@ -119,27 +127,25 @@ class LanguageController {
       await cache.delPattern(`translation:${key}:*`);
       await cache.delPattern(`module_translations:${module}:*`);
       
-      res.json({
-        success: true,
-        message: 'Translation updated successfully',
-        data: translation
-      });
+      return LanguageController.success(
+        res,
+        translation,
+        {
+          extra: {
+            message: 'Translation updated successfully'
+          }
+        }
+      );
     } catch (error) {
       logger.error('Update translation error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update translation'
-      });
+      return serverError(res, 'Failed to update translation');
     }
   }
   
   static async deleteTranslation(req, res) {
     try {
       if (req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Only admins can delete translations'
-        });
+        return forbidden(res, 'Only admins can delete translations');
       }
       
       const { id } = req.params;
@@ -147,17 +153,11 @@ class LanguageController {
       const translation = await Translation.findById(id);
       
       if (!translation) {
-        return res.status(404).json({
-          success: false,
-          error: 'Translation not found'
-        });
+        return notFound(res, 'Translation not found');
       }
       
       if (translation.isSystem) {
-        return res.status(400).json({
-          success: false,
-          error: 'System translations cannot be deleted'
-        });
+        return badRequest(res, 'System translations cannot be deleted');
       }
       
       await translation.deleteOne();
@@ -165,16 +165,14 @@ class LanguageController {
       await cache.delPattern(`translation:${translation.key}:*`);
       await cache.delPattern(`module_translations:${translation.module}:*`);
       
-      res.json({
-        success: true,
-        message: 'Translation deleted successfully'
-      });
+      return LanguageController.success(
+        res,
+        { message: 'Translation deleted successfully' },
+        { extra: { message: 'Translation deleted successfully' } }
+      );
     } catch (error) {
       logger.error('Delete translation error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to delete translation'
-      });
+      return serverError(res, 'Failed to delete translation');
     }
   }
   
@@ -183,10 +181,7 @@ class LanguageController {
       const { language } = req.query;
       
       if (!language || !LanguageMiddleware.isValidLanguage(language)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Valid language code is required'
-        });
+        return badRequest(res, 'Valid language code is required');
       }
       
       const translations = await Translation.find({
@@ -197,18 +192,19 @@ class LanguageController {
         ]
       }).select('key module category translations.en');
       
-      res.json({
-        success: true,
-        count: translations.length,
-        language,
-        data: translations
-      });
+      return LanguageController.success(
+        res,
+        translations,
+        {
+          extra: {
+            count: translations.length,
+            language
+          }
+        }
+      );
     } catch (error) {
       logger.error('Get missing translations error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch missing translations'
-      });
+      return serverError(res, 'Failed to fetch missing translations');
     }
   }
   
@@ -219,20 +215,22 @@ class LanguageController {
       
       const translations = await LanguageMiddleware.getModuleTranslations(module, language);
       
-      res.json({
-        success: true,
-        module,
-        language: language.toLowerCase(),
-        data: translations
-      });
+      return LanguageController.success(
+        res,
+        translations,
+        {
+          extra: {
+            module,
+            language: language.toLowerCase()
+          }
+        }
+      );
     } catch (error) {
       logger.error('Get module translations error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch module translations'
-      });
+      return serverError(res, 'Failed to fetch module translations');
     }
   }
 }
 
-module.exports = LanguageController;
+const { bindStaticMethods } = require('../utils/bindControllerMethods');
+module.exports = bindStaticMethods(LanguageController);

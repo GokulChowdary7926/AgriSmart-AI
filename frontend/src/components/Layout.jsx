@@ -4,7 +4,6 @@ import {
   AppBar,
   Toolbar,
   Typography,
-  Container,
   Box,
   Drawer,
   List,
@@ -33,7 +32,6 @@ import {
   Logout as LogoutIcon,
   Notifications as NotificationsIcon,
   AccountBalance as GovernmentSchemesIcon,
-  Map as MapIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -46,7 +44,7 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
   const { user, logout } = useAuth();
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const muiTheme = useMUITheme();
@@ -85,7 +83,6 @@ export default function Layout({ children }) {
     { textKey: 'nav.chatbot', icon: <ChatIcon />, path: '/chat' },
     { textKey: 'nav.agriChat', icon: <ChatIcon />, path: '/agri-chat' },
     { textKey: 'nav.analytics', icon: <AnalyticsIcon />, path: '/analytics' },
-    { textKey: 'nav.agriMap', icon: <MapIcon />, path: '/agri-map' },
   ];
 
   const settingsItems = [
@@ -179,12 +176,12 @@ export default function Layout({ children }) {
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <LanguageSwitcher />
-            <IconButton color="inherit">
+            <IconButton color="inherit" aria-label={t('common.notifications', 'Notifications')}>
               <Badge badgeContent={0} color="error">
                 <NotificationsIcon />
               </Badge>
             </IconButton>
-            <IconButton onClick={handleMenuClick} sx={{ p: 0 }}>
+            <IconButton aria-label={t('common.accountMenu', 'Open account menu')} onClick={handleMenuClick} sx={{ p: 0 }}>
               <Avatar sx={{ bgcolor: 'secondary.main' }}>
                 {user?.name?.charAt(0)?.toUpperCase() || 'U'}
               </Avatar>

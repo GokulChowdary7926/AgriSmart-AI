@@ -1,7 +1,7 @@
 const logger = require('../utils/logger');
 
 class ApplicationManager {
-  async submitApplication(schemeId, farmerId, applicationData) {
+  async submitApplication(schemeId, farmerId, _applicationData) {
     try {
       logger.info('Submitting application', { schemeId, farmerId });
       return {
@@ -43,3 +43,6 @@ class ApplicationManager {
 }
 
 module.exports = new ApplicationManager();
+
+
+

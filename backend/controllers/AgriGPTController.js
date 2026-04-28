@@ -1,21 +1,35 @@
-const aiService = require('../services/ai_service');
+const aiService = require('../services/AgriAIService');
 const logger = require('../utils/logger');
+const { badRequest, unauthorized, notFound, serverError, ok } = require('../utils/httpResponses');
+
+function parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+}
 
 class AgriGPTController {
+  success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
   async chat(req, res) {
     try {
-      const { message, sessionId = `session_${Date.now()}`, language = 'en' } = req.body;
+      const body = req.body || {};
+      const { message, sessionId = `session_${Date.now()}`, language = 'en' } = body;
       
       if (!message || message.trim().length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Message is required'
-        });
+        return badRequest(res, 'Message is required');
       }
       
       logger.info(`[Chat Controller] Processing chat request: ${sessionId}`);
       
-      let location = req.body.location || req.user?.location || null;
+      let location = body.location || req.user?.location || null;
       
       if (location) {
         if (typeof location === 'string') {
@@ -38,16 +52,14 @@ class AgriGPTController {
         }
       }
       
-      if (!location || !location.lat || !location.lng) {
-        location = { lat: 20.5937, lng: 78.9629, country: 'India' };
-      }
-      
       const userContext = {
         user_id: req.user?.id || req.user?._id || 'anonymous',
         location: location,
         preferred_language: language,
         farm_size: req.user?.farm_size || 'Not specified',
-        profile: req.body.profile || {}
+        profile: body.profile || {},
+        hasRecentAgriContext: Boolean(body.hasRecentAgriContext),
+        recentMessages: Array.isArray(body.recentMessages) ? body.recentMessages.slice(-8) : []
       };
       
       const aiResponse = await aiService.chatWithAI(message.trim(), userContext);
@@ -55,63 +67,81 @@ class AgriGPTController {
       if (req.user) {
         await this.saveChatHistory(req.user.id || req.user._id, sessionId, message, {
           response: aiResponse.response,
-          provider: aiResponse.provider,
+          provider: 'AgriSmart AI',
           context: aiResponse.context
         });
       }
       
-      res.json({
-        success: aiResponse.success,
-        message: aiResponse.response,
-        response: aiResponse.response,
-        provider: aiResponse.provider,
-        context: aiResponse.context,
-        sessionId: sessionId,
-        timestamp: new Date().toISOString()
-      });
+      const isFallback = Boolean(aiResponse?.isFallback || aiResponse?.fallbackUsed || aiResponse?.fallback);
+      return this.success(
+        res,
+        {
+          message: aiResponse.response,
+          response: aiResponse.response,
+          context: aiResponse.context,
+          sessionId
+        },
+        {
+          isFallback,
+          degradedReason: isFallback ? (aiResponse?.degradedReason || 'ai_provider_unavailable') : null,
+          extra: {
+            message: aiResponse.response,
+            response: aiResponse.response,
+            provider: 'AgriSmart AI',
+            context: aiResponse.context,
+            sessionId,
+            timestamp: new Date().toISOString()
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('[Chat Controller] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to process chat request',
-        message: error.message
-      });
+      return serverError(
+        res,
+        'Failed to process chat request',
+        'Unable to generate response at the moment. Please try again.'
+      );
     }
   }
   
   async chatWithImage(req, res) {
     try {
-      const { message, sessionId: reqSessionId, language: reqLanguage } = req.body;
+      const body = req.body || {};
+      const { message, sessionId: reqSessionId, language: reqLanguage } = body;
       const file = req.file;
       const sessionId = reqSessionId || `session_${Date.now()}`;
       const language = reqLanguage || 'en';
 
       if (!file) {
-        return res.status(400).json({
-          success: false,
-          error: 'Image file is required'
-        });
+        return badRequest(res, 'Image file is required');
       }
 
-      let location = { lat: 20.5937, lng: 78.9629 };
+      let location = null;
       let profile = {};
       
-      if (req.body.location) {
+      if (body.location) {
         try {
-          location = typeof req.body.location === 'string' 
-            ? JSON.parse(req.body.location) 
-            : req.body.location;
+          location = typeof body.location === 'string' 
+            ? JSON.parse(body.location) 
+            : body.location;
         } catch (e) {
           logger.warn('Failed to parse location:', e);
         }
       }
+
+      if ((!location || !location.lat || !location.lng) && (body.latitude || body.longitude || body.lat || body.lng)) {
+        location = {
+          lat: Number(body.lat || body.latitude),
+          lng: Number(body.lng || body.longitude)
+        };
+      }
       
-      if (req.body.profile) {
+      if (body.profile) {
         try {
-          profile = typeof req.body.profile === 'string' 
-            ? JSON.parse(req.body.profile) 
-            : req.body.profile;
+          profile = typeof body.profile === 'string' 
+            ? JSON.parse(body.profile) 
+            : body.profile;
         } catch (e) {
           logger.warn('Failed to parse profile:', e);
         }
@@ -119,7 +149,7 @@ class AgriGPTController {
 
       let detectionResult = { primaryDisease: null };
       try {
-        const diseaseDetectionService = require('../services/DiseaseDetectionService');
+        const diseaseDetectionService = require('../services/diseaseDetectionService');
         detectionResult = await diseaseDetectionService.detectDiseaseFromImage(file.buffer);
       } catch (error) {
         logger.warn('[Chat with Image] Disease detection service unavailable:', error.message);
@@ -135,26 +165,43 @@ class AgriGPTController {
       const queryMessage = message || `I found this disease on my plant: ${detectionResult.primaryDisease?.name || 'Unknown'}. What should I do?`;
       const chatResult = await aiService.chatWithAI(queryMessage, userContext);
 
-      res.json({
-        success: true,
-        text: chatResult.response,
-        response: chatResult.response,
-        disease: detectionResult.primaryDisease,
-        data: {
-          ...detectionResult,
-          chatResponse: chatResult
+      const isFallback = Boolean(chatResult?.isFallback || chatResult?.fallbackUsed || chatResult?.fallback);
+      return this.success(
+        res,
+        {
+          text: chatResult.response,
+          response: chatResult.response,
+          disease: detectionResult.primaryDisease,
+          details: {
+            ...detectionResult,
+            chatResponse: chatResult
+          },
+          sessionId
         },
-        provider: chatResult.provider,
-        sessionId: sessionId,
-        timestamp: new Date().toISOString()
-      });
+        {
+          isFallback,
+          degradedReason: isFallback ? (chatResult?.degradedReason || 'ai_provider_unavailable') : null,
+          extra: {
+            text: chatResult.response,
+            response: chatResult.response,
+            disease: detectionResult.primaryDisease,
+            data: {
+              ...detectionResult,
+              chatResponse: chatResult
+            },
+            provider: 'AgriSmart AI',
+            sessionId,
+            timestamp: new Date().toISOString()
+          }
+        }
+      );
     } catch (error) {
       logger.error('[Chat with Image] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to process image',
-        text: 'I apologize, but I couldn\'t process the image. Please try again.'
-      });
+      return serverError(
+        res,
+        'Failed to process image',
+        'Unable to process image at the moment. Please try again.'
+      );
     }
   }
 
@@ -163,10 +210,7 @@ class AgriGPTController {
       const { messages, sessionId, language = 'en', context = {} } = req.body;
       
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Messages array is required'
-        });
+        return badRequest(res, 'Messages array is required');
       }
       
       const responses = [];
@@ -179,7 +223,7 @@ class AgriGPTController {
         
         responses.push({
           response: result.response,
-          provider: result.provider,
+          provider: 'AgriSmart AI',
           context: result.context
         });
       }
@@ -188,56 +232,65 @@ class AgriGPTController {
         ? await this.generateConversationSummary(responses)
         : null;
       
-      res.json({
-        success: true,
-        responses: responses,
-        summary: summary,
-        totalMessages: messages.length,
-        sessionId: sessionId || responses[0].sessionId
-      });
+      return this.success(
+        res,
+        {
+          responses,
+          summary,
+          totalMessages: messages.length,
+          sessionId: sessionId || responses[0].sessionId
+        },
+        {
+          extra: {
+            responses,
+            summary,
+            totalMessages: messages.length,
+            sessionId: sessionId || responses[0].sessionId
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('[Chat Context] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to process chat with context'
-      });
+      return serverError(res, 'Failed to process chat with context');
     }
   }
   
   async getSessions(req, res) {
     try {
       const userId = req.user?.id || req.user?._id;
-      const limit = parseInt(req.query.limit) || 20;
+      const safeLimit = parsePositiveInt(req.query.limit, 20, { min: 1, max: 100 });
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Authentication required'
-        });
+        return unauthorized(res, 'Authentication required');
       }
       
       const ChatSession = require('../models/ChatSession');
       
       const sessions = await ChatSession.find({ userId })
         .sort({ updatedAt: -1 })
-        .limit(limit)
+        .limit(safeLimit)
         .select('sessionId title messageCount lastMessage createdAt updatedAt')
         .lean();
       
-      res.json({
-        success: true,
-        sessions: sessions || [],
-        totalSessions: await ChatSession.countDocuments({ userId }).catch(() => 0)
-      });
+      const totalSessions = await ChatSession.countDocuments({ userId }).catch(() => 0);
+      return this.success(
+        res,
+        {
+          sessions: sessions || [],
+          totalSessions
+        },
+        {
+          extra: {
+            sessions: sessions || [],
+            totalSessions
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('[Get Sessions] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch sessions',
-        sessions: []
-      });
+      return serverError(res, 'Failed to fetch sessions');
     }
   }
   
@@ -247,10 +300,7 @@ class AgriGPTController {
       const userId = req.user?.id || req.user?._id;
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Authentication required'
-        });
+        return unauthorized(res, 'Authentication required');
       }
       
       const ChatSession = require('../models/ChatSession');
@@ -262,10 +312,7 @@ class AgriGPTController {
       }).lean();
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Session not found'
-        });
+        return notFound(res, 'Session not found');
       }
       
       const messages = await ChatMessage.find({ sessionId, userId })
@@ -275,26 +322,34 @@ class AgriGPTController {
       
       const insights = await this.generateSessionInsights(messages);
       
-      res.json({
-        success: true,
-        session: session,
-        messages: messages || [],
-        insights: insights,
-        statistics: {
+      const statistics = {
           totalMessages: messages.length,
           userMessages: messages.filter(m => m.role === 'user').length,
           assistantMessages: messages.filter(m => m.role === 'assistant').length,
           commonIntents: this.getCommonIntents(messages),
           duration: session.updatedAt - session.createdAt
+      };
+      return this.success(
+        res,
+        {
+          session,
+          messages: messages || [],
+          insights,
+          statistics
+        },
+        {
+          extra: {
+            session,
+            messages: messages || [],
+            insights,
+            statistics
+          }
         }
-      });
+      );
       
     } catch (error) {
       logger.error('[Session Details] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch session details'
-      });
+      return serverError(res, 'Failed to fetch session details');
     }
   }
   
@@ -304,10 +359,7 @@ class AgriGPTController {
       const userId = req.user?.id || req.user?._id;
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Authentication required'
-        });
+        return unauthorized(res, 'Authentication required');
       }
       
       const ChatSession = require('../models/ChatSession');
@@ -316,17 +368,15 @@ class AgriGPTController {
       await ChatSession.deleteOne({ sessionId, userId }).catch(() => {});
       await ChatMessage.deleteMany({ sessionId, userId }).catch(() => {});
       
-      res.json({
-        success: true,
-        message: 'Session deleted successfully'
-      });
+      return this.success(
+        res,
+        { message: 'Session deleted successfully' },
+        { extra: { message: 'Session deleted successfully' } }
+      );
       
     } catch (error) {
       logger.error('[Delete Session] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to delete session'
-      });
+      return serverError(res, 'Failed to delete session');
     }
   }
   
@@ -337,10 +387,7 @@ class AgriGPTController {
       const format = req.query.format || 'json';
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Authentication required'
-        });
+        return unauthorized(res, 'Authentication required');
       }
       
       const ChatMessage = require('../models/ChatMessage');
@@ -358,21 +405,28 @@ class AgriGPTController {
         res.send(textContent);
         
       } else {
-        res.json({
-          success: true,
-          sessionId: sessionId,
-          exportDate: new Date().toISOString(),
-          messageCount: messages.length,
-          messages: messages
-        });
+        return this.success(
+          res,
+          {
+            sessionId,
+            exportDate: new Date().toISOString(),
+            messageCount: messages.length,
+            messages
+          },
+          {
+            extra: {
+              sessionId,
+              exportDate: new Date().toISOString(),
+              messageCount: messages.length,
+              messages
+            }
+          }
+        );
       }
       
     } catch (error) {
       logger.error('[Export Session] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to export session'
-      });
+      return serverError(res, 'Failed to export session');
     }
   }
   
@@ -416,19 +470,26 @@ class AgriGPTController {
           .sort((a, b) => b.count - a.count);
       };
       
-      res.json({
-        success: true,
-        popularQuestions: popularQuestions,
-        categories: getQuestionCategories(popularQuestions),
-        timestamp: new Date().toISOString()
-      });
+      const categories = getQuestionCategories(popularQuestions);
+      return this.success(
+        res,
+        {
+          popularQuestions,
+          categories,
+          timestamp: new Date().toISOString()
+        },
+        {
+          extra: {
+            popularQuestions,
+            categories,
+            timestamp: new Date().toISOString()
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('[Popular Questions] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch popular questions'
-      });
+      return serverError(res, 'Failed to fetch popular questions');
     }
   }
   
@@ -467,19 +528,25 @@ class AgriGPTController {
         ? quickReplies[category] || quickReplies.general
         : Object.values(quickReplies).flat();
       
-      res.json({
-        success: true,
-        quickReplies: replies,
-        category: category || 'all',
-        count: replies.length
-      });
+      return this.success(
+        res,
+        {
+          quickReplies: replies,
+          category: category || 'all',
+          count: replies.length
+        },
+        {
+          extra: {
+            quickReplies: replies,
+            category: category || 'all',
+            count: replies.length
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('[Quick Replies] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch quick replies'
-      });
+      return serverError(res, 'Failed to fetch quick replies');
     }
   }
   
@@ -555,7 +622,6 @@ class AgriGPTController {
     const insights = [];
     
     const userMessages = messages.filter(m => m.role === 'user');
-    const assistantMessages = messages.filter(m => m.role === 'assistant');
     
     if (userMessages.length > 5) {
       insights.push('Detailed consultation session');
@@ -610,7 +676,7 @@ class AgriGPTController {
     report += `Total Messages: ${messages.length}\n\n`;
     report += '='.repeat(50) + '\n\n';
     
-    messages.forEach((msg, index) => {
+    messages.forEach((msg) => {
       report += `${msg.role.toUpperCase()} (${new Date(msg.timestamp).toLocaleString()}):\n`;
       report += `${msg.content}\n`;
       if (msg.intent) {
@@ -623,5 +689,6 @@ class AgriGPTController {
   }
 }
 
-module.exports = new AgriGPTController();
+const { bindInstanceMethods } = require('../utils/bindControllerMethods');
+module.exports = bindInstanceMethods(new AgriGPTController());
 

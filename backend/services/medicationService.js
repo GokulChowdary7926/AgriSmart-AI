@@ -1,5 +1,10 @@
+const mongoose = require('mongoose');
 const Disease = require('../models/Disease');
 const logger = require('../utils/logger');
+
+function mongoReady() {
+  return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+}
 
 class MedicationService {
   constructor() {
@@ -9,8 +14,7 @@ class MedicationService {
       biological: 0.7
     };
   }
-
-  async getMedicationRecommendations(diseaseName, cropType, severity, location = {}) {
+  async getMedicationRecommendations(diseaseName, cropType, severity, _location = {}) {
     try {
       const disease = await this.getDiseaseInfo(diseaseName);
       
@@ -47,7 +51,11 @@ class MedicationService {
 
   async getDiseaseInfo(diseaseName) {
     const normalizedName = diseaseName.toLowerCase().trim();
-    
+
+    if (!Disease || !mongoReady()) {
+      return null;
+    }
+
     let disease = await Disease.findOne({
       $or: [
         { name: { $regex: new RegExp(`^${normalizedName}$`, 'i') } },
@@ -608,7 +616,26 @@ class MedicationService {
     };
   }
 
-  async getFallbackRecommendations(diseaseName, cropType) {
+  async getFallbackRecommendations(diseaseName, _cropType) {
+    const fallbackTreatments = [
+      {
+        name: 'Broad-spectrum fungicide',
+        dosage: 'Mancozeb 75% WP @ 2g/liter',
+        frequency: 'Every 7-10 days',
+        type: 'chemical',
+        effectiveness: 75
+      }
+    ];
+    const organicTreatments = [
+      {
+        name: 'Organic option',
+        dosage: 'Neem oil 1% + soap solution',
+        frequency: 'Every 5-7 days',
+        type: 'organic',
+        effectiveness: 65
+      }
+    ];
+
     return {
       disease: diseaseName,
       message: 'Specific information not found. General recommendations:',
@@ -634,11 +661,28 @@ class MedicationService {
         'Avoid overhead irrigation',
         'Maintain proper plant nutrition'
       ],
-      suggestion: 'Consult local agriculture officer for accurate diagnosis'
+      suggestion: 'Consult local agriculture officer for accurate diagnosis',
+      disease_info: {
+        name: diseaseName,
+        scientificName: 'Not identified',
+        category: 'Unknown',
+        severity: 'medium'
+      },
+      immediate_actions: this.getImmediateActions({}, 'medium'),
+      chemical_treatments: fallbackTreatments,
+      organic_treatments: organicTreatments,
+      biological_treatments: [],
+      treatment_plan: this.generateApplicationSchedule('medium'),
+      safety_precautions: this.getSafetyPrecautions({ treatments: [] }),
+      emergency_contacts: this.getEmergencyContacts(),
+      _quality: {
+        isFallback: true,
+        degradedReason: 'medication_disease_not_found'
+      }
     };
   }
 
-  getEmergencyRecommendations(diseaseName, cropType) {
+  getEmergencyRecommendations(diseaseName, _cropType) {
     return {
       emergency: true,
       disease: diseaseName,

@@ -1,20 +1,23 @@
-const axios = require('axios');
 const logger = require('../utils/logger');
-const apiErrorHandler = require('./api/apiErrorHandler');
 const fallbackManager = require('./api/fallbackManager');
-const retryManager = require('./api/retryManager');
 const { CircuitBreakerManager } = require('./api/circuitBreaker');
 const apiMonitor = require('./monitoring/apiMonitor');
 const ruleBasedChatbot = require('./ruleBasedChatbot');
+const resilientHttpClient = require('./api/resilientHttpClient');
+const localAgriLLM = require('./LocalAgriLLMService');
+const marketPriceAPIService = require('./marketPriceAPIService');
+const governmentSchemeService = require('./governmentSchemeService');
+
+function getPerplexityApiKey() {
+    const key = process.env.PERPLEXITY_API_KEY;
+    if (!key || key === 'your_perplexity_api_key_here' || key.trim() === '') return null;
+    return key.startsWith('pplx-') ? key : null;
+}
 
 class AIService {
     constructor() {
-        this.providers = [
-            { name: 'perplexity', enabled: !!process.env.PERPLEXITY_API_KEY, priority: 1 },
-            { name: 'google', enabled: !!process.env.GOOGLE_AI_KEY, priority: 2 },
-            { name: 'openai', enabled: !!process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your_openai_api_key_here', priority: 3 },
-            { name: 'deepseek', enabled: !!process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'your_deepseek_api_key_here', priority: 4 }
-        ].filter(p => p.enabled).sort((a, b) => a.priority - b.priority);
+        const perplexityKey = getPerplexityApiKey();
+        this.providers = perplexityKey ? [{ name: 'perplexity' }] : [];
         
         this.circuitBreakers = {};
         this.providers.forEach(provider => {
@@ -24,10 +27,45 @@ class AIService {
             );
         });
         
-        logger.info(`[AI Service] Initialized with ${this.providers.length} provider(s): ${this.providers.map(p => p.name).join(', ')}`);
+        if (this.providers.length > 0) {
+            logger.info('[AI Service] Initialized with Perplexity AI for AgriGPT chat');
+        } else {
+            logger.info('[AI Service] Initialized in LOCAL-ONLY mode (set PERPLEXITY_API_KEY for AI chat)');
+        }
     }
 
     async chatWithAI(message, context = {}) {
+        const language = (context.preferred_language || context.language || 'en').toLowerCase().split('-')[0];
+        if (!this._isAgricultureQuery(message, context)) {
+            return {
+                success: true,
+                isFallback: true,
+                fallback: true,
+                response: this._getNonAgricultureResponse(language),
+                provider: 'AgriSmart AI',
+                source: 'AgriSmart AI',
+                degradedReason: 'non_agriculture_query',
+                confidence: 1
+            };
+        }
+
+        const normalizedMessage = String(message || '').toLowerCase();
+        const inferredState = await this._inferStateFromContextOrQuery(context, normalizedMessage);
+        if (this._isMarketPriceQuery(normalizedMessage)) {
+            return await this._handleMarketPriceQuery({
+                message: normalizedMessage,
+                language,
+                state: inferredState
+            });
+        }
+        if (this._isGovernmentSchemeQuery(normalizedMessage)) {
+            return await this._handleGovernmentSchemeQuery({
+                language,
+                state: inferredState,
+                context
+            });
+        }
+
         let locationInfo = '';
         if (context.location && (context.location.lat || context.location.latitude)) {
             const lat = context.location.lat || context.location.latitude;
@@ -232,15 +270,14 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                     return { 
                         success: true, 
                     response: cleanedResponse,
-                        provider: provider.name,
+                        provider: 'AgriSmart AI',
+                        source: 'AgriSmart AI',
                     context: this._extractCropContext(cleanedResponse)
                 };
                 
             } catch (error) {
                 const responseTime = Date.now() - startTime;
                 const errorMessage = error.message || 'Unknown error';
-                const errorDetails = error.response?.data || error.stack;
-                
                 logger.error(`[AI Service] Error with ${provider.name}:`, errorMessage);
                 if (error.response) {
                     logger.error(`[AI Service] ${provider.name} API response:`, JSON.stringify(error.response.data).substring(0, 200));
@@ -258,16 +295,42 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                 
                 if (provider === this.providers[this.providers.length - 1]) {
                     logger.info('[AI Service] All AI providers failed, trying rule-based chatbot...');
+                    const localResult = localAgriLLM.answer(message, {
+                        language,
+                        location: context.location || null
+                    });
+                    if (localResult?.success) {
+                        apiMonitor.recordRequest('local-llm', true, 0, true);
+                        return {
+                            success: true,
+                            isFallback: true,
+                            fallback: true,
+                            response: localResult.response,
+                            provider: 'AgriSmart AI',
+                            source: 'Local Agri LLM',
+                            degradedReason: 'ai_provider_unavailable',
+                            confidence: localResult.confidence || 0.6,
+                            context: {
+                                localSources: localResult.sources || []
+                            }
+                        };
+                    }
                     
                     const ruleBasedResponse = ruleBasedChatbot.getResponse(message);
                     
                     if (ruleBasedResponse.success) {
+                        if (language === 'ta') {
+                            const localized = this._localizeRuleBasedFallback(ruleBasedResponse.response);
+                            if (localized) {
+                                ruleBasedResponse.response = localized;
+                            }
+                        }
                         logger.info('[AI Service] Rule-based chatbot provided answer');
                         apiMonitor.recordRequest('rule-based', true, 0, true);
                         return ruleBasedResponse;
                     }
                     
-                    const fallbackData = fallbackManager.getFallback('ai');
+                    fallbackManager.getFallback('ai');
                     apiMonitor.recordRequest('fallback', true, 0, true);
                     
                     let fallbackMessage = ruleBasedResponse.response;
@@ -278,15 +341,17 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                     
                     return {
                         success: ruleBasedResponse.success,
+                        isFallback: true,
                         fallback: !ruleBasedResponse.success,
                         response: fallbackMessage,
-                        provider: ruleBasedResponse.provider || 'fallback',
-                        source: ruleBasedResponse.source || 'Fallback',
+                        provider: 'AgriSmart AI',
+                        source: 'AgriSmart AI',
+                        degradedReason: 'ai_provider_unavailable',
                         error: errorMessage.includes('quota') ? 'quota_exceeded' : 'service_unavailable'
                     };
                 }
                 
-                continue; // Try next provider
+                continue;
             }
         }
 
@@ -295,9 +360,11 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
         
         return {
             success: ruleBasedResponse.success,
+            isFallback: true,
             response: ruleBasedResponse.response,
-            provider: ruleBasedResponse.provider || 'rule-based',
-            source: ruleBasedResponse.source || 'Rule-Based Chatbot'
+            provider: 'AgriSmart AI',
+            source: 'AgriSmart AI',
+            degradedReason: 'ai_provider_not_configured'
         };
     }
 
@@ -308,27 +375,36 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
         }
 
         try {
-            const response = await axios.post(
-                'https://api.perplexity.ai/chat/completions',
-                {
+            // Perplexity can reject oversized prompts with query length errors.
+            // Keep both system + user prompts compact for reliability.
+            const compactSystemPrompt = this._buildCompactPerplexityPrompt(systemPrompt);
+            const compactUserMessage = String(message || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+
+            const result = await resilientHttpClient.request({
+                serviceName: 'perplexity-ai-chat',
+                method: 'post',
+                url: 'https://api.perplexity.ai/chat/completions',
+                data: {
                     model: 'sonar',
                     messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: message }
+                        { role: 'system', content: compactSystemPrompt },
+                        { role: 'user', content: compactUserMessage }
                     ],
                     temperature: 0.7,
-                    max_tokens: 2048,
+                    max_tokens: 1024,
                     top_p: 0.9,
                     stream: false
                 },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 30000
-                }
-            );
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            });
+            if (!result.success) {
+                throw new Error(result.error?.message || 'Perplexity AI request failed');
+            }
+            const response = result.response;
 
             if (!response.data || !response.data.choices || !response.data.choices[0]) {
                 throw new Error('Invalid response from Perplexity AI');
@@ -342,6 +418,17 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
             const text = choice.message.content;
             return { success: true, text };
         } catch (error) {
+            const rawMessage = String(
+                error?.response?.data?.error?.message ||
+                error?.response?.data?.message ||
+                error?.message ||
+                ''
+            ).toLowerCase();
+
+            if (rawMessage.includes('query length limit exceeded') || rawMessage.includes('max allowed query')) {
+                throw new Error('AI request too long. Please try a shorter question.');
+            }
+
             if (error.response?.status === 429) {
                 const retryAfter = error.response.headers['retry-after'] || 60;
                 logger.warn(`[Perplexity AI] Rate limit exceeded. Retry after ${retryAfter} seconds.`);
@@ -351,6 +438,16 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
         }
     }
 
+    _buildCompactPerplexityPrompt(systemPrompt) {
+        const basePrompt = `You are AgriSmart AI, an agriculture assistant for Indian farmers.
+Provide practical, concise, accurate advice with clear bullet points.
+Use Indian farming context (Kharif/Rabi, local conditions) when relevant.
+Prioritize safe and actionable recommendations.`;
+        if (!systemPrompt || typeof systemPrompt !== 'string') return basePrompt;
+        const compact = systemPrompt.replace(/\s+/g, ' ').trim().slice(0, 120);
+        return `${basePrompt}\nContext: ${compact}`;
+    }
+
     async _callGoogleAI(systemPrompt, userMessage) {
         const apiKey = process.env.GOOGLE_AI_KEY;
         if (!apiKey || apiKey === 'your_google_ai_key_here') {
@@ -358,9 +455,11 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
         }
 
         try {
-        const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-            {
+        const result = await resilientHttpClient.request({
+                serviceName: 'google-ai-chat',
+                method: 'post',
+                url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+            data: {
                 contents: [userMessage],
                 systemInstruction: { parts: [{ text: systemPrompt }] },
                 generationConfig: {
@@ -370,11 +469,13 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                     maxOutputTokens: 1024,
                 }
             },
-            { 
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 30000
-            }
-        );
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000
+        });
+        if (!result.success) {
+            throw new Error(result.error?.message || 'Google AI request failed');
+        }
+        const response = result.response;
 
         if (!response.data.candidates || !response.data.candidates[0]) {
             throw new Error('Invalid response from Google AI');
@@ -399,9 +500,11 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
             throw new Error('OpenAI key not configured');
         }
 
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
+        const result = await resilientHttpClient.request({
+            serviceName: 'openai-chat',
+            method: 'post',
+            url: 'https://api.openai.com/v1/chat/completions',
+            data: {
                 model: "gpt-3.5-turbo",
                 messages: [
                     { role: "system", content: systemPrompt },
@@ -410,14 +513,16 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                 max_tokens: 1000,
                 temperature: 0.7
             },
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 30000
-            }
-        );
+            headers: { 
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000
+        });
+        if (!result.success) {
+            throw new Error(result.error?.message || 'OpenAI request failed');
+        }
+        const response = result.response;
 
         return { success: true, text: response.data.choices[0].message.content };
     }
@@ -428,9 +533,11 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
             throw new Error('DeepSeek key not configured');
         }
 
-        const response = await axios.post(
-            'https://api.deepseek.com/chat/completions',
-            {
+        const result = await resilientHttpClient.request({
+            serviceName: 'deepseek-chat',
+            method: 'post',
+            url: 'https://api.deepseek.com/chat/completions',
+            data: {
                 model: "deepseek-chat",
                 messages: [
                     { role: "system", content: systemPrompt },
@@ -439,14 +546,16 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                 max_tokens: 1000,
                 temperature: 0.7
             },
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 30000
-            }
-        );
+            headers: { 
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000
+        });
+        if (!result.success) {
+            throw new Error(result.error?.message || 'DeepSeek request failed');
+        }
+        const response = result.response;
 
         return { success: true, text: response.data.choices[0].message.content };
     }
@@ -479,6 +588,316 @@ Remember: Format your response EXACTLY like DeepSeek AI - with clear visual hier
                                aiResponse.toLowerCase().includes('symptom'),
             has_market_advice: aiResponse.toLowerCase().includes('price') || 
                               aiResponse.toLowerCase().includes('market')
+        };
+    }
+
+    _isAgricultureQuery(message, context = {}) {
+        const text = String(message || '').trim().toLowerCase();
+        if (!text) return false;
+        const normalized = text.replace(/[\s\-_/]+/g, '');
+        const containsKeyword = (keyword) => {
+            const key = String(keyword || '').toLowerCase();
+            if (!key) return false;
+            return text.includes(key) || normalized.includes(key.replace(/[\s\-_/]+/g, ''));
+        };
+
+        const explicitNonAgri = [
+            'coding', 'programming', 'javascript', 'python code', 'interview question',
+            'movie', 'song', 'cricket score', 'football score', 'stock tips', 'crypto', 'bitcoin'
+        ];
+        if (explicitNonAgri.some((keyword) => containsKeyword(keyword))) {
+            return false;
+        }
+
+        const agriKeywords = [
+            // English
+            'agri', 'agriculture', 'farm', 'farming', 'farmer', 'crop', 'crops', 'seed', 'sowing',
+            'harvest', 'harvesting', 'irrigation', 'soil', 'fertility', 'fertilizer', 'fertiliser',
+            'pest', 'disease', 'plant', 'weather', 'rainfall', 'market price', 'mandi', 'yield',
+            'organic farming', 'compost', 'manure', 'npk', 'ph', 'livestock', 'dairy',
+            // Core crop names
+            'rice', 'paddy', 'wheat', 'maize', 'onion', 'tomato', 'potato', 'groundnut', 'cotton', 'sugarcane',
+            'pearlmillet', 'pearl millet', 'kambu', 'cumbu', 'sorghum', 'millet',
+            // Tamil
+            'விவசாய', 'பயிர்', 'விதை', 'நடவு', 'அறுவடை', 'மண்', 'உரம்', 'பாசனம்',
+            'நோய்', 'பூச்சி', 'விளைச்சல்', 'சந்தை', 'வானிலை', 'கால்நடை', 'பசளை',
+            'கம்போஸ்ட்', 'நெல்', 'அரிசி', 'கோதுமை', 'கரும்பு', 'பருத்தி', 'மக்காச்சோளம்', 'வெங்காயம்', 'தக்காளி', 'கம்பு', 'சோளம்'
+        ];
+
+        const followUpKeywords = [
+            'detail', 'details', 'detailed', 'explain', 'explanation', 'more', 'elaborate',
+            'விவரம்', 'விரிவாக', 'விரிவான', 'விளக்கம்', 'மேலும்'
+        ];
+        const hasRecentAgriContext = Boolean(context?.hasRecentAgriContext) || this._hasRecentAgricultureContext(context);
+        if (followUpKeywords.some((keyword) => containsKeyword(keyword))) {
+            return hasRecentAgriContext;
+        }
+
+        const likelyCropTokens = [
+            'pearlmillet', 'bajra', 'cumbu', 'kambu', 'sorghum', 'ragi',
+            'rice', 'paddy', 'wheat', 'maize', 'millet',
+            'நெல்', 'கோதுமை', 'மக்காச்சோளம்', 'கம்பு', 'சோளம்', 'கேழ்வரகு'
+        ];
+        const compactToken = normalized;
+        if (compactToken && likelyCropTokens.some((token) => compactToken === token || compactToken.includes(token))) {
+            return true;
+        }
+
+        return agriKeywords.some((keyword) => containsKeyword(keyword));
+    }
+
+    _hasRecentAgricultureContext(context = {}) {
+        const recent = Array.isArray(context?.recentMessages) ? context.recentMessages.slice(-8) : [];
+        if (!recent.length) return false;
+        return recent.some((msg) => {
+            if (String(msg?.role || '').toLowerCase() !== 'assistant') return false;
+            const content = String(msg?.content || '').toLowerCase();
+            if (!content) return false;
+            return [
+                'agri', 'agriculture', 'farm', 'crop', 'soil', 'fertilizer', 'irrigation',
+                'pest', 'disease', 'weather', 'market', 'scheme',
+                'விவசாய', 'பயிர்', 'மண்', 'உரம்', 'பாசனம்', 'நோய்', 'பூச்சி', 'சந்தை',
+                'நெல்', 'அரிசி', 'கோதுமை', 'கரும்பு', 'தக்காளி', 'கம்பு', 'சோளம்', 'pearlmillet', 'pearl millet', 'millet'
+            ].some((keyword) => content.includes(keyword));
+        });
+    }
+
+    _getNonAgricultureResponse(language) {
+        if (language === 'ta') {
+            return [
+                '### **இது விவசாய உதவி சாட்பாட்**',
+                '',
+                'இந்த சாட்பாட் **விவசாயம் தொடர்பான கேள்விகளுக்கே** பதில் வழங்கும்.',
+                '',
+                '**தயவு செய்து கீழே உள்ள தலைப்புகளில் கேளுங்கள்:**',
+                '- பயிர் பரிந்துரை',
+                '- மண் வளம் மற்றும் உர மேலாண்மை',
+                '- நோய் / பூச்சி கட்டுப்பாடு',
+                '- பாசனம் மற்றும் வானிலை ஆலோசனை',
+                '- சந்தை விலை மற்றும் அரசு திட்டங்கள்'
+            ].join('\n');
+        }
+
+        return [
+            '### **This is an agriculture-focused chatbot**',
+            '',
+            'I answer **agriculture-related questions only**.',
+            '',
+            '**Please ask about topics like:**',
+            '- Crop recommendations',
+            '- Soil fertility and fertilizer planning',
+            '- Pest and disease management',
+            '- Irrigation and weather guidance',
+            '- Market prices and government schemes'
+        ].join('\n');
+    }
+
+    _localizeRuleBasedFallback(responseText) {
+        const text = String(responseText || '');
+        if (!text) return null;
+        if (!text.includes('### **Agricultural Guidance**')) return null;
+
+        return [
+            '### **விவசாய ஆலோசனை**',
+            '',
+            'உங்கள் கேள்விக்கு துல்லியமான ஆலோசனை வழங்க, தயவுசெய்து கீழேயுள்ள விவரங்களில் குறைந்தது ஒன்றை குறிப்பிடவும்:',
+            '',
+            '- பயிர் பெயர் (எ.கா., நெல், கோதுமை, கரும்பு, தக்காளி)',
+            '- தலைப்பு (பருவம், மண், பாசனம், உரம், நோய், விளைச்சல்)',
+            '- உங்கள் இடம் (மாவட்டம்/மாநிலம்)',
+            '',
+            '**உதாரண கேள்விகள்:**',
+            '- கரும்புக்கு உர அட்டவணை என்ன?',
+            '- நெல் நோய் கட்டுப்பாடு எப்படி செய்யலாம்?',
+            '- என் பகுதியில் இப்போது எந்த பயிர் சிறந்தது?',
+            '- சந்தை விலை நிலவரம் என்ன?'
+        ].join('\n');
+    }
+
+    _isMarketPriceQuery(text) {
+        const keywords = [
+            'market price', 'price today', 'commodity price', 'mandi', 'agmarknet', 'market rate',
+            'சந்தை விலை', 'விலை என்ன', 'இன்றைய விலை', 'மண்டி விலை'
+        ];
+        return keywords.some((k) => text.includes(k));
+    }
+
+    _isGovernmentSchemeQuery(text) {
+        const keywords = [
+            'government scheme', 'farmer scheme', 'subsidy', 'pm kisan', 'insurance scheme', 'yojana',
+            'அரசுத் திட்டம்', 'அரசு திட்டம்', 'மானியம்', 'விவசாய திட்டம்', 'திட்டங்கள்', 'அரசு உதவி'
+        ];
+        return keywords.some((k) => text.includes(k));
+    }
+
+    async _inferStateFromContextOrQuery(context, normalizedMessage) {
+        const contextState = String(context?.location?.state || '').trim();
+        if (contextState) return contextState;
+        const lat = Number(context?.location?.lat || context?.location?.latitude);
+        const lng = Number(context?.location?.lng || context?.location?.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            try {
+                const locationService = require('./locationService');
+                const addressData = await locationService.getLocationFromCoordinates(lat, lng).catch(() => null);
+                const resolvedState = String(addressData?.state || '').trim();
+                if (resolvedState) return resolvedState;
+            } catch (_) {
+                // Best-effort reverse geocode for state inference.
+            }
+        }
+        if (normalizedMessage.includes('tamil nadu') || normalizedMessage.includes('தமிழ்நாடு') || normalizedMessage.includes('தமிழ் நாடு')) {
+            return 'Tamil Nadu';
+        }
+        return 'Tamil Nadu';
+    }
+
+    _extractCommodity(normalizedMessage) {
+        const commodityMap = [
+            { keys: ['நெல்', 'அரிசி', 'rice', 'paddy'], value: 'Rice' },
+            { keys: ['கோதுமை', 'wheat'], value: 'Wheat' },
+            { keys: ['மக்காச்சோளம்', 'maize'], value: 'Maize' },
+            { keys: ['வெங்காயம்', 'onion'], value: 'Onion' },
+            { keys: ['தக்காளி', 'tomato'], value: 'Tomato' },
+            { keys: ['உருளைக்கிழங்கு', 'potato'], value: 'Potato' },
+            { keys: ['நிலக்கடலை', 'groundnut'], value: 'Groundnut' },
+            { keys: ['பருத்தி', 'cotton'], value: 'Cotton' },
+            { keys: ['கரும்பு', 'sugarcane'], value: 'Sugarcane' }
+        ];
+
+        const found = commodityMap.find((item) => item.keys.some((k) => normalizedMessage.includes(k)));
+        return found ? found.value : null;
+    }
+
+    async _handleMarketPriceQuery({ message, language, state }) {
+        const commodity = this._extractCommodity(message);
+        let prices = [];
+        try {
+            if (commodity) {
+                prices = await marketPriceAPIService.getRealTimePrices(commodity, state);
+            } else {
+                prices = ['Rice', 'Wheat', 'Maize', 'Tomato', 'Onion'].flatMap((name) =>
+                    marketPriceAPIService.generateMockPrices(name, state)
+                );
+            }
+        } catch (_) {
+            prices = commodity
+                ? marketPriceAPIService.generateMockPrices(commodity, state)
+                : ['Rice', 'Wheat', 'Maize', 'Tomato', 'Onion'].flatMap((name) => marketPriceAPIService.generateMockPrices(name, state));
+        }
+
+        const filtered = (prices || []).filter((p) => {
+            const itemCommodity = String(p.commodity || p.name || '').toLowerCase();
+            const itemState = String(p.state || p.market?.state || p.market?.location || '').toLowerCase();
+            const targetState = String(state || 'Tamil Nadu').toLowerCase();
+            const commodityMatch = commodity ? itemCommodity.includes(String(commodity).toLowerCase()) : true;
+            const stateMatch = itemState ? (itemState.includes(targetState) || targetState.includes(itemState)) : true;
+            return commodityMatch && stateMatch;
+        });
+
+        const sourceRows = filtered.length > 0 ? filtered : (prices || []);
+        const top = sourceRows.slice(0, 6).map((p) => {
+            const comm = p.commodity || p.name || 'Commodity';
+            const value = typeof p.price === 'object' ? p.price.value : p.price;
+            const district = p.district || p.market?.location || p.market?.state || p.state || '-';
+            return { comm, value: Number(value || 0), district };
+        });
+
+        if (language === 'ta') {
+            const lines = top.map((row) => `- **${row.comm}**: ₹${row.value.toFixed(2)}/kg (${row.district})`);
+            return {
+                success: true,
+                isFallback: true,
+                fallback: true,
+                provider: 'AgriSmart AI',
+                source: 'AgriSmart AI',
+                degradedReason: 'market_direct_handler',
+                response: [
+                    `### **${state} நேரடி சந்தை விலை தகவல்**`,
+                    '',
+                    commodity ? `**பொருள்:** ${commodity}` : '**முக்கிய பயிர்கள்:**',
+                    ...lines,
+                    '',
+                    'மேலும் குறிப்பிட்ட பயிர் பெயரை கொடுத்தால், அதற்கான விரிவான சந்தை விலையை தருகிறேன்.'
+                ].join('\n')
+            };
+        }
+
+        return {
+            success: true,
+            isFallback: true,
+            fallback: true,
+            provider: 'AgriSmart AI',
+            source: 'AgriSmart AI',
+            degradedReason: 'market_direct_handler',
+            response: `### **${state} Market Prices**\n\n${top.map((row) => `- **${row.comm}**: ₹${row.value.toFixed(2)}/kg (${row.district})`).join('\n')}`
+        };
+    }
+
+    async _handleGovernmentSchemeQuery({ language, state, context }) {
+        const farmerProfile = {
+            location: {
+                state,
+                district: context?.location?.district || 'Chennai'
+            },
+            farmDetails: {
+                landSize: context?.profile?.landSize || 1,
+                landOwnership: true
+            },
+            annualIncome: context?.profile?.annualIncome || 100000,
+            cropsGrown: context?.profile?.crops || ['rice'],
+            socialCategory: context?.profile?.socialCategory || ''
+        };
+
+        let recommendations;
+        try {
+            recommendations = await governmentSchemeService.recommendSchemes(farmerProfile, {
+                showOnlyEligible: false,
+                sortBy: 'relevance_score'
+            });
+        } catch (_) {
+            recommendations = governmentSchemeService.getFallbackRecommendations(farmerProfile);
+        }
+
+        const allSchemes = recommendations?.allSchemes || [];
+        const tamilNaduSchemes = allSchemes.filter((s) => (s.state || '').toLowerCase().includes('tamil') || String(s.level || '').toLowerCase() === 'state');
+        const centralSchemes = allSchemes.filter((s) => String(s.level || '').toLowerCase() === 'central');
+        const topTamilNadu = tamilNaduSchemes.slice(0, 3);
+        const topCentral = centralSchemes.slice(0, 3);
+
+        if (language === 'ta') {
+            return {
+                success: true,
+                isFallback: true,
+                fallback: true,
+                provider: 'AgriSmart AI',
+                source: 'AgriSmart AI',
+                degradedReason: 'schemes_direct_handler',
+                response: [
+                    `### **${state} + இந்திய அரசு விவசாய திட்டங்கள்**`,
+                    '',
+                    '**தமிழ்நாடு திட்டங்கள்:**',
+                    ...(topTamilNadu.length
+                        ? topTamilNadu.map((s) => `- **${s.name}** (${s.schemeId || 'ID'})`)
+                        : ['- தற்போது நேரடி மாநில திட்ட பட்டியல் கிடைக்கவில்லை; மத்திய திட்டங்கள் கீழே.']),
+                    '',
+                    '**இந்தியா (மத்திய) திட்டங்கள்:**',
+                    ...(topCentral.length
+                        ? topCentral.map((s) => `- **${s.name}** (${s.schemeId || 'ID'})`)
+                        : ['- தற்போது மத்திய திட்ட பட்டியல் கிடைக்கவில்லை.']),
+                    '',
+                    'நீங்கள் உங்கள் நில விவரம் (ஏக்கர்), வருமானம், மாவட்டம் சொன்னால் தகுதி அடிப்படையில் திட்டங்களை வரிசைப்படுத்தி தருகிறேன்.'
+                ].join('\n')
+            };
+        }
+
+        return {
+            success: true,
+            isFallback: true,
+            fallback: true,
+            provider: 'AgriSmart AI',
+            source: 'AgriSmart AI',
+            degradedReason: 'schemes_direct_handler',
+            response: `### **${state} + India Government Schemes**\n\n${topTamilNadu.concat(topCentral).map((s) => `- **${s.name}** (${s.schemeId || 'ID'})`).join('\n')}`
         };
     }
 }

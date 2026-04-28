@@ -26,7 +26,6 @@ import {
   CircularProgress,
   Tabs,
   Tab,
-  Divider,
   IconButton,
   Collapse,
   Autocomplete
@@ -36,16 +35,13 @@ import {
   TrendingDown as TrendingDownIcon,
   TrendingFlat as TrendingFlatIcon,
   Search as SearchIcon,
-  Notifications as NotificationsIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
-  AttachMoney as MoneyIcon,
   Store as StoreIcon,
   Update as UpdateIcon,
   FilterList as FilterIcon,
   CompareArrows as CompareIcon,
-  Clear as ClearIcon,
-  CalendarToday as CalendarIcon
+  Clear as ClearIcon
 } from '@mui/icons-material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import logger from '../services/logger';
@@ -53,8 +49,76 @@ import DataQualityIndicator from '../components/common/DataQualityIndicator';
 import LoadingState from '../components/common/LoadingState';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../services/api';
+import { useLanguage } from '../contexts/LanguageContext';
+import { getBestAvailableLocation } from '../services/realtimeLocation';
+
+export const getWindowStartDate = (days, referenceDate = new Date()) => {
+  const start = new Date(referenceDate);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  return start;
+};
+
+export const getCurrentRange = ({ selectedDate, timePeriod, customStartDate, customEndDate }) => {
+  if (selectedDate) {
+    const day = new Date(selectedDate);
+    if (Number.isNaN(day.getTime())) return null;
+    day.setHours(0, 0, 0, 0);
+    const end = new Date(day);
+    end.setHours(23, 59, 59, 999);
+    return { start: day, end };
+  }
+
+  if (timePeriod === '7days') {
+    return { start: getWindowStartDate(7), end: new Date() };
+  }
+
+  if (timePeriod === '30days') {
+    return { start: getWindowStartDate(30), end: new Date() };
+  }
+
+  if (timePeriod === 'custom' && customStartDate && customEndDate) {
+    const start = new Date(customStartDate);
+    const end = new Date(customEndDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    if (start > end) return null;
+    return { start, end };
+  }
+
+  return null;
+};
+
+export const getCompareRange = ({ comparePeriod, currentRange }) => {
+  const compareDaysMap = { '7days': 7, '30days': 30, '60days': 60 };
+  const compareDays = compareDaysMap[comparePeriod] || 7;
+
+  if (currentRange) {
+    const compareEnd = new Date(currentRange.start);
+    compareEnd.setMilliseconds(-1);
+
+    const compareStart = new Date(compareEnd);
+    compareStart.setDate(compareStart.getDate() - (compareDays - 1));
+    compareStart.setHours(0, 0, 0, 0);
+
+    return { start: compareStart, end: compareEnd };
+  }
+
+  return { start: getWindowStartDate(compareDays), end: new Date() };
+};
+
+export const filterByDateRange = (items, range) => {
+  if (!range?.start || !range?.end) return items;
+  return items.filter(item => {
+    const itemDate = new Date(item.date || item.recordedAt || item.timestamp);
+    if (Number.isNaN(itemDate.getTime())) return false;
+    return itemDate >= range.start && itemDate <= range.end;
+  });
+};
 
 export default function Market() {
+  const { t, language } = useLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const [commodity, setCommodity] = useState('');
   const [selectedCommodity, setSelectedCommodity] = useState('');
@@ -64,9 +128,12 @@ export default function Market() {
   const [selectedState, setSelectedState] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [timePeriod, setTimePeriod] = useState('all'); // 'all', '7days', '30days', 'custom'
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [compareMode, setCompareMode] = useState(false);
   const [comparePeriod, setComparePeriod] = useState('7days'); // Period to compare with
   const [showFilters, setShowFilters] = useState(false);
+  const locale = language === 'ta' ? 'ta-IN' : 'en-IN';
 
   useEffect(() => {
     const commodityParam = searchParams.get('commodity');
@@ -75,6 +142,25 @@ export default function Market() {
       setSelectedCommodity(commodityParam);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const initializeLocationState = async () => {
+      if (selectedState) return;
+      try {
+        const resolved = await getBestAvailableLocation(api, language);
+        if (isMounted && resolved?.state) {
+          setSelectedState(resolved.state);
+        }
+      } catch (error) {
+        logger.debug('Market location bootstrap skipped', error);
+      }
+    };
+    initializeLocationState();
+    return () => {
+      isMounted = false;
+    };
+  }, [language, selectedState]);
 
   const { data: commodities } = useQuery({
     queryKey: ['market', 'commodities'],
@@ -138,6 +224,37 @@ export default function Market() {
     'Puducherry'
   ];
 
+  const normalizeStateName = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const compact = raw.toLowerCase().replace(/\s+/g, '');
+    const aliasMap = {
+      தமிழ்நாடு: 'Tamil Nadu',
+      tamilnadu: 'Tamil Nadu',
+      tamilnaduindia: 'Tamil Nadu',
+      கேரளா: 'Kerala',
+      kerala: 'Kerala',
+      கர்நாடகா: 'Karnataka',
+      karnataka: 'Karnataka',
+      ஆந்திரப்பிரதேசம்: 'Andhra Pradesh',
+      andhrapradesh: 'Andhra Pradesh',
+      தெலுங்கானா: 'Telangana',
+      telangana: 'Telangana',
+      மகாராஷ்டிரா: 'Maharashtra',
+      maharashtra: 'Maharashtra',
+      குஜராத்: 'Gujarat',
+      gujarat: 'Gujarat',
+      டெல்லி: 'Delhi',
+      delhi: 'Delhi'
+    };
+    return aliasMap[compact] || raw;
+  };
+
+  const normalizedSelectedState = useMemo(
+    () => normalizeStateName(selectedState),
+    [selectedState]
+  );
+
   const availableStates = useMemo(() => {
     const statesFromData = new Set();
     if (allPricesData) {
@@ -153,69 +270,46 @@ export default function Market() {
     return Array.from(combinedStates).sort();
   }, [allPricesData]);
 
-  const { data: prices, isLoading: pricesLoading } = useQuery({
-    queryKey: ['market', 'prices', commodity, selectedState, selectedDate, timePeriod],
+  const { data: prices, isLoading: pricesLoading, error: pricesError } = useQuery({
+    queryKey: ['market', 'prices', commodity, selectedState, normalizedSelectedState, selectedDate, timePeriod, customStartDate, customEndDate],
     queryFn: async () => {
-      try {
-        const params = { limit: 5000 };
-        if (commodity) {
-          params.commodity = commodity;
-          if (selectedState) params.state = selectedState;
-        } else if (selectedState) {
-          params.state = selectedState;
-        }
-        if (selectedDate) params.date = selectedDate;
-        
-      const response = await api.get('/market/prices', { params });
-        
-        const data = response.data.data || [];
-        const actualPrices = data.filter(item => {
-          if (item.price) return true;
-          if (item.commodity && item.market) return true;
-          return false;
-        });
-
-        let filteredPrices = actualPrices;
-        if (timePeriod !== 'all') {
-          const now = new Date();
-          const periodDays = timePeriod === '7days' ? 7 : timePeriod === '30days' ? 30 : 0;
-          
-          if (periodDays > 0) {
-            const cutoffDate = new Date(now);
-            cutoffDate.setDate(cutoffDate.getDate() - periodDays);
-            
-            filteredPrices = actualPrices.filter(item => {
-              const itemDate = new Date(item.date || item.recordedAt || item.timestamp);
-              return itemDate >= cutoffDate;
-            });
-          }
-        }
-
-        if (selectedState) {
-          filteredPrices = filteredPrices.filter(item => {
-            const itemState = item.state || item.market?.state || item.market?.location || '';
-            const stateLower = selectedState.toLowerCase();
-            const itemStateLower = itemState.toLowerCase();
-            return itemStateLower === stateLower || 
-                   itemStateLower.includes(stateLower) ||
-                   stateLower.includes(itemStateLower);
-          });
-        }
-
-        logger.info('Market prices fetched', { 
-          total: actualPrices.length, 
-          filtered: filteredPrices.length,
-          state: selectedState,
-          district: selectedDistrict
-        });
-        return filteredPrices;
-      } catch (error) {
-        logger.error('Error fetching market prices', error, { 
-          state: selectedState,
-          district: selectedDistrict
-        });
-        return [];
+      const params = { limit: 5000 };
+      if (commodity) {
+        params.commodity = commodity;
+        if (normalizedSelectedState) params.state = normalizedSelectedState;
+      } else if (normalizedSelectedState) {
+        params.state = normalizedSelectedState;
       }
+      if (selectedDate) params.date = selectedDate;
+
+      const response = await api.get('/market/prices', { params });
+      const data = response.data.data || [];
+      const actualPrices = data.filter(item => {
+        if (item.price) return true;
+        if (item.commodity && item.market) return true;
+        return false;
+      });
+
+      const currentRange = getCurrentRange({ selectedDate, timePeriod, customStartDate, customEndDate });
+      let filteredPrices = filterByDateRange(actualPrices, currentRange);
+
+      if (normalizedSelectedState) {
+        filteredPrices = filteredPrices.filter(item => {
+          const itemState = normalizeStateName(item.state || item.market?.state || item.market?.location || '');
+          const stateLower = normalizedSelectedState.toLowerCase();
+          const itemStateLower = String(itemState || '').toLowerCase();
+          return itemStateLower === stateLower ||
+                 itemStateLower.includes(stateLower) ||
+                 stateLower.includes(itemStateLower);
+        });
+      }
+
+      logger.info('Market prices fetched', {
+        total: actualPrices.length,
+        filtered: filteredPrices.length,
+        state: normalizedSelectedState || selectedState
+      });
+      return filteredPrices;
     },
     enabled: true,
     refetchInterval: 5 * 60 * 1000,
@@ -283,24 +377,27 @@ export default function Market() {
   }, [prices, selectedState]);
 
   const { data: comparePrices } = useQuery({
-    queryKey: ['market', 'prices', 'compare', commodity, selectedState, comparePeriod],
+    queryKey: ['market', 'prices', 'compare', commodity, selectedState, normalizedSelectedState, comparePeriod, selectedDate, timePeriod, customStartDate, customEndDate],
     queryFn: async () => {
       if (!compareMode) return null;
       
       try {
         const params = { limit: 5000 };
         if (commodity) params.commodity = commodity;
-        if (selectedState) params.state = selectedState;
+        if (normalizedSelectedState) params.state = normalizedSelectedState;
         
       const response = await api.get('/market/prices', { params });
         const data = response.data.data || [];
         const actualPrices = data.filter(item => item.price || (item.commodity && item.market));
-
-        return actualPrices;
+        const compareRange = getCompareRange({
+          comparePeriod,
+          currentRange: getCurrentRange({ selectedDate, timePeriod, customStartDate, customEndDate })
+        });
+        return filterByDateRange(actualPrices, compareRange);
       } catch (error) {
         logger.error('Error fetching compare prices', error, { 
           commodity,
-          state: selectedState,
+          state: normalizedSelectedState || selectedState,
           period: comparePeriod
         });
         return [];
@@ -348,7 +445,7 @@ export default function Market() {
     return aggregatedMap;
   }, [comparePrices]);
 
-  const { data: trends, isLoading: trendsLoading } = useQuery({
+  const { data: trends } = useQuery({
     queryKey: ['market', 'trends', selectedCommodity],
     queryFn: async () => {
       if (!selectedCommodity) return null;
@@ -476,7 +573,7 @@ export default function Market() {
   };
 
   const formatTimeAgo = (timestamp) => {
-    if (!timestamp) return 'Just now';
+    if (!timestamp) return t('market.justNow', 'Just now');
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now - date;
@@ -484,19 +581,19 @@ export default function Market() {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    if (diffMins < 1) return t('market.justNow', 'Just now');
+    if (diffMins < 60) return t('market.minutesAgo', { count: diffMins, defaultValue: '{{count}} minutes ago' });
+    if (diffHours < 24) return t('market.hoursAgo', { count: diffHours, defaultValue: '{{count}} hours ago' });
+    return t('market.daysAgo', { count: diffDays, defaultValue: '{{count}} days ago' });
   };
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Typography variant="h4" component="h1" gutterBottom>
-        Market Prices & Trends
+        {t('market.pricesAndTrends', 'Market Prices & Trends')}
       </Typography>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-        Track commodity prices, market trends, and latest updates
+        {t('market.trackDescription', 'Track commodity prices, market trends, and latest updates')}
       </Typography>
 
       <Paper sx={{ mb: 3 }}>
@@ -505,8 +602,8 @@ export default function Market() {
           onChange={(e, v) => setTabValue(v)}
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         >
-          <Tab label="Prices & Trends" />
-          <Tab label="Market Updates" />
+          <Tab label={t('market.pricesAndTrendsTab', 'Prices & Trends')} />
+          <Tab label={t('market.marketUpdatesTab', 'Market Updates')} />
         </Tabs>
       </Paper>
 
@@ -514,7 +611,7 @@ export default function Market() {
         <>
       <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Filters & Comparison</Typography>
+              <Typography variant="h6">{t('market.filtersComparison', 'Filters & Comparison')}</Typography>
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <Button
                   variant={compareMode ? 'contained' : 'outlined'}
@@ -522,7 +619,7 @@ export default function Market() {
                   onClick={() => setCompareMode(!compareMode)}
                   size="small"
                 >
-                  Compare
+                  {t('market.compare', 'Compare')}
                 </Button>
                 <IconButton
                   onClick={() => setShowFilters(!showFilters)}
@@ -547,8 +644,8 @@ export default function Market() {
                   renderInput={(params) => (
                     <TextField
                       {...params}
-                      label="Search Commodity"
-                      placeholder="Type to search commodities..."
+                      label={t('market.searchCommodity', 'Search Commodity')}
+                      placeholder={t('market.typeSearchCommodities', 'Type to search commodities...')}
                     />
                   )}
                   renderOption={(props, option) => {
@@ -560,7 +657,7 @@ export default function Market() {
                       </Box>
                     );
                   }}
-                  noOptionsText="No commodities found"
+                  noOptionsText={t('market.noCommoditiesFound', 'No commodities found')}
                   clearOnEscape
                   selectOnFocus
                   handleHomeEndKeys
@@ -577,14 +674,14 @@ export default function Market() {
                 <>
                   <Grid item xs={12} sm={6} md={3}>
             <FormControl fullWidth>
-                      <InputLabel>State</InputLabel>
+                      <InputLabel>{t('market.state', 'State')}</InputLabel>
               <Select
                         value={selectedState}
-                        label="State"
+                        label={t('market.state', 'State')}
                         onChange={(e) => setSelectedState(e.target.value)}
                       >
                         <MenuItem value="">
-                          <em>All States</em>
+                          <em>{t('market.allStates', 'All States')}</em>
                         </MenuItem>
                         {availableStates.map((state) => (
                           <MenuItem key={state} value={state}>
@@ -598,7 +695,7 @@ export default function Market() {
                   <Grid item xs={12} sm={6} md={3}>
                     <TextField
               fullWidth
-                      label="Date"
+                      label={t('market.date', 'Date')}
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
@@ -608,34 +705,59 @@ export default function Market() {
                   
                   <Grid item xs={12} sm={6} md={3}>
                     <FormControl fullWidth>
-                      <InputLabel>Time Period</InputLabel>
+                      <InputLabel>{t('market.timePeriod', 'Time Period')}</InputLabel>
                       <Select
                         value={timePeriod}
-                        label="Time Period"
+                        label={t('market.timePeriod', 'Time Period')}
                         onChange={(e) => setTimePeriod(e.target.value)}
                       >
-                        <MenuItem value="all">All Time</MenuItem>
-                        <MenuItem value="7days">Last 7 Days</MenuItem>
-                        <MenuItem value="30days">Last 30 Days</MenuItem>
-                        <MenuItem value="custom">Custom Range</MenuItem>
+                        <MenuItem value="all">{t('market.allTime', 'All Time')}</MenuItem>
+                        <MenuItem value="7days">{t('market.last7Days', 'Last 7 Days')}</MenuItem>
+                        <MenuItem value="30days">{t('market.last30Days', 'Last 30 Days')}</MenuItem>
+                        <MenuItem value="custom">{t('market.customRange', 'Custom Range')}</MenuItem>
                       </Select>
                     </FormControl>
                   </Grid>
+
+                  {timePeriod === 'custom' && (
+                    <>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <TextField
+                          fullWidth
+                          label={t('market.startDate', 'Start Date')}
+                          type="date"
+                          value={customStartDate}
+                          onChange={(e) => setCustomStartDate(e.target.value)}
+                          InputLabelProps={{ shrink: true }}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <TextField
+                          fullWidth
+                          label={t('market.endDate', 'End Date')}
+                          type="date"
+                          value={customEndDate}
+                          onChange={(e) => setCustomEndDate(e.target.value)}
+                          InputLabelProps={{ shrink: true }}
+                        />
+                      </Grid>
+                    </>
+                  )}
                 </>
               )}
               
               {compareMode && (
                 <Grid item xs={12} sm={6} md={3}>
                   <FormControl fullWidth>
-                    <InputLabel>Compare With</InputLabel>
+                    <InputLabel>{t('market.compareWith', 'Compare With')}</InputLabel>
                     <Select
                       value={comparePeriod}
-                      label="Compare With"
+                      label={t('market.compareWith', 'Compare With')}
                       onChange={(e) => setComparePeriod(e.target.value)}
                     >
-                      <MenuItem value="7days">Last 7 Days</MenuItem>
-                      <MenuItem value="30days">Last 30 Days</MenuItem>
-                      <MenuItem value="60days">Last 60 Days</MenuItem>
+                      <MenuItem value="7days">{t('market.last7Days', 'Last 7 Days')}</MenuItem>
+                      <MenuItem value="30days">{t('market.last30Days', 'Last 30 Days')}</MenuItem>
+                      <MenuItem value="60days">{t('market.last60Days', 'Last 60 Days')}</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
@@ -652,10 +774,12 @@ export default function Market() {
                       setSelectedState('');
                       setSelectedDate('');
                       setTimePeriod('all');
+                      setCustomStartDate('');
+                      setCustomEndDate('');
                     }}
-                    disabled={!commodity && !selectedState && !selectedDate && timePeriod === 'all'}
+                    disabled={!commodity && !selectedState && !selectedDate && timePeriod === 'all' && !customStartDate && !customEndDate}
                   >
-                    Clear All
+                    {t('market.clearAll', 'Clear All')}
             </Button>
                 </Box>
           </Grid>
@@ -663,11 +787,11 @@ export default function Market() {
             
             <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
               <Typography variant="body2" color="text.secondary">
-                {commodity ? `Showing prices for: ${commodity}` : 'Showing all crop prices'}
+                {commodity ? t('market.showingPricesFor', { commodity, defaultValue: 'Showing prices for: {{commodity}}' }) : t('market.showingAllCropPrices', 'Showing all crop prices')}
               </Typography>
               {selectedState && (
                 <Chip 
-                  label={`State: ${selectedState}`}
+                  label={t('market.stateChip', { state: selectedState, defaultValue: 'State: {{state}}' })}
                   size="small"
                   color="primary"
                   onDelete={() => setSelectedState('')}
@@ -675,7 +799,7 @@ export default function Market() {
               )}
               {selectedDate && (
                 <Chip 
-                  label={`Date: ${new Date(selectedDate).toLocaleDateString()}`}
+                  label={t('market.dateChip', { date: new Date(selectedDate).toLocaleDateString(locale), defaultValue: 'Date: {{date}}' })}
                   size="small"
                   color="primary"
                   onDelete={() => setSelectedDate('')}
@@ -683,10 +807,25 @@ export default function Market() {
               )}
               {timePeriod !== 'all' && (
                 <Chip 
-                  label={`Period: ${timePeriod}`}
+                  label={t('market.periodChip', { period: timePeriod, defaultValue: 'Period: {{period}}' })}
                   size="small"
                   color="primary"
                   onDelete={() => setTimePeriod('all')}
+                />
+              )}
+              {timePeriod === 'custom' && customStartDate && customEndDate && (
+                <Chip
+                  label={t('market.rangeChip', {
+                    start: new Date(customStartDate).toLocaleDateString(locale),
+                    end: new Date(customEndDate).toLocaleDateString(locale),
+                    defaultValue: 'Range: {{start}} - {{end}}'
+                  })}
+                  size="small"
+                  color="primary"
+                  onDelete={() => {
+                    setCustomStartDate('');
+                    setCustomEndDate('');
+                  }}
                 />
               )}
             </Box>
@@ -706,7 +845,7 @@ export default function Market() {
       {selectedCommodity && trends && (
         <Paper sx={{ p: 3, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
-            Price Trends - {selectedCommodity}
+            {t('market.priceTrendsFor', { commodity: selectedCommodity, defaultValue: 'Price Trends - {{commodity}}' })}
           </Typography>
           {trends.statistics && (
             <Box mb={2}>
@@ -715,10 +854,10 @@ export default function Market() {
                   <Card>
                     <CardContent>
                       <Typography variant="body2" color="text.secondary">
-                        Current Price
+                        {t('market.currentPrice', 'Current Price')}
                       </Typography>
                       <Typography variant="h6">
-                        ₹{trends.statistics.latest?.toFixed(2) || 'N/A'}
+                        ₹{trends.statistics.latest?.toFixed(2) || t('common.notAvailable')}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -727,10 +866,10 @@ export default function Market() {
                   <Card>
                     <CardContent>
                       <Typography variant="body2" color="text.secondary">
-                        Average
+                        {t('market.average', 'Average')}
                       </Typography>
                       <Typography variant="h6">
-                        ₹{trends.statistics.average?.toFixed(2) || 'N/A'}
+                        ₹{trends.statistics.average?.toFixed(2) || t('common.notAvailable')}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -739,10 +878,10 @@ export default function Market() {
                   <Card>
                     <CardContent>
                       <Typography variant="body2" color="text.secondary">
-                        High
+                        {t('market.high', 'High')}
                       </Typography>
                       <Typography variant="h6">
-                        ₹{trends.statistics.max?.toFixed(2) || 'N/A'}
+                        ₹{trends.statistics.max?.toFixed(2) || t('common.notAvailable')}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -751,10 +890,10 @@ export default function Market() {
                   <Card>
                     <CardContent>
                       <Typography variant="body2" color="text.secondary">
-                        Low
+                        {t('market.low', 'Low')}
                       </Typography>
                       <Typography variant="h6">
-                        ₹{trends.statistics.min?.toFixed(2) || 'N/A'}
+                        ₹{trends.statistics.min?.toFixed(2) || t('common.notAvailable')}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -787,11 +926,11 @@ export default function Market() {
 
       <LoadingState
         isLoading={pricesLoading}
-        error={null}
+        error={pricesError}
         retry={() => window.location.reload()}
         dataLength={((selectedState || commodity) ? prices : aggregatedPrices)?.length || 0}
         type="table"
-        emptyMessage="No market prices available for the selected filters"
+        emptyMessage={t('market.noPricesForFilters', 'No market prices available for the selected filters')}
       >
       {((selectedState || commodity) ? prices : aggregatedPrices) && ((selectedState || commodity) ? prices.length > 0 : aggregatedPrices.length > 0) ? (
             <>
@@ -799,14 +938,32 @@ export default function Market() {
                 <Box>
                   <Typography variant="h6">
                     {selectedState 
-                      ? `All Crop Prices in ${selectedState} (${prices.length} ${prices.length === 1 ? 'entry' : 'entries'})`
+                      ? t('market.allCropPricesInState', {
+                          state: selectedState,
+                          count: prices.length,
+                          entryText: prices.length === 1 ? t('market.entry', 'entry') : t('market.entries', 'entries'),
+                          defaultValue: 'All Crop Prices in {{state}} ({{count}} {{entryText}})'
+                        })
                       : commodity
-                      ? `${commodity} Prices - All States (${prices.length} ${prices.length === 1 ? 'entry' : 'entries'})`
-                      : `All Crop Prices - Average Market Prices (${aggregatedPrices.length} ${aggregatedPrices.length === 1 ? 'commodity' : 'commodities'})`
+                      ? t('market.commodityAllStatesHeader', {
+                          commodity,
+                          count: prices.length,
+                          entryText: prices.length === 1 ? t('market.entry', 'entry') : t('market.entries', 'entries'),
+                          defaultValue: '{{commodity}} Prices - All States ({{count}} {{entryText}})'
+                        })
+                      : t('market.allCropAverageHeader', {
+                          count: aggregatedPrices.length,
+                          commodityText: aggregatedPrices.length === 1 ? t('market.commodityOne', 'commodity') : t('market.commoditiesMany', 'commodities'),
+                          defaultValue: 'All Crop Prices - Average Market Prices ({{count}} {{commodityText}})'
+                        })
                     }
                     {compareMode && comparePrices && (
                       <Chip 
-                        label={`vs ${comparePrices.length} in ${comparePeriod}`}
+                        label={t('market.compareChip', {
+                          count: comparePrices.length,
+                          period: comparePeriod,
+                          defaultValue: 'vs {{count}} in {{period}}'
+                        })}
                         size="small"
                         color="primary"
                         sx={{ ml: 1 }}
@@ -815,16 +972,22 @@ export default function Market() {
                   </Typography>
                   {selectedState ? (
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                      Showing state-specific prices for {selectedState}
+                      {t('market.showingStateSpecificPrices', {
+                        state: selectedState,
+                        defaultValue: 'Showing state-specific prices for {{state}}'
+                      })}
                     </Typography>
                   ) : (
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                      Average prices across all markets and states. Filter by state to see detailed prices.
+                      {t('market.averageAcrossMarketsHelp', 'Average prices across all markets and states. Filter by state to see detailed prices.')}
                     </Typography>
                   )}
                 </Box>
                 <Chip 
-                  label={`Last updated: ${new Date().toLocaleTimeString()}`}
+                  label={t('market.lastUpdatedChip', {
+                    time: new Date().toLocaleTimeString(locale),
+                    defaultValue: 'Last updated: {{time}}'
+                  })}
                   size="small"
                   variant="outlined"
                 />
@@ -833,12 +996,12 @@ export default function Market() {
               {compareMode && comparePrices && prices && (
                 <Paper sx={{ p: 2, mb: 2, bgcolor: 'background.paper' }}>
                   <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
-                    Price Comparison Summary
+                    {t('market.priceComparisonSummary', 'Price Comparison Summary')}
                   </Typography>
                   <Grid container spacing={2}>
                     <Grid item xs={6} sm={3}>
                       <Box>
-                        <Typography variant="caption" color="text.secondary">Current Period Avg</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('market.currentPeriodAvg', 'Current Period Avg')}</Typography>
                         <Typography variant="h6">
                           ₹{prices.length > 0 ? (prices.reduce((sum, p) => {
                             const price = typeof p.price === 'object' ? p.price.value : p.price;
@@ -849,7 +1012,7 @@ export default function Market() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <Box>
-                        <Typography variant="caption" color="text.secondary">Compare Period Avg</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('market.comparePeriodAvg', 'Compare Period Avg')}</Typography>
                         <Typography variant="h6">
                           ₹{comparePrices.length > 0 ? (comparePrices.reduce((sum, p) => {
                             const price = typeof p.price === 'object' ? p.price.value : p.price;
@@ -860,7 +1023,7 @@ export default function Market() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <Box>
-                        <Typography variant="caption" color="text.secondary">Price Difference</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('market.priceDifference', 'Price Difference')}</Typography>
                         <Typography variant="h6" color="primary">
                           {(() => {
                             const currentAvg = prices.length > 0 ? prices.reduce((sum, p) => {
@@ -879,7 +1042,7 @@ export default function Market() {
                     </Grid>
                     <Grid item xs={6} sm={3}>
                       <Box>
-                        <Typography variant="caption" color="text.secondary">Change %</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('market.changePercent', 'Change %')}</Typography>
                         <Typography variant="h6" color="primary">
                           {(() => {
                             const currentAvg = prices.length > 0 ? prices.reduce((sum, p) => {
@@ -905,34 +1068,34 @@ export default function Market() {
                 <Table stickyHeader>
             <TableHead>
               <TableRow>
-                      <TableCell sx={{ fontWeight: 600 }}>Commodity</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('market.commodity', 'Commodity')}</TableCell>
                       {(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>Market</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.marketLabel', 'Market')}</TableCell>
                       )}
                       <TableCell sx={{ fontWeight: 600 }}>
-                        {(selectedState || commodity) ? 'Price (₹/kg)' : 'Average Price (₹/kg)'}
+                        {(selectedState || commodity) ? t('market.pricePerKg', 'Price (₹/kg)') : t('market.averagePricePerKg', 'Average Price (₹/kg)')}
                       </TableCell>
                       {!(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>Price Range</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.priceRange', 'Price Range')}</TableCell>
                       )}
                       {!(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>Markets</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.markets', 'Markets')}</TableCell>
                       )}
                       {compareMode && (
-                        <TableCell sx={{ fontWeight: 600 }}>Compare Price</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.comparePrice', 'Compare Price')}</TableCell>
                       )}
                       {(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>Quality</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.quality', 'Quality')}</TableCell>
                       )}
-                      <TableCell sx={{ fontWeight: 600 }}>Price Change</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('market.priceChange', 'Price Change')}</TableCell>
                       {compareMode && (
-                        <TableCell sx={{ fontWeight: 600 }}>Difference</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.difference', 'Difference')}</TableCell>
                       )}
                       {(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>State</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.state', 'State')}</TableCell>
                       )}
                       {(selectedState || commodity) && (
-                        <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                        <TableCell sx={{ fontWeight: 600 }}>{t('market.date', 'Date')}</TableCell>
                       )}
               </TableRow>
             </TableHead>
@@ -945,7 +1108,7 @@ export default function Market() {
                           <TableRow>
                             <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                               <Typography variant="body2" color="text.secondary">
-                                No prices available for the selected filters.
+                                {t('market.noPricesForSelectedFilters', 'No prices available for the selected filters.')}
                               </Typography>
                             </TableCell>
                           </TableRow>
@@ -982,7 +1145,10 @@ export default function Market() {
                           <TableRow>
                             <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                               <Typography variant="body2" color="text.secondary">
-                                No prices found for {commodity} in any state.
+                                {t('market.noPricesForCommodityAnyState', {
+                                  commodity,
+                                  defaultValue: 'No prices found for {{commodity}} in any state.'
+                                })}
                               </Typography>
                             </TableCell>
                           </TableRow>
@@ -1066,7 +1232,7 @@ export default function Market() {
                           priceChange = typeof priceChange === 'number' ? priceChange : 0;
                           
                           const dateStr = price.date || price.recordedAt || price.timestamp || new Date().toISOString();
-                          const displayDate = new Date(dateStr).toLocaleDateString();
+                          const displayDate = new Date(dateStr).toLocaleDateString(locale);
                           
                           return (
                             <TableRow 
@@ -1102,7 +1268,7 @@ export default function Market() {
                                     ₹{pricePerKg.toFixed(2)} / kg
                                   </Typography>
                                   <Typography variant="body2" sx={{ fontWeight: 500, color: 'success.main', mt: 0.5 }}>
-                                    ₹{pricePerTon ? pricePerTon.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (pricePerKg * 1000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} / ton
+                                    ₹{pricePerTon ? pricePerTon.toLocaleString(locale, { maximumFractionDigits: 2 }) : (pricePerKg * 1000).toLocaleString(locale, { maximumFractionDigits: 2 })} / ton
                                   </Typography>
                                   {price.price?.originalValue && price.price?.originalUnit && price.price?.originalUnit !== 'kg' && (
                                     <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: 'italic', mt: 0.5 }}>
@@ -1112,7 +1278,7 @@ export default function Market() {
                                 </>
                               ) : (
                                 <Typography variant="body2" color="text.secondary">
-                                  N/A
+                                  {t('common.notAvailable')}
                                 </Typography>
                               )}
                   </TableCell>
@@ -1124,14 +1290,14 @@ export default function Market() {
                                   </Typography>
                                 ) : (
                                   <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                    No data
+                                    {t('common.noData', 'No data')}
                       </Typography>
                     )}
                   </TableCell>
                             )}
                   <TableCell>
                     <Chip
-                      label={price.quality || 'Standard'}
+                      label={price.quality || t('market.standard', 'Standard')}
                       size="small"
                       variant="outlined"
                                 color={price.quality === 'Grade A' ? 'success' : 'default'}
@@ -1233,7 +1399,11 @@ export default function Market() {
                               </TableCell>
                               <TableCell>
                                 <Chip 
-                                  label={`${aggregated.marketCount} market${aggregated.marketCount !== 1 ? 's' : ''}`}
+                                  label={t('market.marketCountChip', {
+                                    count: aggregated.marketCount,
+                                    suffix: aggregated.marketCount !== 1 ? 's' : '',
+                                    defaultValue: '{{count}} market{{suffix}}'
+                                  })}
                                   size="small"
                                   variant="outlined"
                                 />
@@ -1246,7 +1416,7 @@ export default function Market() {
                                     </Typography>
                                   ) : (
                                     <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                      No data
+                                      {t('common.noData', 'No data')}
                                     </Typography>
                                   )}
                                 </TableCell>
@@ -1316,7 +1486,7 @@ export default function Market() {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
               <UpdateIcon color="primary" />
               <Typography variant="h6" sx={{ fontWeight: 500 }}>
-                Market Updates
+                {t('market.marketUpdatesTab', 'Market Updates')}
               </Typography>
               {marketUpdates && marketUpdates.length > 0 && (
                 <Chip 
@@ -1333,7 +1503,7 @@ export default function Market() {
               </Box>
             ) : !marketUpdates || marketUpdates.length === 0 ? (
               <Alert severity="info">
-                No market updates available at the moment. Check back later for the latest market news.
+                {t('market.noUpdatesNow', 'No market updates available at the moment. Check back later for the latest market news.')}
         </Alert>
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1384,14 +1554,14 @@ export default function Market() {
                                 />
                                 {update.source && (
                                   <Chip 
-                                    label={`Source: ${update.source}`}
+                                    label={t('market.sourceChip', { source: update.source, defaultValue: 'Source: {{source}}' })}
                                     size="small"
                                     variant="outlined"
                                   />
                                 )}
                                 {update.impact && (
                                   <Chip 
-                                    label={update.impact === 'positive' ? 'Positive Impact' : update.impact === 'negative' ? 'Negative Impact' : 'Neutral'}
+                                    label={update.impact === 'positive' ? t('market.positiveImpact', 'Positive Impact') : update.impact === 'negative' ? t('market.negativeImpact', 'Negative Impact') : t('market.neutral', 'Neutral')}
                                     size="small"
                                     color={update.impact === 'positive' ? 'success' : update.impact === 'negative' ? 'error' : 'default'}
                                   />
@@ -1409,10 +1579,10 @@ export default function Market() {
                           <Collapse in={expandedUpdates[update.id || index]}>
                             <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
                               <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                                Additional Information
+                                {t('market.additionalInformation', 'Additional Information')}
                               </Typography>
                               <Typography variant="body2" color="text.secondary">
-                                {update.details || 'No additional details available for this update.'}
+                                {update.details || t('market.noAdditionalDetails', 'No additional details available for this update.')}
                               </Typography>
                               {update.commodity && (
                                 <Box sx={{ mt: 2 }}>
@@ -1424,7 +1594,7 @@ export default function Market() {
                                       handleCommoditySelect(update.commodity);
                                     }}
                                   >
-                                    View {update.commodity} Prices
+                                    {t('market.viewCommodityPrices', { commodity: update.commodity, defaultValue: 'View {{commodity}} Prices' })}
                                   </Button>
                                 </Box>
                               )}

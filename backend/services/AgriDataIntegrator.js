@@ -3,7 +3,7 @@ const path = require('path');
 const logger = require('../utils/logger');
 
 class AgriDataIntegrator {
-  constructor(dataDir = './data') {
+  constructor(_dataDir = './data') {
     this.dataDir = path.join(__dirname, '../data');
     this.integratedDir = path.join(this.dataDir, 'integrated');
     this.cache = new Map();
@@ -159,7 +159,7 @@ class AgriDataIntegrator {
     };
   }
 
-  _getYieldTrends(lat, lon) {
+  _getYieldTrends(_lat, _lon) {
     return {
       'Rice': { mean: 3.5, std: 0.5, trend: 'increasing' },
       'Wheat': { mean: 3.2, std: 0.4, trend: 'stable' },

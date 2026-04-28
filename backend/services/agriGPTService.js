@@ -1,17 +1,17 @@
-const axios = require('axios');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 
 class AgriGPTService {
   constructor() {
     this.conversations = new Map();
-    this.contextWindow = 10; // Keep last 10 messages in context
+    this.contextWindow = 10;
     
     this.initializeAIClients();
     
     this.knowledgeBase = this.initializeKnowledgeBase();
     
     this.cache = new Map();
-    this.cacheDuration = 5 * 60 * 1000; // 5 minutes
+    this.cacheDuration = 5 * 60 * 1000;
   }
 
   initializeAIClients() {
@@ -110,7 +110,7 @@ class AgriGPTService {
         content: response.text,
         timestamp: new Date().toISOString(),
         data: response.data || {},
-        source: response.source || 'local'
+        source: response.source || 'AgriSmart AI'
       });
       
       if (conversation.length > 40) {
@@ -128,7 +128,7 @@ class AgriGPTService {
         timestamp: new Date().toISOString(),
         suggestions: this.generateSuggestions(intent, conversation),
         confidence: response.confidence || 0.85,
-        source: response.source || 'Local AI Engine'
+        source: response.source || 'AgriSmart AI'
       };
       
     } catch (error) {
@@ -228,8 +228,24 @@ class AgriGPTService {
     };
   }
 
+  _buildCacheKey(intent, userContext) {
+    const safeContext = {
+      state: userContext?.location?.state || userContext?.state || null,
+      country: userContext?.location?.country || null,
+      crop: userContext?.crop || userContext?.profile?.crop || null,
+      language: userContext?.language || null,
+      role: userContext?.profile?.role || null
+    };
+    const hash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(safeContext))
+      .digest('hex')
+      .slice(0, 16);
+    return `${intent.name}:${hash}`;
+  }
+
   async fetchRealTimeData(intent, userContext) {
-    const cacheKey = `${intent.name}_${JSON.stringify(userContext)}`;
+    const cacheKey = this._buildCacheKey(intent, userContext);
     const cached = this.cache.get(cacheKey);
     
     if (cached && Date.now() - cached.timestamp < this.cacheDuration) {
@@ -279,32 +295,39 @@ class AgriGPTService {
 
   async fetchWeatherData(location = { lat: 20.5937, lng: 78.9629 }) {
     try {
-      if (!process.env.OPENWEATHER_API_KEY) {
-        return this.getDefaultWeather();
+      const WeatherService = require('./WeatherService');
+      const lat = location.lat ?? location.latitude ?? 20.5937;
+      const lng = location.lng ?? location.longitude ?? 78.9629;
+      const weatherData = await WeatherService.getWeatherByCoords(parseFloat(lat), parseFloat(lng));
+      if (weatherData) {
+        return {
+          current: {
+            temp: weatherData.temperature,
+            feels_like: weatherData.feels_like,
+            humidity: weatherData.humidity,
+            pressure: weatherData.pressure,
+            wind_speed: weatherData.wind_speed || 0,
+            description: weatherData.description || weatherData.weather,
+            icon: weatherData.icon || ''
+          },
+          location: weatherData.location || 'Location',
+          farmingConditions: this.assessFarmingConditionsFromParsed(weatherData)
+        };
       }
-
-      const response = await axios.get(
-        `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lng}&units=metric&appid=${process.env.OPENWEATHER_API_KEY}`,
-        { timeout: 5000 }
-      );
-      
-      return {
-        current: {
-          temp: response.data.main.temp,
-          feels_like: response.data.main.feels_like,
-          humidity: response.data.main.humidity,
-          pressure: response.data.main.pressure,
-          wind_speed: response.data.wind?.speed || 0,
-          description: response.data.weather[0].description,
-          icon: response.data.weather[0].icon
-        },
-        location: response.data.name,
-        farmingConditions: this.assessFarmingConditions(response.data)
-      };
     } catch (error) {
-      logger.warn('[AGRI-GPT] Weather API error, using default:', error.message);
-      return this.getDefaultWeather();
+      logger.warn('[AGRI-GPT] Weather service error, using default:', error.message);
     }
+    return this.getDefaultWeather();
+  }
+
+  assessFarmingConditionsFromParsed(data) {
+    const conditions = [];
+    if (data.temperature > 35) conditions.push({ type: 'warning', message: 'High temperature may stress crops. Increase irrigation.' });
+    if (data.temperature < 10) conditions.push({ type: 'warning', message: 'Low temperature risk. Protect sensitive crops from frost.' });
+    if (data.rainfall > 50) conditions.push({ type: 'info', message: 'Heavy rainfall. Ensure drainage.' });
+    if (data.humidity > 85) conditions.push({ type: 'info', message: 'High humidity. Watch for fungal diseases.' });
+    if (conditions.length === 0) conditions.push({ type: 'info', message: 'Weather suitable for most field operations.' });
+    return conditions;
   }
 
   async fetchMarketData(location) {
@@ -338,7 +361,7 @@ class AgriGPTService {
     }
   }
 
-  async fetchSchemeData(profile = {}) {
+  async fetchSchemeData(_profile = {}) {
     try {
       const GovernmentScheme = require('../models/SchemeApplication');
       const schemes = await GovernmentScheme.find()
@@ -383,7 +406,7 @@ class AgriGPTService {
     }
   }
 
-  async fetchSoilData(location) {
+  async fetchSoilData(_location) {
     return {
       ph: 6.5,
       nutrients: {
@@ -418,22 +441,48 @@ class AgriGPTService {
     }
   }
 
+  async _withTimeout(promise, timeoutMs, label = 'ai-call') {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async generateResponse(message, intent, conversation, realTimeData, language, userContext) {
+    const providerTimeoutMs = parseInt(process.env.AI_PROVIDER_TIMEOUT_MS || '12000', 10);
+
     const aiServices = [
-      () => this.useGeminiAI(message, intent, conversation, realTimeData, language),
-      () => this.useOpenAI(message, intent, conversation, realTimeData, language),
-      () => this.useLocalAI(message, intent, conversation, realTimeData, language, userContext)
+      { name: 'gemini', fn: () => this.useGeminiAI(message, intent, conversation, realTimeData, language) },
+      { name: 'openai', fn: () => this.useOpenAI(message, intent, conversation, realTimeData, language) },
+      { name: 'local', fn: () => this.useLocalAI(message, intent, conversation, realTimeData, language, userContext) }
     ];
-    
+
     for (const service of aiServices) {
       try {
-        const response = await service();
-        if (response) return response;
+        const response = service.name === 'local'
+          ? await service.fn()
+          : await this._withTimeout(service.fn(), providerTimeoutMs, `ai:${service.name}`);
+        if (response) {
+          if (service.name !== 'local') {
+            response.source = response.source || 'AgriSmart AI';
+            response.provider = service.name;
+          } else {
+            response.provider = 'local';
+            response.isFallback = true;
+            response.degradedReason = response.degradedReason || 'upstream_ai_unavailable';
+          }
+          return response;
+        }
       } catch (error) {
-        logger.warn(`[AGRI-GPT] AI service failed, trying next...`);
+        logger.warn(`[AGRI-GPT] AI provider ${service.name} failed, trying next...`, { message: error.message });
       }
     }
-    
+
     throw new Error('All AI services failed');
   }
 
@@ -450,7 +499,7 @@ class AgriGPTService {
       text: text,
       data: realTimeData,
       confidence: 0.9,
-      source: 'Google Gemini AI'
+      source: 'AgriSmart AI'
     };
   }
 
@@ -479,7 +528,7 @@ class AgriGPTService {
       text: completion.choices[0].message.content,
       data: realTimeData,
       confidence: 0.85,
-      source: 'OpenAI GPT'
+      source: 'AgriSmart AI'
     };
   }
 
@@ -517,11 +566,11 @@ class AgriGPTService {
       text: response,
       data: realTimeData,
       confidence: 0.7,
-      source: 'Local AI Engine'
+      source: 'AgriSmart AI'
     };
   }
 
-  generateWeatherResponse(weatherData, language) {
+  generateWeatherResponse(weatherData, _language) {
     const current = weatherData.current;
     
     return `🌤️ **Current Weather${weatherData.location ? ` for ${weatherData.location}` : ''}:**
@@ -536,7 +585,7 @@ class AgriGPTService {
 ${weatherData.farmingConditions?.advice || 'Good conditions for farming activities.'}`;
   }
 
-  generateMarketResponse(marketData, language) {
+  generateMarketResponse(marketData, _language) {
     const topPrices = marketData.prices?.slice(0, 5) || [];
     
     if (topPrices.length === 0) {
@@ -559,7 +608,7 @@ ${marketData.trends?.downward?.length > 0 ?
 💡 **Recommendation:** ${marketData.recommendations?.topPick || 'Check market prices regularly for best selling opportunities'}`;
   }
 
-  generateCropResponse(cropData, userContext, language) {
+  generateCropResponse(cropData, _userContext, _language) {
     return `🌱 **Crop Recommendations for ${cropData.season} season:**
 
 **Best Crops to Grow:**
@@ -577,7 +626,7 @@ ${Object.entries(cropData.sowingCalendar || {}).map(([month, crops]) =>
 **Tips:** ${cropData.tips || 'Maintain proper irrigation and fertilization for best yields.'}`;
   }
 
-  generateDiseaseResponse(message, realTimeData, language) {
+  generateDiseaseResponse(_message, realTimeData, _language) {
     const diseases = realTimeData.commonDiseases || [];
     
     if (diseases.length > 0) {
@@ -601,7 +650,7 @@ I can help you identify plant diseases. Common issues include:
 Please upload a photo on the Disease Detection page for accurate diagnosis and treatment recommendations.`;
   }
 
-  generateSchemeResponse(schemeData, language) {
+  generateSchemeResponse(schemeData, _language) {
     const schemes = schemeData.schemes || [];
     
     if (schemes.length === 0) {
@@ -617,7 +666,7 @@ ${schemes.slice(0, 5).map(scheme =>
 💡 Visit the Government Schemes page for detailed eligibility check and application process.`;
   }
 
-  generateGeneralResponse(message, context, language) {
+  generateGeneralResponse(_message, _context, _language) {
     return `I'm here to help with your agricultural questions! I can assist with:
 
 🌾 Crop recommendations and cultivation advice
@@ -823,7 +872,7 @@ ${dataContext}
     return recommendations;
   }
 
-  getCropsForSeason(season, location) {
+  getCropsForSeason(season, _location) {
     const seasonCrops = {
       Kharif: [
         { name: 'Rice', duration: '90-150 days', yield: '25-35 quintals/acre' },
@@ -840,7 +889,7 @@ ${dataContext}
     return seasonCrops[season] || seasonCrops.Kharif;
   }
 
-  getSowingCalendar(season) {
+  getSowingCalendar(_season) {
         return {
       'June-July': ['Rice', 'Maize', 'Cotton'],
       'October-November': ['Wheat', 'Mustard', 'Gram'],
@@ -848,7 +897,7 @@ ${dataContext}
     };
   }
 
-  async predictYields(location, profile) {
+  async predictYields(_location, _profile) {
       return {
       'Rice': { expected: 28, confidence: 85 },
       'Wheat': { expected: 40, confidence: 80 },
@@ -856,7 +905,7 @@ ${dataContext}
     };
   }
 
-  generateSuggestions(intent, conversation) {
+  generateSuggestions(intent, _conversation) {
     const suggestions = [];
     
     switch (intent.name) {
@@ -1001,7 +1050,7 @@ ${dataContext}
 
   createLocalModel() {
     return {
-      predict: async (input) => {
+      predict: async (_input) => {
         return {
           response: "I'm here to help with your farming questions. Please ask about crops, weather, market prices, or agricultural advice.",
           confidence: 0.6

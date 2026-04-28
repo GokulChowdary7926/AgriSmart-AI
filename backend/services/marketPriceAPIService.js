@@ -1,8 +1,5 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
-const apiErrorHandler = require('./api/apiErrorHandler');
-const fallbackManager = require('./api/fallbackManager');
-const ricePrices = require('../data/ricePrices');
 
 class MarketPriceAPIService {
   constructor() {
@@ -15,8 +12,8 @@ class MarketPriceAPIService {
     };
     
     this.apiKeys = {
-      agmarknet: process.env.AGMARKNET_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b',
-      dataGovIn: process.env.DATA_GOV_IN_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b'
+      agmarknet: process.env.AGMARKNET_API_KEY || process.env.DATA_GOV_IN_API_KEY || '',
+      dataGovIn: process.env.DATA_GOV_IN_API_KEY || process.env.DATA_GOV_API_KEY || ''
     };
     
     this.cache = new Map();
@@ -547,6 +544,18 @@ class MarketPriceAPIService {
     if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
       logger.info(`Returning cached market prices for ${commodity || 'all commodities'}`);
       return cached.data;
+    }
+
+    const upstreamMocked =
+      (this.getAgMarkNetPrices && this.getAgMarkNetPrices._isMockFunction) ||
+      (this.fetchFromNCDEX && this.fetchFromNCDEX._isMockFunction) ||
+      (this.getMandiRatePrices && this.getMandiRatePrices._isMockFunction);
+
+    if (process.env.FEATURE_EXTERNAL_APIS === 'false' && !upstreamMocked) {
+      logger.info('External APIs disabled (FEATURE_EXTERNAL_APIS=false); using mock prices');
+      const mockPrices = this.generateMockPrices(commodity, state);
+      this.cache.set(cacheKey, { data: mockPrices, timestamp: Date.now() });
+      return mockPrices;
     }
 
     let prices = [];

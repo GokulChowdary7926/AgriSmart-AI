@@ -8,9 +8,9 @@ const optionalAuth = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     
-    if (token) {
+    if (token && process.env.JWT_SECRET) {
       try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         try {
           const User = require('../models/User');
           const user = await User.findById(decoded.userId).select('-password');

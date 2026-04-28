@@ -4,6 +4,7 @@ const execPromise = util.promisify(exec);
 const config = require('../config');
 const logger = require('../utils/logger');
 const fs = require('fs');
+const path = require('path');
 
 class PythonService {
   constructor() {
@@ -11,18 +12,26 @@ class PythonService {
     this.isAvailable = false;
     this.pythonVersion = null;
     this.installedPackages = {};
+    this.repoRoot = path.resolve(__dirname, '..', '..');
   }
 
   async initialize() {
     try {
       await this.checkPythonAvailability();
       
-      await this.checkRequiredPackages();
+      const packageStatus = await this.checkRequiredPackages();
       
-      await this.testMLScripts();
+      const scriptStatus = await this.testMLScripts();
       
       this.isAvailable = true;
-      logger.info('✅ Python environment validated successfully');
+      logger.info('Python environment ready', {
+        version: this.pythonVersion,
+        packagesInstalled: Object.keys(this.installedPackages).length,
+        missingPackages: packageStatus.missing.length,
+        incompatiblePackages: packageStatus.incompatible.length,
+        scriptsValidated: scriptStatus.validatedCount,
+        scriptsExpected: scriptStatus.totalScripts
+      });
       return true;
     } catch (error) {
       logger.error('❌ Python environment validation failed:', error.message);
@@ -35,7 +44,6 @@ class PythonService {
     try {
       const { stdout } = await execPromise(`${this.pythonPath} --version`);
       this.pythonVersion = stdout.trim();
-      logger.info(`✅ Python detected: ${this.pythonVersion}`);
       return true;
     } catch (error) {
       throw new Error(`Python not found at ${this.pythonPath}: ${error.message}`);
@@ -44,12 +52,12 @@ class PythonService {
 
   async checkRequiredPackages() {
     const requiredPackages = {
-      'numpy': '>=1.19.0',
-      'pandas': '>=1.3.0',
-      'scikit-learn': '>=0.24.0',
-      'xgboost': '>=1.5.0',
-      'joblib': '>=1.0.0',
-      'requests': '>=2.26.0'
+      'numpy': { importName: 'numpy', minVersion: '>=1.19.0' },
+      'pandas': { importName: 'pandas', minVersion: '>=1.3.0' },
+      'scikit-learn': { importName: 'sklearn', minVersion: '>=0.24.0' },
+      'xgboost': { importName: 'xgboost', minVersion: '>=1.5.0' },
+      'joblib': { importName: 'joblib', minVersion: '>=1.0.0' },
+      'requests': { importName: 'requests', minVersion: '>=2.26.0' }
     };
 
     const script = `
@@ -61,9 +69,10 @@ installed = {}
 missing = []
 incompatible = []
 
-for pkg, req_version in required.items():
+for pkg, details in required.items():
     try:
-        spec = importlib.util.find_spec(pkg)
+        import_name = details.get("importName", pkg)
+        spec = importlib.util.find_spec(import_name)
         if spec is None:
             missing.append(pkg)
         else:
@@ -86,7 +95,7 @@ print(json.dumps(result))
     `;
 
     try {
-      const { stdout, stderr } = await execPromise(`${this.pythonPath} -c "${script.replace(/"/g, '\\"')}"`);
+      const { stdout } = await execPromise(`${this.pythonPath} -c "${script.replace(/"/g, '\\"')}"`);
       const result = JSON.parse(stdout.trim());
       
       this.installedPackages = result.installed;
@@ -98,10 +107,6 @@ print(json.dumps(result))
       
       if (result.incompatible.length > 0) {
         logger.warn(`⚠️ Incompatible Python package versions: ${result.incompatible.join(', ')}`);
-      }
-      
-      if (result.missing.length === 0 && result.incompatible.length === 0) {
-        logger.info('✅ All required Python packages are installed');
       }
       
       return result;
@@ -116,29 +121,46 @@ print(json.dumps(result))
 
   async testMLScripts() {
     const scripts = [
-      { path: 'backend/services/ml/predict_crop.py', name: 'Crop Prediction' },
-      { path: 'backend/services/ml/predict_crop_enhanced.py', name: 'Enhanced Crop Prediction' },
-      { path: 'ml-models/disease-detection/train-disease-model.py', name: 'Disease Model Training' }
+      {
+        paths: [
+          path.join(this.repoRoot, 'backend', 'services', 'ml', 'predict_crop.py')
+        ],
+        name: 'Crop Prediction'
+      },
+      {
+        paths: [
+          path.join(this.repoRoot, 'backend', 'services', 'ml', 'predict_crop_enhanced.py')
+        ],
+        name: 'Enhanced Crop Prediction'
+      },
+      {
+        paths: [
+          path.join(this.repoRoot, 'ml-models', 'disease-detection', 'train-disease-model.py'),
+          path.join(this.repoRoot, 'backend', 'ml-models', 'train-disease-model.py'),
+          path.join(this.repoRoot, 'ml-models', 'disease-detection', 'train.py')
+        ],
+        name: 'Disease Model Training'
+      }
     ];
 
     let validatedCount = 0;
 
     for (const script of scripts) {
       try {
-        if (!fs.existsSync(script.path)) {
-          logger.warn(`⚠️ ML script not found: ${script.path}`);
+        const scriptPath = script.paths.find((candidatePath) => fs.existsSync(candidatePath));
+        if (!scriptPath) {
+          logger.warn(`⚠️ ML script not found: ${script.paths[0]}`);
           continue;
         }
 
-        const { stdout, stderr } = await execPromise(
-          `${this.pythonPath} -m py_compile "${script.path}"`,
+        const { stderr } = await execPromise(
+          `${this.pythonPath} -m py_compile "${scriptPath}"`,
           { timeout: 5000 }
         );
         
         if (stderr && stderr.includes('SyntaxError')) {
           logger.error(`❌ Syntax error in ${script.name}: ${stderr}`);
         } else {
-          logger.info(`✅ ML script validated: ${script.name}`);
           validatedCount++;
         }
       } catch (error) {
@@ -154,7 +176,7 @@ print(json.dumps(result))
       logger.warn('⚠️ No ML scripts were validated (scripts may not exist)');
     }
 
-    return validatedCount;
+    return { validatedCount, totalScripts: scripts.length };
   }
 
   async executeScript(scriptPath, args = []) {
@@ -215,13 +237,10 @@ print(json.dumps(result))
 
 const pythonService = new PythonService();
 
-if (require.main !== module) {
-  pythonService.initialize().catch(err => {
-    logger.error('Failed to initialize Python service:', err);
-  });
-}
-
 module.exports = pythonService;
+
+
+
 
 
 

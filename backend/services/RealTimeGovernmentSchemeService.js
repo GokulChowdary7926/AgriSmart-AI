@@ -1,5 +1,6 @@
-const axios = require('axios');
 const logger = require('../utils/logger');
+const governmentAPIService = require('./governmentAPIService');
+const resilientHttpClient = require('./api/resilientHttpClient');
 
 class RealTimeGovernmentSchemeService {
   constructor() {
@@ -20,23 +21,54 @@ class RealTimeGovernmentSchemeService {
 
   async getRealTimeSchemes(farmerProfile) {
     try {
-      const schemePromises = [
-        this.fetchNationalSchemes(),
-        this.fetchStateSchemes(farmerProfile?.state),
-        this.fetchMinistrySchemes(),
-        this.fetchLocalSchemes(farmerProfile?.district)
-      ];
+      const state = farmerProfile?.location?.state || farmerProfile?.state || null;
+      let allSchemes = [];
+      let schemeResults = [];
 
-      const results = await Promise.allSettled(schemePromises);
-      
-      const allSchemes = results
-        .filter(result => result.status === 'fulfilled' && result.value)
-        .map(result => result.value)
-        .flat();
+      const govApiResult = await governmentAPIService.getGovernmentSchemes(state, null, null);
+      if (govApiResult.success && Array.isArray(govApiResult.schemes) && govApiResult.schemes.length > 0) {
+        const fromGovApi = govApiResult.schemes.map((s, i) => ({
+          id: s.scheme_id || `gov-${i}`,
+          name: s.name || s.name_hi || 'Government Scheme',
+          description: typeof s.description === 'object' ? (s.description.en || s.description.hi || '') : (s.description || ''),
+          ministry: 'Agriculture & Farmers Welfare',
+          category: 'National Scheme',
+          eligibility: s.eligibility || {},
+          benefits: Array.isArray(s.benefits) ? { financialAid: s.benefits.join('; '), details: s.benefits } : { financialAid: '' },
+          applicationProcess: Array.isArray(s.application_process) ? s.application_process.join(' ') : '',
+          documentsRequired: Array.isArray(s.documents_required) ? s.documents_required : [],
+          website_url: s.website_url,
+          helpline: s.helpline,
+          deadline: s.end_date ? new Date(s.end_date).toISOString().split('T')[0] : 'Ongoing',
+          status: 'Active',
+          applicationLink: s.website_url || '',
+          contact: s.helpline || '',
+          source: 'Government Portal',
+          lastUpdated: new Date().toISOString(),
+          regions: ['All India']
+        }));
+        allSchemes = fromGovApi;
+        logger.info(`Government API returned ${allSchemes.length} schemes for state: ${state || 'all'}`);
+      }
+
+      if (allSchemes.length === 0) {
+        const schemePromises = [
+          this.fetchNationalSchemes(),
+          this.fetchStateSchemes(state),
+          this.fetchMinistrySchemes(),
+          this.fetchLocalSchemes(farmerProfile?.location?.district || farmerProfile?.district)
+        ];
+        schemeResults = await Promise.allSettled(schemePromises);
+        allSchemes = schemeResults
+          .filter(result => result.status === 'fulfilled' && result.value)
+          .map(result => result.value)
+          .flat();
+      }
 
       const rankedSchemes = this.rankSchemes(allSchemes, farmerProfile || {});
-      
       const validatedSchemes = await this.validateEligibility(rankedSchemes, farmerProfile || {});
+
+      const sources = (govApiResult.success && allSchemes.length > 0) ? ['Government Portal'] : this.getSourceInfo(schemeResults);
 
       return {
         success: true,
@@ -46,7 +78,7 @@ class RealTimeGovernmentSchemeService {
         schemes: validatedSchemes.slice(0, 15),
         deadlines: this.extractDeadlines(validatedSchemes),
         recommendations: this.generateRecommendations(validatedSchemes, farmerProfile || {}),
-        sources: this.getSourceInfo(results)
+        sources
       };
     } catch (error) {
       logger.error('Government schemes error:', error);
@@ -56,14 +88,22 @@ class RealTimeGovernmentSchemeService {
 
   async fetchNationalSchemes() {
     try {
-      const response = await axios.get('https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070', {
+      const result = await resilientHttpClient.request({
+        serviceName: 'gov-national-schemes',
+        method: 'get',
+        url: 'https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070',
         params: {
-          'api-key': process.env.AGMARKNET_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b',
+          'api-key': process.env.AGMARKNET_API_KEY || process.env.DATA_GOV_IN_API_KEY || '',
           format: 'json',
           limit: 10
         },
-        timeout: 8000 // Reduced timeout for faster fallback
+        timeout: 8000
       });
+      if (!result.success) {
+        logger.warn(`Data.gov.in API unavailable (${result.error?.message}), using fallback schemes`);
+        return this.getFallbackNationalSchemes();
+      }
+      const response = result.response;
 
       if (!response.data || !response.data.records) {
         logger.warn('Data.gov.in returned invalid response structure');
@@ -354,16 +394,24 @@ class RealTimeGovernmentSchemeService {
   async checkSchemeActive(scheme) {
     try {
       if (scheme.applicationLink) {
-        const response = await axios.head(scheme.applicationLink, { timeout: 5000 });
+        const result = await resilientHttpClient.request({
+          serviceName: 'gov-scheme-head-check',
+          method: 'head',
+          url: scheme.applicationLink,
+          timeout: 5000,
+          retry: { maxRetries: 1, baseDelay: 300, maxDelay: 1000 }
+        });
+        if (!result.success) return true;
+        const response = result.response;
         return response.status === 200;
       }
       return true;
     } catch (error) {
-      return true; // Assume active if check fails
+      return true;
     }
   }
 
-  async validateDocuments(scheme, farmerProfile) {
+  async validateDocuments(_scheme, _farmerProfile) {
     return true;
   }
 
@@ -374,7 +422,7 @@ class RealTimeGovernmentSchemeService {
     return deadlineDate > new Date();
   }
 
-  generateRecommendations(schemes, farmerProfile) {
+  generateRecommendations(schemes, _farmerProfile) {
     const recommendations = [];
     
     const highPriority = schemes.filter(s => s.priority === 'high' && s.isEligible);
@@ -447,7 +495,7 @@ class RealTimeGovernmentSchemeService {
   getSourceInfo(results) {
     return results
       .filter(result => result.status === 'fulfilled' && result.value)
-      .map(result => 'Government API')
+      .map(_result => 'Government API')
       .filter((value, index, self) => self.indexOf(value) === index);
   }
 

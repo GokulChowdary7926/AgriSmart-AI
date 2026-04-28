@@ -1,12 +1,46 @@
+const mongoose = require('mongoose');
 const MarketPrice = require('../models/MarketPrice');
 const marketPriceAPIService = require('../services/marketPriceAPIService');
 const logger = require('../utils/logger');
 const ricePrices = require('../data/ricePrices');
+const { badRequest, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
 
 class MarketController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+  }
+
+  static parseCoordinates(lat, lng) {
+    const parsedLat = parseFloat(lat);
+    const parsedLng = parseFloat(lng);
+    if (Number.isNaN(parsedLat) || Number.isNaN(parsedLng)) return null;
+    if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
+    return { lat: parsedLat, lng: parsedLng };
+  }
+
   static async getLatest(req, res) {
     try {
       const { commodity, state, limit = 5000 } = req.query;
+      const safeLimit = MarketController.parsePositiveInt(limit, 5000, { min: 1, max: 5000 });
       
       if (commodity) {
         const normalizedCommodity = commodity.toLowerCase().trim();
@@ -50,7 +84,7 @@ class MarketController {
               date: price.date,
               recordedAt: price.date,
               timestamp: price.date,
-              source: price.source || 'rice_database',
+              source: 'AgriSmart AI',
               minPrice: price.minPrice,
               maxPrice: price.maxPrice,
               arrivalQuantity: price.arrivalQuantity,
@@ -59,12 +93,10 @@ class MarketController {
             }));
             
             logger.info(`✅ Returning ${formattedPrices.length} rice prices from database${state ? ` for ${state}` : ''}`);
-            return res.json({
-              success: true,
-              data: formattedPrices.slice(0, parseInt(limit)),
-              source: 'rice_database',
-              message: `Rice prices from comprehensive database${state ? ` in ${state}` : ' (all states)'} (${formattedPrices.length} entries)`,
-              summary: {
+            return MarketController.success(res, formattedPrices.slice(0, safeLimit), {
+              extra: {
+                message: `Rice prices from comprehensive database${state ? ` in ${state}` : ' (all states)'} (${formattedPrices.length} entries)`,
+                summary: {
                 total: formattedPrices.length,
                 averagePrice: formattedPrices.length > 0 
                   ? (formattedPrices.reduce((sum, p) => sum + p.price.value, 0) / formattedPrices.length).toFixed(2)
@@ -75,6 +107,7 @@ class MarketController {
                 maxPrice: formattedPrices.length > 0 
                   ? Math.max(...formattedPrices.map(p => p.price.value))
                   : 0
+                }
               }
             });
           } catch (riceError) {
@@ -86,11 +119,10 @@ class MarketController {
           const realTimePrices = await marketPriceAPIService.getRealTimePrices(commodity, state);
           
           if (realTimePrices && realTimePrices.length > 0) {
-            return res.json({
-              success: true,
-              data: realTimePrices.slice(0, parseInt(limit)),
-              source: realTimePrices[0]?.source || 'realtime',
-              message: `Real-time prices for ${commodity}`
+            return MarketController.success(res, realTimePrices.slice(0, safeLimit), {
+              extra: {
+                message: `Real-time prices for ${commodity}`
+              }
             });
           }
         } catch (apiError) {
@@ -99,6 +131,25 @@ class MarketController {
       }
       
       if (!commodity) {
+        const fastCommodities = [
+          'Rice', 'Wheat', 'Maize', 'Tomato', 'Potato', 'Onion',
+          'Toor Dal', 'Moong Dal', 'Groundnut', 'Mustard', 'Cotton', 'Sugarcane'
+        ];
+        const quickPrices = [];
+        for (const comm of fastCommodities) {
+          quickPrices.push(...marketPriceAPIService.generateMockPrices(comm, state));
+        }
+
+        return MarketController.success(res, quickPrices.slice(0, safeLimit), {
+          isFallback: true,
+          degradedReason: 'market_provider_bypassed',
+          extra: {
+            message: `Prices for daily-use commodities${state ? ` in ${state}` : ''}`
+          }
+        });
+      }
+
+      if (!commodity && process.env.MARKET_ENABLE_SLOW_FETCH === 'true') {
         try {
           logger.info('Fetching prices for all daily-use agricultural products across all states');
           const majorCommodities = [
@@ -166,11 +217,10 @@ class MarketController {
           });
           
           logger.info(`✅ Returning ${filteredPrices.length} prices for all commodities${state ? ` in ${state}` : ''}`);
-          return res.json({
-            success: true,
-            data: filteredPrices.slice(0, parseInt(limit)),
-            source: filteredPrices.some(p => p.source !== 'mock') ? 'realtime' : 'mock',
-            message: `Prices for all commodities${state ? ` in ${state}` : ''} (${filteredPrices.length} entries)`
+          return MarketController.success(res, filteredPrices.slice(0, safeLimit), {
+            extra: {
+              message: `Prices for all commodities${state ? ` in ${state}` : ''} (${filteredPrices.length} entries)`
+            }
           });
         } catch (apiError) {
           logger.error('Error fetching prices for all commodities:', apiError.message);
@@ -208,17 +258,18 @@ class MarketController {
           }
           
           logger.info(`Returning ${filteredMockPrices.length} mock prices as fallback${state ? ` for ${state}` : ''}`);
-          return res.json({
-            success: true,
-            data: filteredMockPrices.slice(0, parseInt(limit)),
-            source: 'mock',
-            message: `Mock prices for all commodities${state ? ` in ${state}` : ''} (fallback)`
+          return MarketController.success(res, filteredMockPrices.slice(0, safeLimit), {
+            isFallback: true,
+            degradedReason: 'market_provider_unavailable',
+            extra: {
+              message: `Prices for all commodities${state ? ` in ${state}` : ''}`
+            }
           });
         }
       }
       
       if (commodity) {
-        if (MarketPrice && typeof MarketPrice.find === 'function') {
+        if (MarketPrice && typeof MarketPrice.find === 'function' && mongoReady()) {
           try {
             const query = { commodity: { $regex: new RegExp(commodity, 'i') } };
             if (state) {
@@ -226,15 +277,11 @@ class MarketController {
             }
             const prices = await MarketPrice.find(query)
               .sort({ recordedAt: -1 })
-              .limit(parseInt(limit))
+              .limit(safeLimit)
               .catch(() => []);
             
             if (prices && prices.length > 0) {
-              return res.json({
-                success: true,
-                data: prices,
-                source: 'database'
-              });
+              return MarketController.success(res, prices);
             }
           } catch (err) {
             logger.warn('Database query failed:', err.message);
@@ -242,10 +289,9 @@ class MarketController {
         }
         
         const mockPrices = marketPriceAPIService.generateMockPrices(commodity, state);
-        return res.json({
-          success: true,
-          data: mockPrices,
-          source: 'mock'
+        return MarketController.success(res, mockPrices, {
+          isFallback: true,
+          degradedReason: 'market_data_unavailable'
         });
       }
     } catch (error) {
@@ -258,11 +304,12 @@ class MarketController {
         allMockPrices.push(...mockPrices);
       }
       
-      res.json({
-        success: true,
-        data: allMockPrices.slice(0, 100),
-        source: 'mock',
-        message: 'Mock prices (error fallback)'
+      return MarketController.success(res, allMockPrices.slice(0, 100), {
+        isFallback: true,
+        degradedReason: 'market_controller_error',
+        extra: {
+          message: 'Prices (fallback)'
+        }
       });
     }
   }
@@ -270,23 +317,20 @@ class MarketController {
   static async getTrends(req, res) {
     try {
       const { commodity, days = 30 } = req.query;
+      const safeDays = MarketController.parsePositiveInt(days, 30, { min: 1, max: 365 });
       
       if (!commodity) {
-        return res.status(400).json({
-          success: false,
-          error: 'Commodity is required'
-        });
+        return badRequest(res, 'Commodity is required');
       }
       
       try {
-        const trends = await marketPriceAPIService.getPriceTrends(commodity, parseInt(days));
+        const trends = await marketPriceAPIService.getPriceTrends(commodity, safeDays);
         
         if (trends) {
-          return res.json({
-            success: true,
-            data: trends,
-            source: 'realtime',
-            message: `Price trends and predictions for ${commodity}`
+          return MarketController.success(res, trends, {
+            extra: {
+              message: `Price trends and predictions for ${commodity}`
+            }
           });
         }
       } catch (apiError) {
@@ -296,40 +340,43 @@ class MarketController {
       let trends;
       try {
         if (MarketPrice && typeof MarketPrice.getPriceTrends === 'function') {
-          trends = await MarketPrice.getPriceTrends(commodity, parseInt(days));
+          trends = await MarketPrice.getPriceTrends(commodity, safeDays);
         } else {
           throw new Error('getPriceTrends not available');
         }
       } catch (err) {
-        trends = await marketPriceAPIService.getPriceTrends(commodity, parseInt(days));
+        trends = await marketPriceAPIService.getPriceTrends(commodity, safeDays);
       }
       
-      res.json({
-        success: true,
-        data: trends,
-        source: 'fallback'
-      });
+      return MarketController.success(res, trends);
     } catch (error) {
       logger.error('Error fetching price trends:', error);
-      const trends = await marketPriceAPIService.getPriceTrends(req.query.commodity, parseInt(req.query.days) || 30);
-      res.json({
-        success: true,
-        data: trends,
-        source: 'fallback'
+      const fallbackDays = MarketController.parsePositiveInt(req.query.days, 30, { min: 1, max: 365 });
+      const trends = await marketPriceAPIService.getPriceTrends(req.query.commodity, fallbackDays);
+      return MarketController.success(res, trends, {
+        isFallback: true,
+        degradedReason: 'market_trends_error'
       });
     }
   }
-  
+
   static async create(req, res) {
     try {
-      const { lat, lng, ...priceData } = req.body;
+      if (!MarketPrice || !mongoReady()) {
+        return serviceUnavailable(res, 'Market price store unavailable; cannot persist right now', { degradedReason: 'mongo_unavailable' });
+      }
+      const { lat, lng, ...priceData } = req.body || {};
       
       if (lat && lng) {
+        const coordinates = MarketController.parseCoordinates(lat, lng);
+        if (!coordinates) {
+          return badRequest(res, 'Invalid latitude/longitude values');
+        }
         priceData.location = {
           ...priceData.location,
           coordinates: {
             type: 'Point',
-            coordinates: [parseFloat(lng), parseFloat(lat)]
+            coordinates: [coordinates.lng, coordinates.lat]
           }
         };
       }
@@ -341,16 +388,13 @@ class MarketController {
       
       await marketPrice.save();
       
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         data: marketPrice
       });
     } catch (error) {
       logger.error('Error creating market price:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
@@ -432,44 +476,36 @@ class MarketController {
         { name: 'Coffee', category: 'Others' }
       ];
       
-      res.json({
-        success: true,
-        data: commodities
-      });
+      return MarketController.success(res, commodities);
     } catch (error) {
       logger.error('Error fetching commodities:', error);
-      res.json({
-        success: true,
-        data: [
+      return MarketController.success(
+        res,
+        [
           { name: 'Wheat', category: 'Cereals' },
           { name: 'Rice', category: 'Cereals' },
           { name: 'Maize', category: 'Cereals' }
-        ]
-      });
+        ],
+        { isFallback: true, degradedReason: 'market_commodities_fallback' }
+      );
     }
   }
 
   static async getById(req, res) {
     try {
+      if (!MarketPrice || !mongoReady()) {
+        return serviceUnavailable(res, 'Market price store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const price = await MarketPrice.findById(req.params.id);
       
       if (!price) {
-        return res.status(404).json({
-          success: false,
-          error: 'Market price not found'
-        });
+        return notFound(res, 'Market price not found');
       }
       
-      res.json({
-        success: true,
-        data: price
-      });
+      return MarketController.success(res, price);
     } catch (error) {
       logger.error('Error fetching market price:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 }

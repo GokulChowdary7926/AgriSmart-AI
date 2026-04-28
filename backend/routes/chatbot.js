@@ -6,7 +6,7 @@ const { authenticateToken } = require('../middleware/auth');
 router.use(authenticateToken);
 
 router.post('/start', ChatbotController.startChat);
-router.post('/message', ChatbotController.sendMessage); // Add direct message route
+router.post('/message', ChatbotController.sendMessage);
 router.post('/recommendations', ChatbotController.getRecommendations);
 router.get('/sessions', ChatbotController.listSessions);
 

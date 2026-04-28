@@ -24,17 +24,18 @@ import {
   Select,
   FormControl,
   InputLabel,
-  Alert,
   CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as ViewIcon
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
+import { useLanguage } from '../contexts/LanguageContext';
+
+export const getCropMutationMode = (selectedCrop) => (selectedCrop?._id ? 'update' : 'create');
 
 export default function Crops() {
   const [open, setOpen] = useState(false);
@@ -49,6 +50,7 @@ export default function Crops() {
   });
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
+  const { t } = useLanguage();
 
   const { data: crops, isLoading } = useQuery({
     queryKey: ['crops'],
@@ -65,11 +67,26 @@ export default function Crops() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['crops']);
-      enqueueSnackbar('Crop added successfully!', { variant: 'success' });
+      enqueueSnackbar(t('crops.addSuccess', 'Crop added successfully!'), { variant: 'success' });
       handleClose();
     },
     onError: (error) => {
-      enqueueSnackbar(error.response?.data?.error || 'Failed to add crop', { variant: 'error' });
+      enqueueSnackbar(getApiErrorMessage(error, t('crops.addFailed', 'Failed to add crop')), { variant: 'error' });
+    }
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }) => {
+      const response = await api.put(`/crops/${id}`, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['crops']);
+      enqueueSnackbar(t('crops.updateSuccess', 'Crop updated successfully!'), { variant: 'success' });
+      handleClose();
+    },
+    onError: (error) => {
+      enqueueSnackbar(getApiErrorMessage(error, t('crops.updateFailed', 'Failed to update crop')), { variant: 'error' });
     }
   });
 
@@ -80,10 +97,10 @@ export default function Crops() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['crops']);
-      enqueueSnackbar('Crop deleted successfully!', { variant: 'success' });
+      enqueueSnackbar(t('crops.deleteSuccess', 'Crop deleted successfully!'), { variant: 'success' });
     },
     onError: (error) => {
-      enqueueSnackbar(error.response?.data?.error || 'Failed to delete crop', { variant: 'error' });
+      enqueueSnackbar(getApiErrorMessage(error, t('crops.deleteFailed', 'Failed to delete crop')), { variant: 'error' });
     }
   });
 
@@ -127,11 +144,15 @@ export default function Crops() {
       },
       plantingDate: formData.plantingDate ? new Date(formData.plantingDate).toISOString() : new Date().toISOString()
     };
+    if (getCropMutationMode(selectedCrop) === 'update') {
+      updateMutation.mutate({ id: selectedCrop._id, data: submitData });
+      return;
+    }
     createMutation.mutate(submitData);
   };
 
   const handleDelete = (id) => {
-    if (window.confirm('Are you sure you want to delete this crop?')) {
+    if (window.confirm(t('crops.deleteConfirm', 'Are you sure you want to delete this crop?'))) {
       deleteMutation.mutate(id);
     }
   };
@@ -163,27 +184,27 @@ export default function Crops() {
     <Container maxWidth="lg">
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
-          Crop Management
+          {t('crops.managementTitle', 'Crop Management')}
         </Typography>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpen()}
         >
-          Add Crop
+          {t('crops.addCrop')}
         </Button>
       </Box>
 
       {crops && crops.length === 0 ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="h6" color="text.secondary" gutterBottom>
-            No crops found
+            {t('crops.noCropsFound', 'No crops found')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Start by adding your first crop
+            {t('crops.addFirstHint', 'Start by adding your first crop')}
           </Typography>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpen()}>
-            Add Your First Crop
+            {t('crops.addFirst', 'Add Your First Crop')}
           </Button>
         </Paper>
       ) : (
@@ -191,14 +212,14 @@ export default function Crops() {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Type</TableCell>
-                <TableCell>Variety</TableCell>
-                <TableCell>Planting Date</TableCell>
-                <TableCell>Area</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Health Score</TableCell>
-                <TableCell>Actions</TableCell>
+                <TableCell>{t('crops.cropName', 'Name')}</TableCell>
+                <TableCell>{t('crops.cropType', 'Type')}</TableCell>
+                <TableCell>{t('crops.variety', 'Variety')}</TableCell>
+                <TableCell>{t('crops.plantingDate', 'Planting Date')}</TableCell>
+                <TableCell>{t('crops.area', 'Area')}</TableCell>
+                <TableCell>{t('crops.status', 'Status')}</TableCell>
+                <TableCell>{t('crops.healthScore', 'Health Score')}</TableCell>
+                <TableCell>{t('common.actions', 'Actions')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -222,10 +243,18 @@ export default function Crops() {
                   </TableCell>
                   <TableCell>{crop.healthScore || 100}%</TableCell>
                   <TableCell>
-                    <IconButton size="small" onClick={() => handleOpen(crop)}>
+                    <IconButton
+                      size="small"
+                      aria-label={t('common.edit', 'Edit')}
+                      onClick={() => handleOpen(crop)}
+                    >
                       <EditIcon />
                     </IconButton>
-                    <IconButton size="small" onClick={() => handleDelete(crop._id)}>
+                    <IconButton
+                      size="small"
+                      aria-label={t('common.delete', 'Delete')}
+                      onClick={() => handleDelete(crop._id)}
+                    >
                       <DeleteIcon />
                     </IconButton>
                   </TableCell>
@@ -238,13 +267,13 @@ export default function Crops() {
 
       <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
         <form onSubmit={handleSubmit}>
-          <DialogTitle>{selectedCrop ? 'Edit Crop' : 'Add New Crop'}</DialogTitle>
+          <DialogTitle>{selectedCrop ? t('crops.editCrop') : t('crops.addNewCrop', 'Add New Crop')}</DialogTitle>
           <DialogContent>
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Crop Name"
+                  label={t('crops.cropName', 'Crop Name')}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
@@ -252,27 +281,27 @@ export default function Crops() {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Crop Type</InputLabel>
+                  <InputLabel>{t('crops.cropType', 'Crop Type')}</InputLabel>
                   <Select
                     value={formData.type}
                     onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                    label="Crop Type"
+                    label={t('crops.cropType', 'Crop Type')}
                     required
                   >
-                    <MenuItem value="cereal">Cereal</MenuItem>
-                    <MenuItem value="vegetable">Vegetable</MenuItem>
-                    <MenuItem value="fruit">Fruit</MenuItem>
-                    <MenuItem value="legume">Legume</MenuItem>
-                    <MenuItem value="tuber">Tuber</MenuItem>
-                    <MenuItem value="cash-crop">Cash Crop</MenuItem>
-                    <MenuItem value="fodder">Fodder</MenuItem>
+                    <MenuItem value="cereal">{t('crops.typeCereal', 'Cereal')}</MenuItem>
+                    <MenuItem value="vegetable">{t('crops.typeVegetable', 'Vegetable')}</MenuItem>
+                    <MenuItem value="fruit">{t('crops.typeFruit', 'Fruit')}</MenuItem>
+                    <MenuItem value="legume">{t('crops.typeLegume', 'Legume')}</MenuItem>
+                    <MenuItem value="tuber">{t('crops.typeTuber', 'Tuber')}</MenuItem>
+                    <MenuItem value="cash-crop">{t('crops.typeCashCrop', 'Cash Crop')}</MenuItem>
+                    <MenuItem value="fodder">{t('crops.typeFodder', 'Fodder')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Variety"
+                  label={t('crops.variety', 'Variety')}
                   value={formData.variety}
                   onChange={(e) => setFormData({ ...formData, variety: e.target.value })}
                 />
@@ -280,7 +309,7 @@ export default function Crops() {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Planting Date"
+                  label={t('crops.plantingDate', 'Planting Date')}
                   type="date"
                   value={formData.plantingDate}
                   onChange={(e) => setFormData({ ...formData, plantingDate: e.target.value })}
@@ -291,7 +320,7 @@ export default function Crops() {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Area"
+                  label={t('crops.area', 'Area')}
                   type="number"
                   value={formData.area.value}
                   onChange={(e) => setFormData({
@@ -303,45 +332,51 @@ export default function Crops() {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Unit</InputLabel>
+                  <InputLabel>{t('crops.unit', 'Unit')}</InputLabel>
                   <Select
                     value={formData.area.unit}
                     onChange={(e) => setFormData({
                       ...formData,
                       area: { ...formData.area, unit: e.target.value }
                     })}
-                    label="Unit"
+                    label={t('crops.unit', 'Unit')}
                   >
-                    <MenuItem value="acres">Acres</MenuItem>
-                    <MenuItem value="hectares">Hectares</MenuItem>
-                    <MenuItem value="square-meters">Square Meters</MenuItem>
+                    <MenuItem value="acres">{t('crops.unitAcres', 'Acres')}</MenuItem>
+                    <MenuItem value="hectares">{t('crops.unitHectares', 'Hectares')}</MenuItem>
+                    <MenuItem value="square-meters">{t('crops.unitSquareMeters', 'Square Meters')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12}>
                 <FormControl fullWidth>
-                  <InputLabel>Status</InputLabel>
+                  <InputLabel>{t('crops.status')}</InputLabel>
                   <Select
                     value={formData.status}
                     onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                    label="Status"
+                    label={t('crops.status')}
                   >
-                    <MenuItem value="planned">Planned</MenuItem>
-                    <MenuItem value="planted">Planted</MenuItem>
-                    <MenuItem value="growing">Growing</MenuItem>
-                    <MenuItem value="flowering">Flowering</MenuItem>
-                    <MenuItem value="fruiting">Fruiting</MenuItem>
-                    <MenuItem value="harvested">Harvested</MenuItem>
-                    <MenuItem value="failed">Failed</MenuItem>
+                    <MenuItem value="planned">{t('crops.statusPlanned', 'Planned')}</MenuItem>
+                    <MenuItem value="planted">{t('crops.statusPlanted', 'Planted')}</MenuItem>
+                    <MenuItem value="growing">{t('crops.statusGrowing', 'Growing')}</MenuItem>
+                    <MenuItem value="flowering">{t('crops.statusFlowering', 'Flowering')}</MenuItem>
+                    <MenuItem value="fruiting">{t('crops.statusFruiting', 'Fruiting')}</MenuItem>
+                    <MenuItem value="harvested">{t('crops.statusHarvested', 'Harvested')}</MenuItem>
+                    <MenuItem value="failed">{t('crops.statusFailed', 'Failed')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
             </Grid>
           </DialogContent>
           <DialogActions>
-            <Button onClick={handleClose}>Cancel</Button>
-            <Button type="submit" variant="contained" disabled={createMutation.isLoading}>
-              {createMutation.isLoading ? <CircularProgress size={24} /> : 'Save'}
+            <Button onClick={handleClose}>{t('common.cancel')}</Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={createMutation.isLoading || updateMutation.isLoading}
+            >
+              {(createMutation.isLoading || updateMutation.isLoading)
+                ? <CircularProgress size={24} />
+                : t('common.save')}
             </Button>
           </DialogActions>
         </form>

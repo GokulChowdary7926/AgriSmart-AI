@@ -10,39 +10,31 @@ import {
   ListItem,
   ListItemAvatar,
   ListItemText,
-  Divider,
   InputAdornment,
   Badge,
-  Chip,
   CircularProgress,
-  Drawer,
-  AppBar,
-  Toolbar,
-  Button,
-  Menu,
-  MenuItem
+  Button
 } from '@mui/material';
 import {
   Send as SendIcon,
   Search as SearchIcon,
   LocationOn as LocationIcon,
-  Person as PersonIcon,
-  Close as CloseIcon,
-  Menu as MenuIcon,
-  FilterList as FilterIcon
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { io } from 'socket.io-client';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
 import { useSnackbar } from 'notistack';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
 import logger from '../services/logger';
 
 export default function AgriChat() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const { enqueueSnackbar } = useSnackbar();
   
   const [socket, setSocket] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [, setIsConnected] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [nearbyUsers, setNearbyUsers] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
@@ -54,11 +46,10 @@ export default function AgriChat() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [showNearby, setShowNearby] = useState(false);
   const [typingUsers, setTypingUsers] = useState({});
-  const [radius, setRadius] = useState(50); // km
+  const [radius] = useState(50);
   
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const drawerRef = useRef(null);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -67,7 +58,7 @@ export default function AgriChat() {
       setConversations(response.data.data || []);
     } catch (error) {
       logger.error('Error loading conversations', error);
-      enqueueSnackbar('Failed to load conversations', { variant: 'error' });
+      enqueueSnackbar(t('agriChat.failedLoadConversations', 'Failed to load conversations'), { variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -81,12 +72,12 @@ export default function AgriChat() {
       setNearbyUsers(users);
       
       if (!response.data.success && users.length === 0) {
-        enqueueSnackbar(response.data.message || 'No nearby sellers/dealers found. Try searching instead.', { 
+        enqueueSnackbar(response.data.message || t('agriChat.noNearbyTrySearch', 'No nearby sellers/dealers found. Try searching instead.'), { 
           variant: 'info',
           autoHideDuration: 4000
         });
       } else if (users.length === 0) {
-        enqueueSnackbar('No nearby sellers/dealers found. Try searching for users instead.', { 
+        enqueueSnackbar(t('agriChat.noNearbyTrySearchUsers', 'No nearby sellers/dealers found. Try searching for users instead.'), { 
           variant: 'info',
           autoHideDuration: 4000
         });
@@ -95,8 +86,7 @@ export default function AgriChat() {
       console.error('Error loading nearby users:', error);
       setNearbyUsers([]);
       enqueueSnackbar(
-        error.response?.data?.message || 
-        'Unable to load nearby sellers/dealers. You can still search for users.', 
+        getApiErrorMessage(error, t('agriChat.unableLoadNearby', 'Unable to load nearby sellers/dealers. You can still search for users.')),
         { 
           variant: 'info',
           autoHideDuration: 5000
@@ -199,7 +189,7 @@ export default function AgriChat() {
 
       newSocket.on('agri-chat:error', (error) => {
         if (isMounted) {
-          enqueueSnackbar(error.error || 'An error occurred', { variant: 'error' });
+          enqueueSnackbar(error.error || t('errors.generic'), { variant: 'error' });
         }
       });
 
@@ -209,7 +199,7 @@ export default function AgriChat() {
     } catch (error) {
       logger.error('Failed to initialize socket', error);
       if (isMounted) {
-        enqueueSnackbar('Failed to connect to chat server', { variant: 'error' });
+        enqueueSnackbar(t('agriChat.failedConnectServer', 'Failed to connect to chat server'), { variant: 'error' });
       }
     }
 
@@ -222,7 +212,7 @@ export default function AgriChat() {
         newSocket.removeAllListeners();
       }
     };
-  }, [loadConversations, loadNearbyUsers]); // Include dependencies to avoid stale closures
+  }, [loadConversations, loadNearbyUsers]);
 
   const loadMessages = useCallback(async (conversationId) => {
     try {
@@ -232,7 +222,7 @@ export default function AgriChat() {
       scrollToBottom();
     } catch (error) {
       logger.error('Error loading messages', error);
-      enqueueSnackbar('Failed to load messages', { variant: 'error' });
+      enqueueSnackbar(t('agriChat.failedLoadMessages', 'Failed to load messages'), { variant: 'error' });
     } finally {
       setLoadingMessages(false);
     }
@@ -262,7 +252,7 @@ export default function AgriChat() {
       await loadConversations();
     } catch (error) {
       logger.error('Error starting conversation', error);
-      enqueueSnackbar('Failed to start conversation', { variant: 'error' });
+      enqueueSnackbar(t('agriChat.failedStartConversation', 'Failed to start conversation'), { variant: 'error' });
     }
   };
 
@@ -290,7 +280,7 @@ export default function AgriChat() {
       scrollToBottom();
     } catch (error) {
       logger.error('Error sending message', error);
-      enqueueSnackbar('Failed to send message', { variant: 'error' });
+      enqueueSnackbar(t('agriChat.failedSendMessage', 'Failed to send message'), { variant: 'error' });
     }
   };
 
@@ -355,9 +345,9 @@ export default function AgriChat() {
     const diff = now - d;
     const minutes = Math.floor(diff / 60000);
     
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+    if (minutes < 1) return t('agriChat.justNow', 'Just now');
+    if (minutes < 60) return t('agriChat.minutesAgo', { count: minutes, defaultValue: '{{count}}m ago' });
+    if (minutes < 1440) return t('agriChat.hoursAgo', { count: Math.floor(minutes / 60), defaultValue: '{{count}}h ago' });
     return d.toLocaleDateString();
   };
 
@@ -376,12 +366,12 @@ export default function AgriChat() {
       >
         <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
           <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
-            AgriChat
+            {t('nav.agriChat')}
           </Typography>
           <TextField
             fullWidth
             size="small"
-            placeholder="Search sellers/dealers..."
+            placeholder={t('agriChat.searchPlaceholder', 'Search sellers/dealers...')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             InputProps={{
@@ -402,7 +392,7 @@ export default function AgriChat() {
                 if (!showNearby) loadNearbyUsers();
               }}
             >
-              Nearby
+              {t('agriChat.nearby', 'Nearby')}
             </Button>
           </Box>
         </Box>
@@ -410,7 +400,7 @@ export default function AgriChat() {
         {searchQuery && searchResults.length > 0 && (
           <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', maxHeight: 200, overflow: 'auto' }}>
             <Typography variant="caption" sx={{ px: 2, py: 1, display: 'block', color: 'text.secondary' }}>
-              Search Results
+              {t('agriChat.searchResults', 'Search Results')}
             </Typography>
             {searchResults.map((result) => (
               <ListItem
@@ -424,7 +414,7 @@ export default function AgriChat() {
                 </ListItemAvatar>
                 <ListItemText
                   primary={result.name}
-                  secondary={`${result.role || 'user'} • ${result.farmerProfile?.location?.district || 'Unknown'}`}
+                  secondary={`${result.role || t('agriChat.user', 'user')} • ${result.farmerProfile?.location?.district || t('agriChat.unknown', 'Unknown')}`}
                 />
               </ListItem>
             ))}
@@ -435,9 +425,13 @@ export default function AgriChat() {
           <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', maxHeight: 300, overflow: 'auto' }}>
             <Box sx={{ px: 2, py: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                Nearby Sellers/Dealers ({nearbyUsers.length})
+                {t('agriChat.nearbySellersDealers', 'Nearby Sellers/Dealers')} ({nearbyUsers.length})
               </Typography>
-              <IconButton size="small" onClick={() => setShowNearby(false)}>
+              <IconButton
+                size="small"
+                aria-label={t('common.close', 'Close')}
+                onClick={() => setShowNearby(false)}
+              >
                 <CloseIcon fontSize="small" />
               </IconButton>
             </Box>
@@ -448,10 +442,10 @@ export default function AgriChat() {
             ) : nearbyUsers.length === 0 ? (
               <Box sx={{ px: 2, py: 2, textAlign: 'center' }}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  No nearby sellers/dealers found
+                  {t('agriChat.noNearbyFound', 'No nearby sellers/dealers found')}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  Try searching for users by name or check if your location is set in your profile
+                  {t('agriChat.searchByNameHint', 'Try searching for users by name or check if your location is set in your profile')}
                 </Typography>
                 <Button
                   size="small"
@@ -461,7 +455,7 @@ export default function AgriChat() {
                     setShowNearby(false);
                   }}
                 >
-                  Search Users Instead
+                  {t('agriChat.searchUsersInstead', 'Search Users Instead')}
                 </Button>
               </Box>
             ) : (
@@ -480,10 +474,10 @@ export default function AgriChat() {
                     secondary={
                       <Box>
                         <Typography variant="caption" display="block">
-                          {nearbyUser.role || 'user'} • {nearbyUser.distance} km away
+                          {nearbyUser.role || t('agriChat.user', 'user')} • {nearbyUser.distance} {t('agriChat.kmAway', 'km away')}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {nearbyUser.farmerProfile?.location?.district || 'Unknown location'}
+                          {nearbyUser.farmerProfile?.location?.district || t('agriChat.unknownLocation', 'Unknown location')}
                         </Typography>
                       </Box>
                     }
@@ -502,7 +496,7 @@ export default function AgriChat() {
           ) : conversations.length === 0 ? (
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <Typography variant="body2" color="text.secondary">
-                No conversations yet. Search for sellers/dealers to start chatting!
+                {t('agriChat.noConversations', 'No conversations yet. Search for sellers/dealers to start chatting!')}
               </Typography>
             </Box>
           ) : (
@@ -532,7 +526,7 @@ export default function AgriChat() {
                       primary={
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Typography variant="subtitle2" sx={{ fontWeight: unreadCount > 0 ? 600 : 400 }}>
-                            {otherParticipant?.name || 'Unknown User'}
+                            {otherParticipant?.name || t('agriChat.unknownUser', 'Unknown User')}
                           </Typography>
                           {conversation.lastMessage?.timestamp && (
                             <Typography variant="caption" color="text.secondary">
@@ -552,7 +546,7 @@ export default function AgriChat() {
                             whiteSpace: 'nowrap'
                           }}
                         >
-                          {conversation.lastMessage?.text || 'No messages yet'}
+                          {conversation.lastMessage?.text || t('agriChat.noMessagesYet', 'No messages yet')}
                         </Typography>
                       }
                     />
@@ -582,11 +576,11 @@ export default function AgriChat() {
               </Avatar>
               <Box sx={{ flex: 1 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                  {getOtherParticipant(selectedConversation)?.name || 'Unknown User'}
+                  {getOtherParticipant(selectedConversation)?.name || t('agriChat.unknownUser', 'Unknown User')}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {getOtherParticipant(selectedConversation)?.role || 'user'} •{' '}
-                  {getOtherParticipant(selectedConversation)?.farmerProfile?.location?.district || 'Unknown'}
+                  {getOtherParticipant(selectedConversation)?.role || t('agriChat.user', 'user')} •{' '}
+                  {getOtherParticipant(selectedConversation)?.farmerProfile?.location?.district || t('agriChat.unknown', 'Unknown')}
                 </Typography>
               </Box>
             </Box>
@@ -608,7 +602,7 @@ export default function AgriChat() {
               ) : messages.length === 0 ? (
                 <Box sx={{ textAlign: 'center', mt: 4 }}>
                   <Typography variant="body2" color="text.secondary">
-                    No messages yet. Start the conversation!
+                    {t('agriChat.noMessagesStart', 'No messages yet. Start the conversation!')}
                   </Typography>
                 </Box>
               ) : (
@@ -638,7 +632,7 @@ export default function AgriChat() {
                         >
                           {!isOwn && (
                             <Typography variant="caption" sx={{ display: 'block', mb: 0.5, opacity: 0.8 }}>
-                              {message.sender?.name || 'Unknown'}
+                              {message.sender?.name || t('agriChat.unknown', 'Unknown')}
                             </Typography>
                           )}
                           <Typography variant="body2">{message.content}</Typography>
@@ -663,7 +657,10 @@ export default function AgriChat() {
                     <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 1 }}>
                       <Paper elevation={0} sx={{ p: 1.5, bgcolor: 'background.paper', borderRadius: 2 }}>
                         <Typography variant="body2" color="text.secondary">
-                          {getOtherParticipant(selectedConversation)?.name || 'User'} is typing...
+                          {t('agriChat.userTyping', {
+                            name: getOtherParticipant(selectedConversation)?.name || t('agriChat.userLabel', 'User'),
+                            defaultValue: '{{name}} is typing...'
+                          })}
                         </Typography>
                       </Paper>
                     </Box>
@@ -686,7 +683,7 @@ export default function AgriChat() {
               <TextField
                 fullWidth
                 size="small"
-                placeholder="Type a message..."
+                placeholder={t('agriChat.typeMessage', 'Type a message...')}
                 value={messageText}
                 onChange={(e) => {
                   setMessageText(e.target.value);
@@ -703,6 +700,7 @@ export default function AgriChat() {
               />
               <IconButton
                 color="primary"
+                aria-label={t('agriChat.sendMessage', 'Send message')}
                 onClick={sendMessage}
                 disabled={!messageText.trim()}
                 sx={{ alignSelf: 'flex-end' }}
@@ -723,10 +721,10 @@ export default function AgriChat() {
             }}
           >
             <Typography variant="h6" sx={{ mb: 1 }}>
-              Select a conversation to start chatting
+              {t('agriChat.selectConversation', 'Select a conversation to start chatting')}
             </Typography>
             <Typography variant="body2">
-              Search for nearby sellers/dealers or select an existing conversation
+              {t('agriChat.selectConversationHint', 'Search for nearby sellers/dealers or select an existing conversation')}
             </Typography>
           </Box>
         )}

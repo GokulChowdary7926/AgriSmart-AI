@@ -1,10 +1,8 @@
-const axios = require('axios');
 const logger = require('../utils/logger');
 const apiErrorHandler = require('./api/apiErrorHandler');
 const fallbackManager = require('./api/fallbackManager');
-const retryManager = require('./api/retryManager');
-const { CircuitBreakerManager } = require('./api/circuitBreaker');
 const apiMonitor = require('./monitoring/apiMonitor');
+const resilientHttpClient = require('./api/resilientHttpClient');
 
 class WeatherService {
   constructor() {
@@ -19,23 +17,18 @@ class WeatherService {
       weatherapi: process.env.WEATHERAPI_KEY ? `https://api.weatherapi.com/v1` : null
     };
     this.cache = new Map();
-    this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
-    
-    this.circuitBreaker = CircuitBreakerManager.getBreaker('weather_openweathermap', {
-      threshold: 5,
-      timeout: 60000
-    });
+    this.cacheTimeout = 5 * 60 * 1000;
   }
 
   async getWeatherByIP() {
     try {
-      const defaultCoords = { lat: 20.5937, lng: 78.9629 }; // Central India
+      const defaultCoords = { lat: 20.5937, lng: 78.9629 };
       
       
       return defaultCoords;
     } catch (error) {
       logger.warn('Using default location for weather');
-      return { lat: 20.5937, lng: 78.9629 }; // Fallback to India
+      return { lat: 20.5937, lng: 78.9629 };
     }
   }
 
@@ -48,36 +41,31 @@ class WeatherService {
     }
 
     try {
+      const openMeteoData = await this.getWeatherFromOpenMeteo(lat, lon);
+      if (openMeteoData) {
+        this.cache.set(cacheKey, { data: openMeteoData, timestamp: Date.now() });
+        return openMeteoData;
+      }
+
       if (this.openweatherApiKey && this.openweatherApiKey !== 'your_api_key_here') {
         const startTime = Date.now();
-        
-        const weatherData = await this.circuitBreaker.execute(async () => {
-          const result = await retryManager.executeWithRetry(async () => {
-            const response = await axios.get('http://api.openweathermap.org/data/2.5/weather', {
-              params: {
-                lat,
-                lon,
-                appid: this.openweatherApiKey,
-                units: 'metric'
-              },
-              timeout: 10000
-            });
-
-            if (response.status === 200) {
-              return this.parseOpenWeatherData(response.data);
-            } else {
-              throw new Error(`Unexpected status: ${response.status}`);
-            }
-          }, { maxRetries: 2 });
-          
-          if (result.success) {
-            return result.data;
-          } else {
-            throw result.error;
-          }
-        }, async () => {
-          return fallbackManager.getFallback('weather', { lat, lon });
+        const result = await resilientHttpClient.request({
+          serviceName: 'weather-openweathermap-current',
+          method: 'get',
+          url: 'http://api.openweathermap.org/data/2.5/weather',
+          params: {
+            lat,
+            lon,
+            appid: this.openweatherApiKey,
+            units: 'metric'
+          },
+          timeout: 10000,
+          retry: { maxRetries: 2, baseDelay: 500, maxDelay: 4000 },
+          breaker: { threshold: 4, timeout: 45000 }
         });
+        const weatherData = result.success
+          ? this.parseOpenWeatherData(result.response.data)
+          : fallbackManager.getFallback('weather', { lat, lon });
         
         const responseTime = Date.now() - startTime;
         apiMonitor.recordRequest('weather', true, responseTime, false);
@@ -88,7 +76,7 @@ class WeatherService {
     } catch (error) {
       logger.warn('OpenWeather API error:', error.message);
       
-      const responseTime = Date.now() - (Date.now() - 100); // Approximate
+      const responseTime = Date.now() - (Date.now() - 100);
       apiMonitor.recordRequest('weather', false, responseTime, false);
       apiMonitor.recordError('weather', error);
       
@@ -125,9 +113,22 @@ class WeatherService {
     }
 
     try {
+      const openMeteoForecast = await this.getForecastFromOpenMeteo(lat, lon);
+      if (openMeteoForecast && openMeteoForecast.length > 0) {
+        this.cache.set(cacheKey, { data: openMeteoForecast, timestamp: Date.now() });
+        return openMeteoForecast;
+      }
+    } catch (e) {
+      logger.warn('Open-Meteo forecast error:', e.message);
+    }
+
+    try {
       if (this.openweatherApiKey && this.openweatherApiKey !== 'your_api_key_here') {
         try {
-          const response = await axios.get(this.weatherAPIs.openweathermap.forecast, {
+          const result = await resilientHttpClient.request({
+            serviceName: 'weather-openweathermap-forecast',
+            method: 'get',
+            url: this.weatherAPIs.openweathermap.forecast,
             params: {
               lat,
               lon,
@@ -137,6 +138,10 @@ class WeatherService {
             },
             timeout: 10000
           });
+          if (!result.success) {
+            throw new Error(result.error?.message || 'OpenWeatherMap forecast failed');
+          }
+          const response = result.response;
 
           if (response.status === 200 && response.data && response.data.list) {
             const forecast = this.parseForecastData(response.data);
@@ -151,7 +156,10 @@ class WeatherService {
 
       if (process.env.WEATHERAPI_KEY) {
         try {
-          const response = await axios.get(`${this.weatherAPIs.weatherapi}/forecast.json`, {
+          const result = await resilientHttpClient.request({
+            serviceName: 'weatherapi-forecast',
+            method: 'get',
+            url: `${this.weatherAPIs.weatherapi}/forecast.json`,
             params: {
               key: process.env.WEATHERAPI_KEY,
               q: `${lat},${lon}`,
@@ -161,6 +169,10 @@ class WeatherService {
             },
             timeout: 10000
           });
+          if (!result.success) {
+            throw new Error(result.error?.message || 'WeatherAPI forecast failed');
+          }
+          const response = result.response;
 
           if (response.status === 200 && response.data && response.data.forecast) {
             const forecast = this.parseWeatherAPIForecast(response.data);
@@ -201,12 +213,15 @@ class WeatherService {
         cloud_cover: hour.cloud,
         visibility: hour.vis_km
       }))
-    ).slice(0, 40); // Limit to 40 periods
+    ).slice(0, 40);
   }
 
   async getSoilData(lat, lon) {
     try {
-      const response = await axios.get('https://rest.isric.org/soilgrids/v2.0/properties/query', {
+      const result = await resilientHttpClient.request({
+        serviceName: 'soilgrids-weather',
+        method: 'get',
+        url: 'https://rest.isric.org/soilgrids/v2.0/properties/query',
         params: {
           lon: lon,
           lat: lat,
@@ -216,6 +231,10 @@ class WeatherService {
         },
         timeout: 10000
       });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'SoilGrids request failed');
+      }
+      const response = result.response;
 
       if (response.status === 200) {
         return this.parseSoilData(response.data);
@@ -227,25 +246,128 @@ class WeatherService {
     return this.getMockSoilData(lat, lon);
   }
 
+  async getWeatherFromOpenMeteo(lat, lon) {
+    try {
+      const result = await resilientHttpClient.request({
+        serviceName: 'openmeteo-current',
+        method: 'get',
+        url: 'https://api.open-meteo.com/v1/forecast',
+        params: {
+          latitude: lat,
+          longitude: lon,
+          current: 'temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,surface_pressure',
+          daily: 'precipitation_sum',
+          timezone: 'auto',
+          forecast_days: 1
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Open-Meteo current request failed');
+      }
+      const response = result.response;
+      if (response.data && response.data.current) {
+        const c = response.data.current;
+        const locationName = response.data.timezone || 'Location';
+        return {
+          temperature: c.temperature_2m,
+          feels_like: c.temperature_2m,
+          humidity: c.relative_humidity_2m || 60,
+          pressure: c.surface_pressure || 1013,
+          wind_speed: c.wind_speed_10m || 0,
+          wind_degree: 0,
+          weather: this.openMeteoWeatherCode(c.weather_code),
+          description: this.openMeteoWeatherDesc(c.weather_code),
+          clouds: 0,
+          rainfall: c.precipitation || 0,
+          sunrise: new Date().toISOString(),
+          sunset: new Date().toISOString(),
+          location: locationName,
+          country: 'IN',
+          source: 'AgriSmart AI',
+          timestamp: new Date().toISOString()
+        };
+      }
+    } catch (err) {
+      logger.warn('Open-Meteo weather error:', err.message);
+    }
+    return null;
+  }
+
+  openMeteoWeatherCode(code) {
+    const map = { 0: 'Clear', 1: 'Clear', 2: 'Partly Cloudy', 3: 'Cloudy', 45: 'Fog', 48: 'Fog', 51: 'Drizzle', 53: 'Drizzle', 55: 'Drizzle', 61: 'Rain', 63: 'Rain', 65: 'Rain', 80: 'Rain', 81: 'Rain', 82: 'Rain', 95: 'Thunderstorm', 96: 'Thunderstorm', 99: 'Thunderstorm' };
+    return map[code] != null ? map[code] : (code < 50 ? 'Clear' : code < 70 ? 'Rain' : 'Cloudy');
+  }
+
+  openMeteoWeatherDesc(code) {
+    const map = { 0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Foggy', 48: 'Fog', 51: 'Light drizzle', 61: 'Slight rain', 63: 'Moderate rain', 65: 'Heavy rain', 80: 'Rain showers', 95: 'Thunderstorm' };
+    return map[code] != null ? map[code] : 'Clear';
+  }
+
   parseOpenWeatherData(data) {
+    const main = data.main || {};
+    const weatherArr = data.weather && data.weather[0];
+    const sys = data.sys || {};
     return {
-      temperature: data.main.temp,
-      feels_like: data.main.feels_like,
-      humidity: data.main.humidity,
-      pressure: data.main.pressure,
-      wind_speed: data.wind?.speed || 0,
-      wind_degree: data.wind?.deg || 0,
-      weather: data.weather[0].main,
-      description: data.weather[0].description,
-      clouds: data.clouds?.all || 0,
-      rainfall: data.rain?.['1h'] || 0,
-      sunrise: new Date(data.sys.sunrise * 1000).toISOString(),
-      sunset: new Date(data.sys.sunset * 1000).toISOString(),
-      location: data.name,
-      country: data.sys.country,
-      source: 'openweathermap',
+      temperature: main.temp != null ? main.temp : 25,
+      feels_like: main.feels_like != null ? main.feels_like : main.temp,
+      humidity: main.humidity != null ? main.humidity : 60,
+      pressure: main.pressure != null ? main.pressure : 1013,
+      wind_speed: (data.wind && data.wind.speed) != null ? data.wind.speed : 0,
+      wind_degree: (data.wind && data.wind.deg) != null ? data.wind.deg : 0,
+      weather: weatherArr ? (weatherArr.main || 'Clear') : 'Clear',
+      description: weatherArr ? (weatherArr.description || 'Clear sky') : 'Clear sky',
+      clouds: (data.clouds && data.clouds.all) != null ? data.clouds.all : 0,
+      rainfall: (data.rain && data.rain['1h']) != null ? data.rain['1h'] : 0,
+      sunrise: sys.sunrise ? new Date(sys.sunrise * 1000).toISOString() : new Date().toISOString(),
+      sunset: sys.sunset ? new Date(sys.sunset * 1000).toISOString() : new Date().toISOString(),
+      location: data.name || 'Location',
+      country: sys.country || 'IN',
+      source: 'AgriSmart AI',
       timestamp: new Date().toISOString()
     };
+  }
+
+  async getForecastFromOpenMeteo(lat, lon) {
+    try {
+      const result = await resilientHttpClient.request({
+        serviceName: 'openmeteo-forecast',
+        method: 'get',
+        url: 'https://api.open-meteo.com/v1/forecast',
+        params: {
+          latitude: lat,
+          longitude: lon,
+          daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code',
+          timezone: 'auto',
+          forecast_days: 7
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Open-Meteo forecast request failed');
+      }
+      const response = result.response;
+      if (!response.data || !response.data.daily) return null;
+      const d = response.data.daily;
+      const dates = d.time || [];
+      const maxT = d.temperature_2m_max || [];
+      const minT = d.temperature_2m_min || [];
+      const precip = d.precipitation_sum || [];
+      const codes = d.weather_code || [];
+      return dates.slice(0, 10).map((date, i) => ({
+        date: new Date(date).toISOString(),
+        temperature: (maxT[i] + minT[i]) / 2,
+        min_temp: minT[i],
+        max_temp: maxT[i],
+        humidity: 60,
+        weather: this.openMeteoWeatherCode(codes[i] || 0),
+        description: this.openMeteoWeatherDesc(codes[i] || 0),
+        rainfall: precip[i] || 0
+      }));
+    } catch (err) {
+      logger.warn('Open-Meteo forecast error:', err.message);
+      return null;
+    }
   }
 
   parseForecastData(data) {
@@ -277,7 +399,7 @@ class WeatherService {
       sand,
       silt,
       soil_type: this.determineSoilType(clay, sand, silt),
-      source: 'isric_soilgrids',
+      source: 'AgriSmart AI',
       timestamp: new Date().toISOString()
     };
   }
@@ -298,7 +420,7 @@ class WeatherService {
     return 'Sandy Loam';
   }
 
-  getMockWeather(lat, lon) {
+  getMockWeather(lat, _lon) {
     let temp, rainfall;
     
     if (lat > 28) { // North India
@@ -325,9 +447,131 @@ class WeatherService {
       rainfall,
       location: 'Mock Location',
       country: 'IN',
-      source: 'mock',
+      source: 'AgriSmart AI',
+      _source: 'fallback',
+      isFallback: true,
+      degradedReason: 'weather_api_unavailable',
       timestamp: new Date().toISOString()
     };
+  }
+
+  async getHourlyFromOpenMeteo(lat, lon, hours = 24) {
+    try {
+      const result = await resilientHttpClient.request({
+        serviceName: 'openmeteo-hourly',
+        method: 'get',
+        url: 'https://api.open-meteo.com/v1/forecast',
+        params: {
+          latitude: lat,
+          longitude: lon,
+          hourly: 'temperature_2m,precipitation,weather_code,relative_humidity_2m,wind_speed_10m,wind_direction_10m',
+          timezone: 'auto',
+          forecast_days: Math.ceil(hours / 24) || 2
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Open-Meteo hourly request failed');
+      }
+      const response = result.response;
+      if (!response.data || !response.data.hourly) return null;
+      const h = response.data.hourly;
+      const times = h.time || [];
+      const temp = h.temperature_2m || [];
+      const precip = h.precipitation || [];
+      const code = h.weather_code || [];
+      const humidity = h.relative_humidity_2m || [];
+      const windSpeed = h.wind_speed_10m || [];
+      const windDir = h.wind_direction_10m || [];
+      const count = Math.min(hours, times.length);
+      return Array.from({ length: count }, (_, i) => ({
+        time: new Date(times[i]).toISOString(),
+        temperature: temp[i] != null ? temp[i] : 25,
+        conditions: {
+          main: this.openMeteoWeatherCode(code[i] || 0),
+          description: this.openMeteoWeatherDesc(code[i] || 0)
+        },
+        precipitation: { probability: Math.min(100, (precip[i] || 0) * 15), amount: precip[i] || 0 },
+        humidity: humidity[i] != null ? humidity[i] : 60,
+        wind: {
+          speed: windSpeed[i] != null ? windSpeed[i] : 0,
+          direction: this.windDegreeToDirection(windDir[i] || 0)
+        }
+      }));
+    } catch (err) {
+      logger.warn('Open-Meteo hourly error:', err.message);
+      return null;
+    }
+  }
+
+  windDegreeToDirection(deg) {
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const idx = Math.round(((deg % 360) / 45)) % 8;
+    return dirs[idx] || 'N';
+  }
+
+  async getWeatherHourlyForecast(lat, lon, hours = 24) {
+    const cacheKey = `hourly_${lat}_${lon}_${hours}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+      return cached.data;
+    }
+    const hourly = await this.getHourlyFromOpenMeteo(lat, lon, hours);
+    if (hourly && hourly.length > 0) {
+      this.cache.set(cacheKey, { data: hourly, timestamp: Date.now() });
+      return hourly;
+    }
+    if (this.openweatherApiKey && this.openweatherApiKey !== 'your_api_key_here') {
+      try {
+        const result = await resilientHttpClient.request({
+          serviceName: 'weather-openweathermap-hourly',
+          method: 'get',
+          url: this.weatherAPIs.openweathermap.forecast,
+          params: { lat, lon, appid: this.openweatherApiKey, units: 'metric' },
+          timeout: 10000
+        });
+        if (!result.success) {
+          throw new Error(result.error?.message || 'OpenWeather hourly request failed');
+        }
+        const response = result.response;
+        if (response.data && response.data.list && Array.isArray(response.data.list)) {
+          const steps = Math.min(40, Math.ceil(hours / 3));
+          const list = response.data.list.slice(0, steps);
+          const data = list.map(item => ({
+            time: new Date(item.dt * 1000).toISOString(),
+            temperature: item.main?.temp ?? 25,
+            conditions: {
+              main: item.weather?.[0]?.main || 'Clear',
+              description: item.weather?.[0]?.description || 'Clear sky'
+            },
+            precipitation: { probability: item.pop != null ? item.pop * 100 : 0, amount: item.rain?.['3h'] || 0 },
+            humidity: item.main?.humidity ?? 60,
+            wind: {
+              speed: item.wind?.speed ?? 0,
+              direction: this.windDegreeToDirection(item.wind?.deg ?? 0)
+            }
+          }));
+          this.cache.set(cacheKey, { data, timestamp: Date.now() });
+          return data;
+        }
+      } catch (e) {
+        logger.warn('OpenWeather hourly forecast error:', e.message);
+      }
+    }
+    const mock = [];
+    const now = new Date();
+    for (let i = 0; i < hours; i++) {
+      const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
+      mock.push({
+        time: hour.toISOString(),
+        temperature: 25 + (Math.random() - 0.5) * 4,
+        conditions: { main: 'Clear', description: 'Clear sky' },
+        precipitation: { probability: 0, amount: 0 },
+        humidity: 60,
+        wind: { speed: 5, direction: 'SW' }
+      });
+    }
+    return mock;
   }
 
   getMockForecast() {
@@ -344,7 +588,9 @@ class WeatherService {
         humidity: Math.floor(50 + Math.random() * 40),
         weather: ['Clear', 'Partly Cloudy', 'Cloudy'][Math.floor(Math.random() * 3)],
         description: 'Mock forecast',
-        rainfall: Math.random() * 5
+        rainfall: Math.random() * 5,
+        isFallback: true,
+        _source: 'fallback'
       });
     }
     return forecast;
@@ -374,7 +620,10 @@ class WeatherService {
       sand: Math.floor(30 + Math.random() * 40),
       silt: Math.floor(10 + Math.random() * 30),
       soil_type: soilType,
-      source: 'mock',
+      source: 'AgriSmart AI',
+      _source: 'fallback',
+      isFallback: true,
+      degradedReason: 'soil_api_unavailable',
       timestamp: new Date().toISOString()
     };
   }

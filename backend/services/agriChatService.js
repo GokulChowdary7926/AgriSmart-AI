@@ -24,10 +24,6 @@ class AgriChatService {
         userCoords = defaultCoords;
       }
 
-      if (!Array.isArray(userCoords) || userCoords.length !== 2) {
-        userCoords = [77.2090, 28.6139]; // Default: New Delhi
-      }
-
       let nearbyUsers = [];
       
       try {
@@ -296,5 +292,6 @@ class AgriChatService {
   }
 }
 
+module.exports = new AgriChatService();
 module.exports = new AgriChatService();
 

@@ -6,7 +6,7 @@ class RequestBatcher {
     this.batches = new Map();
     this.batchTimeouts = new Map();
     this.defaultBatchSize = 10;
-    this.defaultBatchDelay = 100; // 100ms to wait for more requests
+    this.defaultBatchDelay = 100;
   }
 
   async addToBatch(batchKey, requestFn, options = {}) {
@@ -132,6 +132,9 @@ class RequestBatcher {
 }
 
 module.exports = new RequestBatcher();
+
+
+
 
 
 

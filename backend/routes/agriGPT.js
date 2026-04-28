@@ -4,6 +4,8 @@ const multer = require('multer');
 const AgriGPTController = require('../controllers/AgriGPTController');
 const { authenticateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
+const resilientHttpClient = require('../services/api/resilientHttpClient');
+const { ok, serverError } = require('../utils/httpResponses');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -45,17 +47,28 @@ router.post('/feedback', authenticateToken, async (req, res) => {
       }
     );
     
-    res.json({ success: true, message: 'Feedback recorded' });
+    return ok(
+      res,
+      { message: 'Feedback recorded' },
+      { source: 'AgriSmart AI', isFallback: false, message: 'Feedback recorded' }
+    );
   } catch (error) {
     logger.error('Feedback error:', error);
-    res.json({ success: true, message: 'Feedback recorded' }); // Don't fail on feedback
+    return ok(
+      res,
+      { message: 'Feedback recorded' },
+      {
+        source: 'AgriSmart AI',
+        isFallback: true,
+        degradedReason: 'agri_gpt_feedback_degraded',
+        message: 'Feedback recorded'
+      }
+    );
   }
 });
 
 router.get('/health', async (req, res) => {
   try {
-    const axios = require('axios');
-    const logger = require('../utils/logger');
     const apiMonitor = require('../services/monitoring/apiMonitor');
     const { CircuitBreakerManager } = require('../services/api/circuitBreaker');
     const { getCacheStats } = require('../middleware/cache');
@@ -71,7 +84,13 @@ router.get('/health', async (req, res) => {
             if (!key || key === 'your_google_ai_key_here') {
               return { status: 'not_configured', note: 'API key not set' };
             }
-            await axios.get('https://generativelanguage.googleapis.com', { timeout: 3000 });
+            const result = await resilientHttpClient.request({
+              serviceName: 'health-google-ai',
+              method: 'get',
+              url: 'https://generativelanguage.googleapis.com',
+              timeout: 3000
+            });
+            if (!result.success) throw new Error(result.error?.message || 'offline');
             return { status: 'online' };
           } catch (e) {
             return { status: 'offline', note: e.message };
@@ -79,12 +98,18 @@ router.get('/health', async (req, res) => {
         }
       },
       { 
-        name: 'OpenWeatherMap', 
+        name: 'AgriSmart AI', 
         url: 'https://api.openweathermap.org',
         critical: false,
         test: async () => {
           try {
-            await axios.get('https://api.openweathermap.org', { timeout: 3000 });
+            const result = await resilientHttpClient.request({
+              serviceName: 'health-openweather',
+              method: 'get',
+              url: 'https://api.openweathermap.org',
+              timeout: 3000
+            });
+            if (!result.success) throw new Error(result.error?.message || 'offline');
             return { status: 'online' };
           } catch (e) {
             return { status: 'offline', note: 'Has fallback' };
@@ -92,12 +117,18 @@ router.get('/health', async (req, res) => {
         }
       },
       { 
-        name: 'Data.gov.in', 
+        name: 'AgriSmart AI', 
         url: 'https://api.data.gov.in',
         critical: false,
         test: async () => {
           try {
-            await axios.get('https://api.data.gov.in', { timeout: 3000 });
+            const result = await resilientHttpClient.request({
+              serviceName: 'health-data-gov',
+              method: 'get',
+              url: 'https://api.data.gov.in',
+              timeout: 3000
+            });
+            if (!result.success) throw new Error(result.error?.message || 'offline');
             return { status: 'online' };
           } catch (e) {
             return { status: 'offline', note: 'Has fallback' };
@@ -134,32 +165,40 @@ router.get('/health', async (req, res) => {
     const cacheStats = getCacheStats();
     const circuitBreakers = CircuitBreakerManager.getAllStatuses();
     
-    res.json({
-      status: allCriticalOnline ? 'operational' : 'degraded',
-      timestamp: new Date().toISOString(),
-      externalApis: apiResults,
-      monitoring: {
-        total_requests: metrics.summary.total_requests,
-        success_rate: metrics.summary.overall_success_rate + '%',
-        most_reliable: metrics.summary.most_reliable_api,
-        fallbacks_used: metrics.summary.total_fallbacks,
-        circuit_breakers: circuitBreakers
+    return ok(
+      res,
+      {
+        status: allCriticalOnline ? 'operational' : 'degraded',
+        timestamp: new Date().toISOString(),
+        externalApis: apiResults,
+        monitoring: {
+          total_requests: metrics.summary.total_requests,
+          success_rate: metrics.summary.overall_success_rate + '%',
+          most_reliable: metrics.summary.most_reliable_api,
+          fallbacks_used: metrics.summary.total_fallbacks,
+          circuit_breakers: circuitBreakers
+        },
+        cache: cacheStats,
+        fallbackStatus: {
+          dataGovIn: apiResults.find(a => a.name === 'Data.gov.in')?.status === 'offline' 
+            ? 'Using fallback data' 
+            : 'Primary source available',
+          note: 'Data.gov.in is optional and has robust fallback mechanisms'
+        },
+        memoryUsage: process.memoryUsage(),
+        uptime: process.uptime()
       },
-      cache: cacheStats,
-      fallbackStatus: {
-        dataGovIn: apiResults.find(a => a.name === 'Data.gov.in')?.status === 'offline' 
-          ? 'Using fallback data' 
-          : 'Primary source available',
-        note: 'Data.gov.in is optional and has robust fallback mechanisms'
-      },
-      memoryUsage: process.memoryUsage(),
-      uptime: process.uptime()
-    });
+      {
+        source: 'AgriSmart AI',
+        isFallback: !allCriticalOnline,
+        degradedReason: !allCriticalOnline ? 'agri_gpt_health_degraded' : null
+      }
+    );
   } catch (error) {
-    res.status(500).json({ 
-      status: 'degraded', 
-      error: error.message,
-      note: 'Service continues to operate with fallback data'
+    return serverError(res, 'AgriGPT health check failed', {
+      status: 'degraded',
+      note: 'Service continues to operate with fallback data',
+      error: error.message
     });
   }
 });

@@ -1,13 +1,15 @@
-const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 const logger = require('../utils/logger');
 const WeatherService = require('./WeatherService');
 const marketPriceAPIService = require('./marketPriceAPIService');
+const resilientHttpClient = require('./api/resilientHttpClient');
+const tfEnabled = process.env.TF_ENABLED !== 'false';
 
 class CropService {
   constructor() {
     this.cache = new Map();
-    this.cacheDuration = 30 * 60 * 1000; // 30 minutes
+    this.cacheDuration = 30 * 60 * 1000;
   }
 
   async getRealTimeRecommendations(location, soilData) {
@@ -66,21 +68,24 @@ class CropService {
       const lat = location.lat || location.latitude;
       const lng = location.lng || location.longitude;
       
-      const response = await axios.get(
-        `https://rest.isric.org/soilgrids/v2.0/properties/query`,
-        {
-          params: {
-            lon: lng,
-            lat: lat,
-            property: 'phh2o',
-            property: 'soc',
-            property: 'clay',
-            depth: '0-5cm',
-            value: 'mean'
-          },
-          timeout: 10000
-        }
-      );
+      const result = await resilientHttpClient.request({
+        serviceName: 'soilgrids-crop-service',
+        method: 'get',
+        url: 'https://rest.isric.org/soilgrids/v2.0/properties/query',
+        params: {
+          lon: lng,
+          lat: lat,
+          property: 'phh2o',
+          property: 'soc',
+          depth: '0-5cm',
+          value: 'mean'
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Soil API request failed');
+      }
+      const response = result.response;
       
       if (response.data && response.data.properties) {
         const layers = response.data.properties.layers;
@@ -126,8 +131,8 @@ class CropService {
     return {};
   }
 
-  getCurrentSeason(location) {
-    const month = new Date().getMonth() + 1; // 1-12
+  getCurrentSeason(_location) {
+    const month = new Date().getMonth() + 1;
     
     if (month >= 6 && month <= 10) {
       return 'Kharif';
@@ -139,18 +144,22 @@ class CropService {
   }
 
   async getMLRecommendations(features) {
-    try {
-      const tf = require('@tensorflow/tfjs-node');
-      if (this.mlModel) {
-        return await this.getTensorFlowPredictions(features);
-      } else {
-        await this.loadMLModel();
+    if (tfEnabled) {
+      try {
+        require('@tensorflow/tfjs-node');
         if (this.mlModel) {
           return await this.getTensorFlowPredictions(features);
+        } else {
+          await this.loadMLModel();
+          if (this.mlModel) {
+            return await this.getTensorFlowPredictions(features);
+          }
         }
+      } catch (tfError) {
+        logger.warn('TensorFlow.js not available, trying Python ML...');
       }
-    } catch (tfError) {
-      logger.warn('TensorFlow.js not available, trying Python ML...');
+    } else {
+      logger.info('TensorFlow disabled via TF_ENABLED=false, trying Python ML...');
     }
 
     try {
@@ -203,7 +212,7 @@ class CropService {
         timeout: 10000 // 10 second timeout
       };
 
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         PythonShell.run('predict_crop.py', options, (err, results) => {
           if (err) {
             logger.warn('Python ML prediction error, using rule-based');
@@ -220,6 +229,10 @@ class CropService {
   }
 
   async loadMLModel() {
+    if (!tfEnabled) {
+      return;
+    }
+
     try {
       try {
         const modelRegistry = require('./ModelRegistryService');
@@ -243,7 +256,6 @@ class CropService {
       }
       
       const tf = require('@tensorflow/tfjs-node');
-      const fs = require('fs');
       const path = require('path');
       
       const modelPaths = [
@@ -271,6 +283,10 @@ class CropService {
   }
 
   async getTensorFlowPredictions(features) {
+    if (!tfEnabled) {
+      throw new Error('TensorFlow disabled via TF_ENABLED=false');
+    }
+
     try {
       const tf = require('@tensorflow/tfjs-node');
       
@@ -290,7 +306,7 @@ class CropService {
       const cropLabels = this.getCropLabels();
       
       const topIndices = this.getTopIndices(probabilities, 5);
-      const crops = topIndices.map((index, i) => ({
+      const crops = topIndices.map((index) => ({
         name: cropLabels[index] || `Crop_${index}`,
         suitability: Math.round(probabilities[index] * 100),
         confidence: probabilities[index],
@@ -309,7 +325,7 @@ class CropService {
       };
     } catch (error) {
       logger.error('TensorFlow prediction error:', error);
-      throw error; // Will fallback to rule-based
+      throw error;
     }
   }
 
@@ -335,7 +351,7 @@ class CropService {
     
     if (kharifCrops.includes(cropName)) return 'Kharif';
     if (rabiCrops.includes(cropName)) return 'Rabi';
-    return 'Kharif'; // Default
+    return 'Kharif';
   }
 
   getRuleBasedRecommendations(features) {
@@ -420,8 +436,6 @@ class CropService {
     cropDatabase.forEach(crop => {
       let score = 0;
       let reasons = [];
-      let maxScore = 100;
-
       if (temp >= crop.idealTemp.min && temp <= crop.idealTemp.max) {
         const tempScore = 20;
         score += tempScore;
@@ -470,7 +484,7 @@ class CropService {
         score += 10;
         reasons.push(`Perfect for ${season} season`);
       } else {
-        score += 5; // Partial match
+        score += 5;
       }
 
       if (humidity >= crop.idealHumidity.min && humidity <= crop.idealHumidity.max) {
@@ -508,13 +522,13 @@ class CropService {
 
   calculateNutrientScore(value, ideal) {
     if (value >= ideal.min && value <= ideal.max) {
-      return 20; // Perfect
+      return 20;
     } else if (value < ideal.min) {
       const diff = ideal.min - value;
-      return Math.max(0, 20 - (diff * 0.5)); // Penalty for low
+      return Math.max(0, 20 - (diff * 0.5));
     } else {
       const diff = value - ideal.max;
-      return Math.max(0, 20 - (diff * 0.3)); // Penalty for high
+      return Math.max(0, 20 - (diff * 0.3));
     }
   }
 

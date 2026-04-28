@@ -1,26 +1,44 @@
 const Disease = require('../models/Disease');
+const mongoose = require('mongoose');
 const logger = require('../utils/logger');
-const multer = require('multer');
-const path = require('path');
+const { badRequest, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
 
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'));
-    }
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
   }
-});
+}
 
 class DiseaseController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
+  static async withTimeout(promise, timeoutMs, fallbackValue) {
+    let timeoutId;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(fallbackValue), timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   static async getAll(req, res) {
     try {
       const { 
@@ -31,8 +49,8 @@ class DiseaseController {
         limit = 20 
       } = req.query;
       
-      if (!Disease || typeof Disease.find !== 'function') {
-        logger.warn('Disease model not available, returning mock data');
+      if (!Disease || typeof Disease.find !== 'function' || !mongoReady()) {
+        logger.warn('Disease model not available or DB disconnected, returning mock data');
         const mockDiseases = [
           {
             _id: '1',
@@ -246,16 +264,22 @@ class DiseaseController {
         const skip = (page - 1) * limit;
         const paginated = filtered.slice(skip, skip + parseInt(limit));
         
-        return res.json({
-          success: true,
-          data: paginated,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: filtered.length,
-            pages: Math.ceil(filtered.length / limit)
+        return DiseaseController.success(
+          res,
+          paginated,
+          {
+            isFallback: true,
+            degradedReason: 'disease_db_unavailable',
+            extra: {
+              pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total: filtered.length,
+                pages: Math.ceil(filtered.length / limit)
+              }
+            }
           }
-        });
+        );
       }
       
       const query = {};
@@ -271,50 +295,76 @@ class DiseaseController {
       if (search) {
         query.$or = [
           { name: { $regex: search, $options: 'i' } },
-          { scientificName: { $regex: search, $options: 'i' } }
+          { scientificName: { $regex: search, $options: 'i' } },
+          { cropNames: { $regex: search, $options: 'i' } },
+          { cropType: { $regex: search, $options: 'i' } },
+          { crop_affected: { $regex: search, $options: 'i' } }
         ];
       }
       
-      const skip = (page - 1) * limit;
+      const safePage = this.parsePositiveInt(page, 1, { min: 1, max: 100000 });
+      const safeLimit = this.parsePositiveInt(limit, 20, { min: 1, max: 100 });
+      const skip = (safePage - 1) * safeLimit;
       
       const [diseases, total] = await Promise.all([
-        Disease.find(query)
-          .populate('crops', 'name')
-          .sort({ severityLevel: -1, name: 1 })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .catch(() => []),
-        Disease.countDocuments(query).catch(() => 0)
+        this.withTimeout(
+          Disease.find(query)
+            .populate('crops', 'name')
+            .sort({ severityLevel: -1, name: 1 })
+            .skip(skip)
+            .limit(safeLimit)
+            .maxTimeMS(3000)
+            .catch(() => []),
+          3500,
+          []
+        ),
+        this.withTimeout(
+          Disease.countDocuments(query)
+            .maxTimeMS(3000)
+            .catch(() => 0),
+          3500,
+          0
+        )
       ]);
       
-      res.json({
-        success: true,
-        data: diseases || [],
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: total || 0,
-          pages: Math.ceil((total || 0) / limit)
+      return DiseaseController.success(
+        res,
+        diseases || [],
+        {
+          extra: {
+            pagination: {
+              page: safePage,
+              limit: safeLimit,
+              total: total || 0,
+              pages: Math.ceil((total || 0) / safeLimit)
+            }
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('Error fetching diseases:', error);
-      res.json({
-        success: true,
-        data: [],
-        pagination: {
-          page: parseInt(req.query.page || 1),
-          limit: parseInt(req.query.limit || 20),
-          total: 0,
-          pages: 0
+      return DiseaseController.success(
+        res,
+        [],
+        {
+          isFallback: true,
+          degradedReason: 'disease_controller_error',
+          extra: {
+            pagination: {
+              page: this.parsePositiveInt(req.query.page, 1, { min: 1, max: 100000 }),
+              limit: this.parsePositiveInt(req.query.limit, 20, { min: 1, max: 100 }),
+              total: 0,
+              pages: 0
+            }
+          }
         }
-      });
+      );
     }
   }
   
   static async getById(req, res) {
     try {
-      if (!Disease || typeof Disease.findById !== 'function') {
+      if (!Disease || typeof Disease.findById !== 'function' || !mongoReady()) {
         const mockDiseases = [
           {
             _id: '1',
@@ -349,17 +399,18 @@ class DiseaseController {
           }
         ];
         const disease = mockDiseases.find(d => d._id === req.params.id) || mockDiseases[0];
-        return res.json({ success: true, data: disease });
+        return DiseaseController.success(
+          res,
+          disease,
+          { isFallback: true, degradedReason: 'disease_db_unavailable' }
+        );
       }
       
       const disease = await Disease.findById(req.params.id)
         .populate('crops', 'name localNames');
       
       if (!disease) {
-        return res.status(404).json({
-          success: false,
-          error: 'Disease not found'
-        });
+        return notFound(res, 'Disease not found');
       }
       
       if (!disease.treatments || !Array.isArray(disease.treatments) || disease.treatments.length === 0) {
@@ -373,21 +424,18 @@ class DiseaseController {
         ];
       }
       
-      res.json({
-        success: true,
-        data: disease
-      });
+      return DiseaseController.success(res, disease);
     } catch (error) {
       logger.error('Error fetching disease:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async create(req, res) {
     try {
+      if (!Disease || !mongoReady()) {
+        return serviceUnavailable(res, 'Database unavailable; cannot persist disease right now', { degradedReason: 'mongo_unavailable' });
+      }
       const disease = new Disease({
         ...req.body,
         createdBy: req.user?._id
@@ -395,21 +443,21 @@ class DiseaseController {
       
       await disease.save();
       
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         data: disease
       });
     } catch (error) {
       logger.error('Error creating disease:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
   static async update(req, res) {
     try {
+      if (!Disease || !mongoReady()) {
+        return serviceUnavailable(res, 'Database unavailable; cannot update disease right now', { degradedReason: 'mongo_unavailable' });
+      }
       const disease = await Disease.findByIdAndUpdate(
         req.params.id,
         {
@@ -420,46 +468,35 @@ class DiseaseController {
       );
       
       if (!disease) {
-        return res.status(404).json({
-          success: false,
-          error: 'Disease not found'
-        });
+        return notFound(res, 'Disease not found');
       }
       
-      res.json({
-        success: true,
-        data: disease
-      });
+      return DiseaseController.success(res, disease);
     } catch (error) {
       logger.error('Error updating disease:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
   static async delete(req, res) {
     try {
+      if (!Disease || !mongoReady()) {
+        return serviceUnavailable(res, 'Database unavailable; cannot delete disease right now', { degradedReason: 'mongo_unavailable' });
+      }
       const disease = await Disease.findByIdAndDelete(req.params.id);
       
       if (!disease) {
-        return res.status(404).json({
-          success: false,
-          error: 'Disease not found'
-        });
+        return notFound(res, 'Disease not found');
       }
       
-      res.json({
-        success: true,
-        message: 'Disease deleted successfully'
-      });
+      return DiseaseController.success(
+        res,
+        { message: 'Disease deleted successfully' },
+        { extra: { message: 'Disease deleted successfully' } }
+      );
     } catch (error) {
       logger.error('Error deleting disease:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
@@ -469,7 +506,7 @@ class DiseaseController {
       const language = req.headers['accept-language']?.split(',')[0]?.split('-')[0] || 'en';
       
       if (image) {
-        const diseaseDetectionService = require('../services/DiseaseDetectionService');
+        const diseaseDetectionService = require('../services/diseaseDetectionService');
         const medicationService = require('../services/medicationService');
         
         let imageBuffer;
@@ -496,138 +533,93 @@ class DiseaseController {
           }
         }
         
-        return res.json({
-          success: true,
-          message: 'Disease detection completed',
-          timestamp: new Date().toISOString(),
-          ...result,
-          medication: medication
-        });
+        const isFallback = Boolean(result?.isFallback || result?.fallbackUsed || String(result?.source || '').toLowerCase().includes('fallback'));
+        return DiseaseController.success(
+          res,
+          {
+            message: 'Disease detection completed',
+            timestamp: new Date().toISOString(),
+            ...result,
+            medication
+          },
+          {
+            isFallback,
+            degradedReason: isFallback ? 'disease_detection_degraded' : null,
+            extra: {
+              message: 'Disease detection completed',
+              timestamp: new Date().toISOString(),
+              ...result,
+              medication
+            }
+          }
+        );
       }
       
       if (!symptoms || !Array.isArray(symptoms)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Symptoms array or image is required'
-        });
+        return badRequest(res, 'Symptoms array or image is required');
       }
       
       const results = await Disease.detectFromSymptoms(symptoms, cropName);
       
-      res.json({
-        success: true,
-        data: results
-      });
+      return DiseaseController.success(res, results);
     } catch (error) {
       logger.error('Error detecting disease:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to detect disease'
-      });
+      return serverError(res, error.message || 'Failed to detect disease');
     }
   }
 
   static async detectFromImage(req, res) {
     try {
       if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: 'Please upload an image file'
-        });
+        return badRequest(res, 'Please upload an image file');
       }
       
       logger.info('Processing disease detection', { filename: req.file.originalname });
       
       let result;
       try {
-        let realtimeResult = null;
-        try {
-          const RealTimeDiseaseDetectionService = require('../services/RealTimeDiseaseDetectionService');
-          if (RealTimeDiseaseDetectionService && typeof RealTimeDiseaseDetectionService.detectDiseaseRealTime === 'function') {
-            const context = {
-              lat: req.body.lat || req.query.lat,
-              lng: req.body.lng || req.query.lng,
-              crop: req.body.crop || req.query.crop
-            };
-            realtimeResult = await RealTimeDiseaseDetectionService.detectDiseaseRealTime(req.file.buffer, context);
-          }
-        } catch (realtimeInitError) {
-          logger.debug('RealTime service initialization failed, skipping', { error: realtimeInitError.message });
+        const DiseaseDetectionService = require('../services/diseaseDetectionService');
+        result = await DiseaseDetectionService.detectDiseaseFromImage(req.file.buffer);
+        if (result) {
+          result.source = result.source || 'Standard Detection';
         }
-        
-        if (realtimeResult && realtimeResult.detections && Array.isArray(realtimeResult.detections) && realtimeResult.detections.length > 0) {
-          const primaryDetection = realtimeResult.detections[0];
-          const DiseaseDetectionService = require('../services/DiseaseDetectionService');
-          result = {
-            predictions: realtimeResult.detections.map((det, idx) => ({
-              className: det.name || det.diseaseName || 'Unknown Disease',
-              probability: (det.confidence || 0) * 100
-            })),
-            primaryDisease: {
-              name: primaryDetection.name || primaryDetection.diseaseName || 'Unknown Disease',
-              type: primaryDetection.type || 'Unknown',
-              severity: primaryDetection.severity || 'Medium',
-              symptoms: primaryDetection.symptoms || [],
-              affectedParts: primaryDetection.affectedParts || []
-            },
-            timestamp: realtimeResult.timestamp || new Date().toISOString(),
-            confidence: realtimeResult.confidence || (primaryDetection.confidence || 0) * 100,
-            treatment: realtimeResult.treatments?.[0] || DiseaseDetectionService.getTreatmentPlan(primaryDetection.name || 'Unknown Disease'),
-            source: 'Real-Time Detection'
-          };
-        } else {
-          logger.debug('Real-time service returned no detections, trying standard service', { 
-            hasResult: !!realtimeResult,
-            detectionsLength: realtimeResult?.detections?.length || 0
-          });
-          throw new Error('No detections from real-time service');
-        }
-      } catch (realtimeError) {
-        logger.debug('Real-time disease detection unavailable, using standard service', { 
-          error: realtimeError.message,
-          service: 'DiseaseController' 
-        });
+      } catch (standardError) {
+        logger.error('Standard disease detection failed, using local fallback', standardError, { service: 'DiseaseController' });
         try {
-          const DiseaseDetectionService = require('../services/DiseaseDetectionService');
-          result = await DiseaseDetectionService.detectDiseaseFromImage(req.file.buffer);
+          const DiseaseDetectionService = require('../services/diseaseDetectionService');
+          result = await DiseaseDetectionService.fallbackDetection(req.file.buffer);
           if (result) {
-            result.source = result.source || 'Standard Detection';
-          }
-        } catch (standardError) {
-          logger.error('Standard disease detection also failed', standardError, { service: 'DiseaseController' });
-          try {
-            const DiseaseDetectionService = require('../services/DiseaseDetectionService');
-            result = await DiseaseDetectionService.fallbackDetection(req.file.buffer);
-            if (result) {
-              result.source = 'Fallback Detection';
-            } else {
-              result = {
-                predictions: [{ className: 'Unknown Disease', probability: 50 }],
-                primaryDisease: DiseaseDetectionService.getGenericDiseaseInfo('Unknown Disease'),
-                timestamp: new Date().toISOString(),
-                confidence: 50,
-                treatment: DiseaseDetectionService.getTreatmentPlan('Unknown Disease'),
-                note: 'Using fallback detection - accuracy may vary'
-              };
-            }
-          } catch (fallbackError) {
-            logger.error('Fallback detection also failed', fallbackError, { service: 'DiseaseController' });
-            const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+            result.source = result.source || 'Fallback Detection';
+          } else {
             result = {
-              predictions: [{ className: 'Detection Error', probability: 0 }],
+              predictions: [{ className: 'Unknown Disease', probability: 50 }],
               primaryDisease: DiseaseDetectionService.getGenericDiseaseInfo('Unknown Disease'),
               timestamp: new Date().toISOString(),
-              confidence: 0,
+              confidence: 50,
               treatment: DiseaseDetectionService.getTreatmentPlan('Unknown Disease'),
-              note: 'Detection service unavailable - please try again'
+              note: 'Using fallback detection - accuracy may vary'
             };
           }
+        } catch (fallbackError) {
+          logger.error('Fallback detection also failed', fallbackError, { service: 'DiseaseController' });
+          const DiseaseDetectionService = require('../services/diseaseDetectionService');
+          result = {
+            predictions: [{ className: 'Detection Error', probability: 0 }],
+            primaryDisease: DiseaseDetectionService.getGenericDiseaseInfo('Unknown Disease'),
+            timestamp: new Date().toISOString(),
+            confidence: 0,
+            treatment: DiseaseDetectionService.getTreatmentPlan('Unknown Disease'),
+            note: 'Detection service unavailable - please try again'
+          };
         }
       }
       
       if (req.user) {
         try {
-          await this.saveDetectionToDatabase(req.user.id, result);
+          const userId = req.user?.id || req.user?.userId || req.user?._id;
+          if (userId) {
+            await this.saveDetectionToDatabase(userId, result);
+          }
         } catch (dbError) {
           logger.warn('Failed to save detection to database:', dbError.message);
         }
@@ -635,7 +627,7 @@ class DiseaseController {
       
       if (!result) {
         logger.error('Disease detection returned null result, using fallback', { service: 'DiseaseController' });
-        const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+        const DiseaseDetectionService = require('../services/diseaseDetectionService');
         try {
           result = await DiseaseDetectionService.fallbackDetection(req.file.buffer);
           if (!result) {
@@ -677,7 +669,7 @@ class DiseaseController {
           hasPrimaryDisease: !!result?.primaryDisease,
           service: 'DiseaseController' 
         });
-        const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+        const DiseaseDetectionService = require('../services/diseaseDetectionService');
         if (DiseaseDetectionService && typeof DiseaseDetectionService.getGenericDiseaseInfo === 'function') {
           const genericDisease = DiseaseDetectionService.getGenericDiseaseInfo('Unknown Disease');
           if (!result) {
@@ -723,90 +715,157 @@ class DiseaseController {
         }
       }
 
-      res.json({
-        success: true,
-        message: 'Disease detection completed',
-        timestamp: new Date().toISOString(),
-        imageInfo: {
-          originalName: req.file.originalname,
-          size: req.file.size,
-          mimetype: req.file.mimetype
-        },
-        ...result
-      });
+      {
+        const isFallback = Boolean(result?.isFallback || String(result?.source || '').toLowerCase().includes('fallback'));
+        return DiseaseController.success(
+          res,
+          {
+            message: 'Disease detection completed',
+            timestamp: new Date().toISOString(),
+            imageInfo: {
+              originalName: req.file.originalname,
+              size: req.file.size,
+              mimetype: req.file.mimetype
+            },
+            ...result
+          },
+          {
+            isFallback,
+            degradedReason: isFallback ? 'disease_detection_degraded' : null,
+            extra: {
+              message: 'Disease detection completed',
+              timestamp: new Date().toISOString(),
+              imageInfo: {
+                originalName: req.file.originalname,
+                size: req.file.size,
+                mimetype: req.file.mimetype
+              },
+              ...result
+            }
+          }
+        );
+      }
     } catch (error) {
       logger.error('Controller error', error, { service: 'DiseaseController', stack: error.stack });
       
       try {
-        const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+        const DiseaseDetectionService = require('../services/diseaseDetectionService');
         const imageBuffer = req.file?.buffer || (req.file ? Buffer.from('') : null);
         
         if (imageBuffer && imageBuffer.length > 0) {
           const fallbackResult = await DiseaseDetectionService.fallbackDetection(imageBuffer);
           
           if (fallbackResult && fallbackResult.primaryDisease) {
-            return res.json({
-              success: true,
-              message: 'Disease detection completed (fallback mode)',
-              timestamp: new Date().toISOString(),
-              imageInfo: req.file ? {
-                originalName: req.file.originalname,
-                size: req.file.size,
-                mimetype: req.file.mimetype
-              } : {},
-              ...fallbackResult,
-              source: 'Error Fallback',
-              note: 'Using fallback detection due to error. Please try again for better results.'
-            });
+            return DiseaseController.success(
+              res,
+              {
+                message: 'Disease detection completed (fallback mode)',
+                timestamp: new Date().toISOString(),
+                imageInfo: req.file ? {
+                  originalName: req.file.originalname,
+                  size: req.file.size,
+                  mimetype: req.file.mimetype
+                } : {},
+                ...fallbackResult,
+                note: 'Using fallback detection due to error. Please try again for better results.'
+              },
+              {
+                isFallback: true,
+                source: 'Error Fallback',
+                degradedReason: 'disease_detection_error_fallback',
+                extra: {
+                  message: 'Disease detection completed (fallback mode)',
+                  timestamp: new Date().toISOString(),
+                  imageInfo: req.file ? {
+                    originalName: req.file.originalname,
+                    size: req.file.size,
+                    mimetype: req.file.mimetype
+                  } : {},
+                  ...fallbackResult,
+                  source: 'Error Fallback',
+                  note: 'Using fallback detection due to error. Please try again for better results.'
+                }
+              }
+            );
           }
         }
       } catch (fallbackError) {
         logger.error('Fallback detection also failed', fallbackError, { service: 'DiseaseController' });
       }
       
-      res.json({
-        success: true,
-        message: 'Disease detection completed (emergency fallback)',
-        timestamp: new Date().toISOString(),
-        imageInfo: req.file ? {
-          originalName: req.file.originalname,
-          size: req.file.size,
-          mimetype: req.file.mimetype
-        } : {},
-        primaryDisease: {
-          name: 'Detection Error',
-          type: 'Unknown',
-          severity: 'Medium',
-          symptoms: ['Please try again or consult an agricultural expert'],
-          affectedParts: ['Unknown']
+      return DiseaseController.success(
+        res,
+        {
+          message: 'Disease detection completed (emergency fallback)',
+          timestamp: new Date().toISOString(),
+          imageInfo: req.file ? {
+            originalName: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+          } : {},
+          primaryDisease: {
+            name: 'Detection Error',
+            type: 'Unknown',
+            severity: 'Medium',
+            symptoms: ['Please try again or consult an agricultural expert'],
+            affectedParts: ['Unknown']
+          },
+          predictions: [{
+            className: 'Detection Error',
+            probability: 0
+          }],
+          confidence: 0,
+          treatment: {
+            diseaseName: 'Detection Error',
+            immediateActions: ['Please try uploading the image again', 'Consult local agricultural expert']
+          },
+          note: 'An error occurred during detection. Please try again.'
         },
-        predictions: [{
-          className: 'Detection Error',
-          probability: 0
-        }],
-        confidence: 0,
-        treatment: {
-          diseaseName: 'Detection Error',
-          immediateActions: ['Please try uploading the image again', 'Consult local agricultural expert']
-        },
-        source: 'Emergency Fallback',
-        note: 'An error occurred during detection. Please try again.'
-      });
+        {
+          isFallback: true,
+          source: 'Emergency Fallback',
+          degradedReason: 'disease_detection_emergency_fallback',
+          extra: {
+            message: 'Disease detection completed (emergency fallback)',
+            timestamp: new Date().toISOString(),
+            imageInfo: req.file ? {
+              originalName: req.file.originalname,
+              size: req.file.size,
+              mimetype: req.file.mimetype
+            } : {},
+            primaryDisease: {
+              name: 'Detection Error',
+              type: 'Unknown',
+              severity: 'Medium',
+              symptoms: ['Please try again or consult an agricultural expert'],
+              affectedParts: ['Unknown']
+            },
+            predictions: [{
+              className: 'Detection Error',
+              probability: 0
+            }],
+            confidence: 0,
+            treatment: {
+              diseaseName: 'Detection Error',
+              immediateActions: ['Please try uploading the image again', 'Consult local agricultural expert']
+            },
+            source: 'Emergency Fallback',
+            note: 'An error occurred during detection. Please try again.'
+          }
+        }
+      );
     }
   }
   
   static async detectMultipleDiseases(req, res) {
     try {
       if (!req.files || req.files.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Please upload at least one image'
-        });
+        return badRequest(res, 'Please upload at least one image');
       }
       
       logger.info('Processing multiple images for disease detection', { count: req.files.length });
       
-      const DiseaseDetectionService = require('../services/DiseaseDetectionService');
+      const DiseaseDetectionService = require('../services/diseaseDetectionService');
       const results = [];
       
       for (const file of req.files) {
@@ -826,23 +885,34 @@ class DiseaseController {
       const mostCommonDisease = Object.entries(diseaseCounts)
         .sort((a, b) => b[1] - a[1])[0];
       
-      res.json({
-        success: true,
-        message: `Processed ${results.length} images`,
-        totalImages: results.length,
-        mostCommonDisease: mostCommonDisease ? {
-          name: mostCommonDisease[0],
-          count: mostCommonDisease[1]
-        } : null,
-        results: results,
-        summary: this.generateSummary(results)
-      });
+      return DiseaseController.success(
+        res,
+        {
+          message: `Processed ${results.length} images`,
+          totalImages: results.length,
+          mostCommonDisease: mostCommonDisease ? {
+            name: mostCommonDisease[0],
+            count: mostCommonDisease[1]
+          } : null,
+          results: results,
+          summary: this.generateSummary(results)
+        },
+        {
+          extra: {
+            message: `Processed ${results.length} images`,
+            totalImages: results.length,
+            mostCommonDisease: mostCommonDisease ? {
+              name: mostCommonDisease[0],
+              count: mostCommonDisease[1]
+            } : null,
+            results: results,
+            summary: this.generateSummary(results)
+          }
+        }
+      );
     } catch (error) {
       logger.error('Multiple detection error', error, { service: 'DiseaseController' });
-      res.status(500).json({
-        success: false,
-        error: 'Internal server error'
-      });
+      return serverError(res, 'Internal server error');
     }
   }
 
@@ -876,6 +946,9 @@ class DiseaseController {
   static async getPreventionTips(req, res) {
     try {
       const { crop } = req.params;
+      if (!Disease || !mongoReady()) {
+        return DiseaseController.success(res, [], { extra: { isFallback: true, degradedReason: 'mongo_unavailable' } });
+      }
       
       const diseases = await Disease.find({ 
         cropNames: { $regex: new RegExp(crop, 'i') }
@@ -892,21 +965,18 @@ class DiseaseController {
       
       const uniqueTips = Array.from(new Set(tips));
       
-      res.json({
-        success: true,
-        data: uniqueTips
-      });
+      return DiseaseController.success(res, uniqueTips);
     } catch (error) {
       logger.error('Error fetching prevention tips:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async search(req, res) {
     try {
+      if (!Disease || !mongoReady()) {
+        return DiseaseController.success(res, [], { extra: { isFallback: true, degradedReason: 'mongo_unavailable' } });
+      }
       const { crop, symptom, severity, type } = req.query;
       const query = {};
       
@@ -930,37 +1000,29 @@ class DiseaseController {
         .populate('crops', 'name')
         .limit(50);
       
-      res.json({
-        success: true,
-        data: diseases
-      });
+      return DiseaseController.success(res, diseases);
     } catch (error) {
       logger.error('Error searching diseases:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async getByCrop(req, res) {
     try {
       const { cropName } = req.params;
+      if (!Disease || typeof Disease.findByCrop !== 'function' || !mongoReady()) {
+        return DiseaseController.success(res, [], { extra: { isFallback: true, degradedReason: 'mongo_unavailable' } });
+      }
       
       const diseases = await Disease.findByCrop(cropName);
       
-      res.json({
-        success: true,
-        data: diseases
-      });
+      return DiseaseController.success(res, diseases);
     } catch (error) {
       logger.error('Error fetching diseases by crop:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 }
 
-module.exports = DiseaseController;
+const { bindStaticMethods } = require('../utils/bindControllerMethods');
+module.exports = bindStaticMethods(DiseaseController);

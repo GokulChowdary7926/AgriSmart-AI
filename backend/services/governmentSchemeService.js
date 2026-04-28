@@ -1,5 +1,3 @@
-
-const axios = require('axios');
 const logger = require('../utils/logger');
 const cache = require('../utils/cache').getInstance();
 const applicationManager = require('./applicationManager');

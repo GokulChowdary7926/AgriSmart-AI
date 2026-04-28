@@ -11,11 +11,19 @@ class ModelRegistry {
 
   async initialize() {
     try {
-      await this.loadRegistry();
+      const loadedCount = await this.loadRegistry();
       
-      await this.validateAllModels();
+      const validationResults = await this.validateAllModels();
+      const totalModels = Object.keys(validationResults).length;
+      const validModels = Object.values(validationResults).filter((result) => result.valid).length;
+      const invalidModels = totalModels - validModels;
       
-      logger.info('✅ Model Registry initialized');
+      logger.info('Model registry ready', {
+        loadedModels: loadedCount,
+        validatedModels: totalModels,
+        validModels,
+        invalidModels
+      });
     } catch (error) {
       logger.error('❌ Failed to initialize Model Registry:', error.message);
       this.models = {};
@@ -26,11 +34,12 @@ class ModelRegistry {
     try {
       const data = await fs.readFile(this.registryPath, 'utf8');
       this.models = JSON.parse(data);
-      logger.info(`✅ Loaded model registry with ${Object.keys(this.models).length} models`);
+      return Object.keys(this.models).length;
     } catch (error) {
-      logger.warn('⚠️ No model registry found, creating new one');
+      logger.info('No model registry found, creating new one');
       this.models = {};
       await this.saveRegistry();
+      return 0;
     }
   }
 
@@ -50,8 +59,6 @@ class ModelRegistry {
         
         if (!isValid) {
           logger.warn(`⚠️ Model ${modelName} (${modelInfo.version}) failed validation`);
-        } else {
-          logger.info(`✅ Model ${modelName} (${modelInfo.version}) validated`);
         }
       } catch (error) {
         validationResults[modelName] = {
@@ -79,7 +86,7 @@ class ModelRegistry {
         return await this.validateXGBoostModel(modelInfo.path);
       default:
         logger.warn(`Unknown model type: ${modelInfo.type}`);
-        return true; // Don't block unknown types
+        return true;
     }
   }
 
@@ -214,13 +221,10 @@ class ModelRegistry {
 
 const modelRegistry = new ModelRegistry();
 
-if (require.main !== module) {
-  modelRegistry.initialize().catch(err => {
-    logger.error('Failed to initialize model registry:', err);
-  });
-}
-
 module.exports = modelRegistry;
+
+
+
 
 
 

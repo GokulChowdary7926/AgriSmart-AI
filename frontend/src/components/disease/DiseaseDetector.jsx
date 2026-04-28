@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -11,14 +12,15 @@ import {
   Chip,
   Paper
 } from '@mui/material';
-import { CloudUpload, PhotoCamera, Search, Close } from '@mui/icons-material';
+import { CloudUpload, Search, Close } from '@mui/icons-material';
 import { useLanguage } from '../../contexts/LanguageContext';
 import diseaseService from '../../services/diseaseService';
 import MedicationRecommendations from './MedicationRecommendations';
-import api from '../../services/api';
+import api, { getApiErrorMessage } from '../../services/api';
 import logger from '../../services/logger';
 
 const DiseaseDetector = ({ onDetectionComplete }) => {
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const [image, setImage] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -48,11 +50,17 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
         setPreview(reader.result);
       };
       reader.readAsDataURL(file);
+
+      // Auto-run detection after successful image selection.
+      setTimeout(() => {
+        handleDetect(file);
+      }, 0);
     }
   };
 
-  const handleDetect = async () => {
-    if (!image) {
+  const handleDetect = async (overrideImage = null) => {
+    const imageToDetect = overrideImage || image;
+    if (!imageToDetect) {
       setError(t('diseases.uploadImageFirst') || 'Please upload an image first');
       return;
     }
@@ -63,7 +71,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
     
     try {
       logger.info('Starting disease detection');
-      const detectionResult = await diseaseService.detectDisease(image);
+      const detectionResult = await diseaseService.detectDisease(imageToDetect);
       logger.debug('Detection result', { result: detectionResult });
       
       setResult(detectionResult);
@@ -81,7 +89,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
       }
     } catch (err) {
       logger.error('Detection error', err);
-      const errorMsg = err.response?.data?.error || err.message || 'Failed to detect disease. Please try again.';
+      const errorMsg = getApiErrorMessage(err, 'Failed to detect disease. Please try again.');
       setError(errorMsg);
     } finally {
       setLoading(false);
@@ -100,9 +108,18 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
   };
 
   return (
-    <Card sx={{ maxWidth: 900, mx: 'auto', mt: 4 }}>
+    <Card
+      sx={{
+        maxWidth: 900,
+        mx: 'auto',
+        mt: 4,
+        background: 'rgba(15, 18, 24, 0.95)',
+        border: '1px solid rgba(76, 175, 80, 0.35)',
+        boxShadow: '0 14px 40px rgba(0,0,0,0.45)'
+      }}
+    >
       <CardContent>
-        <Typography variant="h5" gutterBottom align="center">
+        <Typography variant="h5" gutterBottom align="center" sx={{ color: '#fff', fontWeight: 700 }}>
           🌿 {t('diseases.advancedDetection') || t('diseases.title') || 'Plant Disease Detection'}
         </Typography>
         
@@ -112,14 +129,14 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
               sx={{
                 p: 3,
                 textAlign: 'center',
-                border: '2px dashed #ccc',
+                border: '2px dashed rgba(255,255,255,0.28)',
                 borderRadius: 2,
                 minHeight: 300,
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
                 alignItems: 'center',
-                backgroundColor: '#fafafa'
+                background: 'rgba(255, 255, 255, 0.04)'
               }}
             >
               {preview ? (
@@ -164,7 +181,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
                   >
                     {t('diseases.uploadImage') || 'Upload Image'}
                   </Button>
-                  <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                  <Typography variant="body2" sx={{ mt: 1, color: 'rgba(255,255,255,0.72)' }}>
                     {t('diseases.selectImageFile') || 'Select an image file to detect plant diseases'}
                   </Typography>
                 </>
@@ -174,19 +191,6 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
           
           <Grid item xs={12} md={6}>
             <Box sx={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
-              <Button
-                variant="contained"
-                color="primary"
-                size="large"
-                startIcon={loading ? <CircularProgress size={20} /> : <Search />}
-                onClick={handleDetect}
-                disabled={!image || loading}
-                sx={{ mb: 3 }}
-                fullWidth
-              >
-                {loading ? (t('diseases.analyzingImage') || 'Analyzing...') : (t('diseases.detectDisease') || 'Detect Disease')}
-              </Button>
-
               {error && (
                 <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
                   {error}
@@ -256,11 +260,12 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
                           color="primary"
                           onClick={async () => {
                             try {
-                              if (result?.diseaseInfo?._id) {
-                                const response = await api.get(`/diseases/${result.diseaseInfo._id}`);
+                              const diseaseId = result?.diseaseInfo?._id || result?.diseaseInfo?.id || result?._id || result?.id;
+                              if (diseaseId) {
+                                const response = await api.get(`/diseases/${diseaseId}`);
                                 if (response?.data?.success && response?.data?.data) {
                                   if (onDetectionComplete) {
-                                    onDetectionComplete({ diseaseInfo: response.data.data });
+                                    onDetectionComplete({ ...result, diseaseInfo: response.data.data });
                                   }
                                 } else if (onDetectionComplete) {
                                   onDetectionComplete(result);
@@ -307,7 +312,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
                           variant="outlined"
                           size="small"
                           sx={{ mt: 2 }}
-                          onClick={() => window.location.href = '/diseases'}
+                          onClick={() => navigate('/diseases')}
                           fullWidth
                         >
                           {t('diseases.browseLibrary') || 'Browse Disease Library'}
@@ -318,13 +323,7 @@ const DiseaseDetector = ({ onDetectionComplete }) => {
                 </Box>
               )}
 
-              {!result && !loading && (
-                <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Typography variant="body2" color="textSecondary" align="center">
-                    {t('diseases.uploadAndDetect') || 'Upload an image and click "Detect Disease" to analyze'}
-                  </Typography>
-                </Box>
-              )}
+              {!result && !loading && <Box sx={{ flexGrow: 1 }} />}
             </Box>
           </Grid>
         </Grid>

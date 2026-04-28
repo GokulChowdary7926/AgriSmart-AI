@@ -20,40 +20,33 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Tabs,
-  Tab,
   Accordion,
   AccordionSummary,
   AccordionDetails
 } from '@mui/material';
 import {
-  AccountBalance,
   CheckCircle,
   Warning,
   Info,
-  Schedule,
-  AttachMoney,
   Phone,
-  Language,
   ExpandMore,
-  Category as CategoryIcon
 } from '@mui/icons-material';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
+import { getBestAvailableLocation } from '../services/realtimeLocation';
 
 export default function GovernmentSchemes() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [schemes, setSchemes] = useState(null);
   const [error, setError] = useState(null);
   const [selectedScheme, setSelectedScheme] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [eligibilityResult, setEligibilityResult] = useState(null);
-  const [activeTab, setActiveTab] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [schemeFilter, setSchemeFilter] = useState('all'); // 'all', 'eligible', or 'recommended'
+  const [schemeFilter, setSchemeFilter] = useState('all');
+  const [, setEligibilityResult] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -71,15 +64,21 @@ export default function GovernmentSchemes() {
     setError(null);
 
     try {
+      const liveLocation = await getBestAvailableLocation(api, localStorage.getItem('language') || 'en');
       const defaultLandSqFeet = 1;
       const defaultLandCents = 0;
+      const profileLocation = user?.farmerProfile?.location || {};
+      const resolvedLocation = {
+        state: profileLocation.state || liveLocation?.state || '',
+        district: profileLocation.district || liveLocation?.district || liveLocation?.city || ''
+      };
       
       const farmerProfile = {
-        location: user?.farmerProfile?.location || { state: 'Punjab', district: 'Ludhiana' },
+        location: resolvedLocation,
         farmDetails: {
           landSizeSqFeet: user?.farmerProfile?.landDetails?.landSizeSqFeet || defaultLandSqFeet,
           landSizeCents: user?.farmerProfile?.landDetails?.landSizeCents || defaultLandCents,
-          landSize: user?.farmerProfile?.landDetails?.totalArea || user?.farmerProfile?.landSize || 0.00000929, // 1 sq ft in hectares
+          landSize: user?.farmerProfile?.landDetails?.totalArea || user?.farmerProfile?.landSize || 0.00000929,
           landOwnership: user?.farmerProfile?.landDetails?.landOwnership !== false && (user?.farmerProfile?.landOwnership !== false)
         },
         annualIncome: user?.farmerProfile?.annualIncome || 80000,
@@ -93,7 +92,7 @@ export default function GovernmentSchemes() {
       const response = await api.post('/government-schemes/recommend', {
         farmerProfile: farmerProfile,
         filters: {
-          showOnlyEligible: false, // Show all schemes, not just eligible
+          showOnlyEligible: false,
           sortBy: 'relevance_score'
         }
       }, { headers });
@@ -187,7 +186,7 @@ export default function GovernmentSchemes() {
         }
         setError(null);
       } else {
-        setError(response.data.error || 'Failed to load schemes');
+        setError(getApiErrorMessage(response.data, 'Failed to load schemes'));
         setSchemes({
           totalSchemesFound: 0,
           eligibleSchemes: 0,
@@ -240,7 +239,7 @@ export default function GovernmentSchemes() {
         }
         setError(null);
       } else {
-        setError(err.response?.data?.error || err.message || t('governmentSchemes.loadError') || 'Failed to load schemes. Please try again.');
+        setError(getApiErrorMessage(err, t('governmentSchemes.loadError') || 'Failed to load schemes. Please try again.'));
         setSchemes({
           totalSchemesFound: 0,
           eligibleSchemes: 0,
@@ -283,7 +282,7 @@ export default function GovernmentSchemes() {
         setDialogOpen(true);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to check eligibility');
+      setError(getApiErrorMessage(err, t('governmentSchemes.failedEligibilityCheck', 'Failed to check eligibility')));
     }
   };
 
@@ -322,6 +321,44 @@ export default function GovernmentSchemes() {
     };
     return colors[category] || '#9e9e9e';
   };
+
+  const getCategoryLabel = (category) => {
+    if (!category) return t('governmentSchemes.general', 'General');
+    const normalized = String(category).toLowerCase();
+    return t(`governmentSchemes.category.${normalized}`, String(category).charAt(0).toUpperCase() + String(category).slice(1));
+  };
+
+  const localizeEligibilityText = (value) => {
+    const text = String(value || '').trim();
+    if (!text || language !== 'ta') return text;
+    const map = {
+      Eligible: 'தகுதி உள்ளது',
+      'Not Eligible': 'தகுதி இல்லை',
+      'You are eligible for this scheme!': 'இந்த திட்டத்திற்கு நீங்கள் தகுதியானவர்!',
+      'Why Eligible': 'ஏன் தகுதி உள்ளது',
+      'Why Not Eligible': 'ஏன் தகுதி இல்லை',
+      'Why You Are Eligible': 'நீங்கள் ஏன் தகுதியானவர்',
+      'Why You Are Not Eligible': 'நீங்கள் ஏன் தகுதி அற்றவர்',
+      'Detailed Eligibility Check': 'விரிவான தகுதி சரிபார்ப்பு',
+      'Your value': 'உங்கள் மதிப்பு',
+      Required: 'தேவை'
+    };
+    return map[text] || text;
+  };
+
+  const normalizePossiblyCorruptedText = (value, fallbackKey, fallbackText) => {
+    const text = String(value || '').trim();
+    if (!text) return t(fallbackKey, fallbackText);
+    if (/[Ãà�]/.test(text) || /\[à/.test(text)) return t(fallbackKey, fallbackText);
+    return text;
+  };
+
+  const getSchemeIdentifier = (scheme) => (
+    scheme?.schemeId ||
+    scheme?._id ||
+    scheme?.id ||
+    null
+  );
 
   const filteredSchemes = () => {
     if (!schemes) {
@@ -399,7 +436,7 @@ export default function GovernmentSchemes() {
 
         <Paper sx={{ p: 2, mb: 3, bgcolor: 'background.paper' }}>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Typography variant="subtitle2" sx={{ mr: 1 }}>Filter by Category:</Typography>
+            <Typography variant="subtitle2" sx={{ mr: 1 }}>{t('governmentSchemes.filterByCategory', 'Filter by Category:')}</Typography>
             <Chip
               label={t('governmentSchemes.allCategories') || 'All'}
               onClick={() => setSelectedCategory('all')}
@@ -410,7 +447,7 @@ export default function GovernmentSchemes() {
               Object.keys(schemes.schemesByCategory).map(category => (
                 <Chip
                   key={category}
-                  label={category.charAt(0).toUpperCase() + category.slice(1)}
+                  label={getCategoryLabel(category)}
                   onClick={() => setSelectedCategory(category)}
                   color={selectedCategory === category ? 'primary' : 'default'}
                   sx={{ cursor: 'pointer', bgcolor: selectedCategory === category ? getCategoryColor(category) : 'transparent' }}
@@ -420,7 +457,7 @@ export default function GovernmentSchemes() {
               ['financial', 'insurance', 'subsidy', 'training', 'infrastructure'].map(category => (
                 <Chip
                   key={category}
-                  label={category.charAt(0).toUpperCase() + category.slice(1)}
+                  label={getCategoryLabel(category)}
                   onClick={() => setSelectedCategory(category)}
                   color={selectedCategory === category ? 'primary' : 'default'}
                   sx={{ cursor: 'pointer' }}
@@ -429,21 +466,21 @@ export default function GovernmentSchemes() {
             )}
           </Box>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2, alignItems: 'center' }}>
-            <Typography variant="subtitle2" sx={{ mr: 1 }}>Filter by Type:</Typography>
+            <Typography variant="subtitle2" sx={{ mr: 1 }}>{t('governmentSchemes.filterByType', 'Filter by Type:')}</Typography>
             <Chip
-              label="All Schemes"
+              label={t('governmentSchemes.allSchemes', 'All Schemes')}
               onClick={() => setSchemeFilter('all')}
               color={schemeFilter === 'all' ? 'primary' : 'default'}
               sx={{ cursor: 'pointer' }}
             />
             <Chip
-              label="Eligible"
+              label={t('governmentSchemes.eligibleChip', 'Eligible')}
               onClick={() => setSchemeFilter('eligible')}
               color={schemeFilter === 'eligible' ? 'success' : 'default'}
               sx={{ cursor: 'pointer' }}
             />
             <Chip
-              label="Recommended"
+              label={t('governmentSchemes.recommendedChip', 'Recommended')}
               onClick={() => setSchemeFilter('recommended')}
               color={schemeFilter === 'recommended' ? 'warning' : 'default'}
               sx={{ cursor: 'pointer' }}
@@ -497,7 +534,7 @@ export default function GovernmentSchemes() {
                   </Typography>
                   {schemeFilter === 'all' && (
                     <Typography variant="caption" color="primary" sx={{ mt: 1, display: 'block' }}>
-                      ✓ Showing all schemes
+                      {t('governmentSchemes.showingAllSchemes', 'Showing all schemes')}
                     </Typography>
                   )}
                 </CardContent>
@@ -524,7 +561,7 @@ export default function GovernmentSchemes() {
                   </Typography>
                   {schemeFilter === 'eligible' && (
                     <Typography variant="caption" color="success.main" sx={{ mt: 1, display: 'block' }}>
-                      ✓ Showing eligible schemes only
+                      {t('governmentSchemes.showingEligibleOnly', 'Showing eligible schemes only')}
                     </Typography>
                   )}
                 </CardContent>
@@ -551,7 +588,7 @@ export default function GovernmentSchemes() {
                   </Typography>
                   {schemeFilter === 'recommended' && (
                     <Typography variant="caption" color="warning.main" sx={{ mt: 1, display: 'block' }}>
-                      ✓ Showing recommended schemes
+                      {t('governmentSchemes.showingRecommended', 'Showing recommended schemes')}
                     </Typography>
                   )}
                 </CardContent>
@@ -561,9 +598,9 @@ export default function GovernmentSchemes() {
             {schemes.deadlineAlerts && schemes.deadlineAlerts.length > 0 && (
               <Grid item xs={12}>
                 <Alert severity="warning" sx={{ mb: 3 }}>
-                  <Typography variant="h6" gutterBottom>
-                    {t('governmentSchemes.deadlineAlerts') || '⚠️ Deadline Alerts'}
-                  </Typography>
+                    <Typography variant="h6" gutterBottom>
+                      {t('governmentSchemes.deadlineAlertsTitle', 'Deadline Alerts')}
+                    </Typography>
                   {schemes.deadlineAlerts.map((alert, idx) => (
                     <Typography key={idx} variant="body2">
                       • {alert.message}
@@ -585,9 +622,9 @@ export default function GovernmentSchemes() {
                   </Typography>
                   <Chip 
                     label={
-                      schemeFilter === 'eligible' ? 'Eligible Only' : 
-                      schemeFilter === 'recommended' ? 'Recommended' : 
-                      'All Schemes'
+                      schemeFilter === 'eligible' ? t('governmentSchemes.eligibleOnly', 'Eligible Only') : 
+                      schemeFilter === 'recommended' ? t('governmentSchemes.recommendedChip', 'Recommended') : 
+                      t('governmentSchemes.allSchemes', 'All Schemes')
                     } 
                     color={
                       schemeFilter === 'eligible' ? 'success' : 
@@ -609,13 +646,15 @@ export default function GovernmentSchemes() {
                 ) : (
                   <>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Showing {filteredSchemes().length} {
-                        schemeFilter === 'eligible' ? 'eligible' : 
-                        schemeFilter === 'recommended' ? 'recommended' : 
-                        ''
-                      } scheme{filteredSchemes().length !== 1 ? 's' : ''}
+                      {t('governmentSchemes.showingCount', {
+                        count: filteredSchemes().length,
+                        type: schemeFilter === 'eligible' ? t('governmentSchemes.eligibleChip', 'eligible').toLowerCase() :
+                          schemeFilter === 'recommended' ? t('governmentSchemes.recommendedChip', 'recommended').toLowerCase() :
+                          '',
+                        defaultValue: 'Showing {{count}} {{type}} scheme(s)'
+                      })}
                       {schemeFilter === 'recommended' && (
-                        <span> (sorted by relevance score)</span>
+                        <span> {t('governmentSchemes.sortedByRelevance', '(sorted by relevance score)')}</span>
                       )}
                     </Typography>
                   <Grid container spacing={2}>
@@ -642,13 +681,13 @@ export default function GovernmentSchemes() {
                                 </Typography>
                                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
                                   <Chip
-                                    label={scheme.category || 'General'}
+                                    label={getCategoryLabel(scheme.category)}
                                     size="small"
                                     sx={{ bgcolor: getCategoryColor(scheme.category), color: 'primary.contrastText' }}
                                   />
                                   {scheme.isEligible !== undefined && (
                                     <Chip
-                                      label={scheme.isEligible ? '✓ Eligible' : 'Not Eligible'}
+                                      label={scheme.isEligible ? t('governmentSchemes.eligibleChip', 'Eligible') : t('governmentSchemes.notEligible', 'Not Eligible')}
                                       size="small"
                                       color={scheme.isEligible ? 'success' : 'default'}
                                     />
@@ -667,7 +706,7 @@ export default function GovernmentSchemes() {
                           {scheme.isEligible !== undefined && (
                             <Box mb={1}>
                               <Chip
-                                label={scheme.isEligible ? '✓ Eligible' : 'Not Eligible'}
+                                label={scheme.isEligible ? t('governmentSchemes.eligibleChip', 'Eligible') : t('governmentSchemes.notEligible', 'Not Eligible')}
                                 size="small"
                                 color={scheme.isEligible ? 'success' : 'default'}
                                 sx={{ mb: 1 }}
@@ -676,7 +715,7 @@ export default function GovernmentSchemes() {
                           )}
 
                           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            {scheme.description}
+                            {normalizePossiblyCorruptedText(scheme.description, 'governmentSchemes.descriptionFallback', 'Scheme information available')}
                           </Typography>
 
                           {scheme.eligibilityDetails && (
@@ -687,16 +726,18 @@ export default function GovernmentSchemes() {
                               >
                                 <Typography variant="subtitle2" gutterBottom>
                                   {scheme.eligibilityDetails.summary || 
-                                    (scheme.isEligible ? '✅ Eligible' : '❌ Not Eligible')}
+                                    (scheme.isEligible
+                                      ? `✅ ${t('governmentSchemes.eligibleChip', 'Eligible')}`
+                                      : `❌ ${t('governmentSchemes.notEligible', 'Not Eligible')}`)}
                                 </Typography>
                                 {scheme.eligibilityDetails.matchedCriteria && scheme.eligibilityDetails.matchedCriteria.length > 0 && (
                                   <Box sx={{ mt: 1 }}>
                                     <Typography variant="caption" color="success.main" sx={{ fontWeight: 'bold' }}>
-                                      Why Eligible:
+                                      {t('governmentSchemes.whyEligible', 'Why Eligible')}:
                                     </Typography>
                                     {scheme.eligibilityDetails.matchedCriteria.map((criteria, idx) => (
                                       <Typography key={idx} variant="caption" display="block" sx={{ ml: 1 }}>
-                                        ✓ {criteria}
+                                        ✓ {localizeEligibilityText(criteria)}
                                       </Typography>
                                     ))}
                                   </Box>
@@ -704,11 +745,11 @@ export default function GovernmentSchemes() {
                                 {scheme.eligibilityDetails.rejectionReasons && scheme.eligibilityDetails.rejectionReasons.length > 0 && (
                                   <Box sx={{ mt: 1 }}>
                                     <Typography variant="caption" color="error.main" sx={{ fontWeight: 'bold' }}>
-                                      Why Not Eligible:
+                                      {t('governmentSchemes.whyNotEligible', 'Why Not Eligible')}:
                                     </Typography>
                                     {scheme.eligibilityDetails.rejectionReasons.map((reason, idx) => (
                                       <Typography key={idx} variant="caption" display="block" sx={{ ml: 1 }}>
-                                        ✗ {reason}
+                                        ✗ {localizeEligibilityText(reason)}
                                       </Typography>
                                     ))}
                                   </Box>
@@ -764,9 +805,15 @@ export default function GovernmentSchemes() {
                               fullWidth
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleCheckEligibility(scheme.schemeId);
+                                const schemeId = getSchemeIdentifier(scheme);
+                                if (!schemeId) {
+                                  setError(t('governmentSchemes.invalidSchemeId', 'Scheme details are incomplete. Please refresh and try again.'));
+                                  return;
+                                }
+                                handleCheckEligibility(schemeId);
                               }}
                               sx={{ mt: 2 }}
+                              disabled={!getSchemeIdentifier(scheme)}
                             >
                               {t('governmentSchemes.checkEligibility') || 'Check Eligibility'}
                             </Button>
@@ -817,7 +864,7 @@ export default function GovernmentSchemes() {
                       {selectedScheme.eligibilityDetails.matchedCriteria && selectedScheme.eligibilityDetails.matchedCriteria.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                           <Typography variant="subtitle2" color="success.main" gutterBottom>
-                            ✓ Why You Are Eligible:
+                            ✓ {t('governmentSchemes.whyYouAreEligible', 'Why You Are Eligible')}:
                           </Typography>
                           <List dense>
                             {selectedScheme.eligibilityDetails.matchedCriteria.map((criteria, idx) => (
@@ -826,7 +873,7 @@ export default function GovernmentSchemes() {
                                   <CheckCircle color="success" fontSize="small" />
                                 </ListItemIcon>
                                 <ListItemText 
-                                  primary={criteria}
+                                  primary={localizeEligibilityText(criteria)}
                                   primaryTypographyProps={{ variant: 'body2' }}
                                 />
                               </ListItem>
@@ -838,7 +885,7 @@ export default function GovernmentSchemes() {
                       {selectedScheme.eligibilityDetails.rejectionReasons && selectedScheme.eligibilityDetails.rejectionReasons.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                           <Typography variant="subtitle2" color="error.main" gutterBottom>
-                            ✗ Why You Are Not Eligible:
+                            ✗ {t('governmentSchemes.whyYouAreNotEligible', 'Why You Are Not Eligible')}:
                           </Typography>
                           <List dense>
                             {selectedScheme.eligibilityDetails.rejectionReasons.map((reason, idx) => (
@@ -847,7 +894,7 @@ export default function GovernmentSchemes() {
                                   <Warning color="warning" fontSize="small" />
                                 </ListItemIcon>
                                 <ListItemText 
-                                  primary={reason}
+                                  primary={localizeEligibilityText(reason)}
                                   primaryTypographyProps={{ variant: 'body2' }}
                                 />
                               </ListItem>
@@ -859,20 +906,20 @@ export default function GovernmentSchemes() {
                       {selectedScheme.eligibilityDetails.detailedReasons && selectedScheme.eligibilityDetails.detailedReasons.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                           <Typography variant="subtitle2" gutterBottom>
-                            Detailed Eligibility Check:
+                            {t('governmentSchemes.detailedEligibilityCheck', 'Detailed Eligibility Check')}:
                           </Typography>
                           {selectedScheme.eligibilityDetails.detailedReasons.map((detail, idx) => (
                             <Box key={idx} sx={{ mb: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
                               <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
-                                {detail.requirement}
+                                {localizeEligibilityText(detail.requirement)}
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
-                                {detail.description}
+                                {localizeEligibilityText(detail.description)}
                               </Typography>
                               {detail.value && (
                                 <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'primary.main' }}>
-                                  Your value: {detail.value}
-                                  {detail.required && ` | Required: ${detail.required}`}
+                                  {t('governmentSchemes.yourValue', 'Your value')}: {localizeEligibilityText(detail.value)}
+                                  {detail.required && ` | ${t('governmentSchemes.requiredValue', 'Required')}: ${localizeEligibilityText(detail.required)}`}
                                 </Typography>
                               )}
                             </Box>
@@ -903,17 +950,17 @@ export default function GovernmentSchemes() {
                         }}
                       >
                         <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                          {reason.title}
+                          {localizeEligibilityText(reason.title)}
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                          {reason.description}
+                          {localizeEligibilityText(reason.description)}
                         </Typography>
                         {reason.details && reason.details.length > 0 && (
                           <List dense sx={{ mt: 1 }}>
                             {reason.details.map((detail, detailIdx) => (
                               <ListItem key={detailIdx} sx={{ py: 0 }}>
                                 <ListItemText 
-                                  primary={detail}
+                                  primary={localizeEligibilityText(detail)}
                                   primaryTypographyProps={{ variant: 'caption' }}
                                 />
                               </ListItem>
@@ -936,7 +983,7 @@ export default function GovernmentSchemes() {
                     <AccordionDetails>
                       {Object.entries(selectedScheme.benefits).map(([key, value]) => (
                         <Typography key={key} variant="body2" paragraph>
-                          <strong>{key}:</strong> {value}
+                          <strong>{normalizePossiblyCorruptedText(key, 'governmentSchemes.benefit', 'Benefit')}:</strong> {normalizePossiblyCorruptedText(value, 'governmentSchemes.valueNotAvailable', 'Not available')}
                         </Typography>
                       ))}
                     </AccordionDetails>

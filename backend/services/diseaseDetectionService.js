@@ -1,13 +1,11 @@
-let tf = null;
 const logger = require('../utils/logger');
+let tf = null;
 try {
   tf = require('@tensorflow/tfjs-node');
 } catch (error) {
   logger.warn('TensorFlow.js not available, using fallback detection', { error: error.message, service: 'DiseaseDetectionService' });
   tf = null;
 }
-const axios = require('axios');
-const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 
@@ -672,7 +670,7 @@ class DiseaseDetectionService {
       }
       
       if (this.diseaseDatabase) {
-        for (const [key, value] of Object.entries(this.diseaseDatabase)) {
+        for (const key of Object.keys(this.diseaseDatabase)) {
           const lowerDiseaseName = diseaseName.toLowerCase();
           const lowerKey = key.toLowerCase();
           if (lowerKey.includes(lowerDiseaseName) || lowerDiseaseName.includes(lowerKey)) {
@@ -778,8 +776,8 @@ class DiseaseDetectionService {
 
   async fallbackDetection(imageBuffer) {
     try {
-      const dominantColor = await this.analyzeImageColors(imageBuffer);
-      
+      await this.analyzeImageColors(imageBuffer);
+
       const predictions = [
         {
           className: 'Leaf Spot Disease',
@@ -854,7 +852,7 @@ class DiseaseDetectionService {
     }
   }
 
-  async analyzeImageColors(imageBuffer) {
+  async analyzeImageColors(_imageBuffer) {
     return {
       dominantColor: 'green',
       healthIndicator: 'moderate',

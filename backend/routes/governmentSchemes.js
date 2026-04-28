@@ -5,19 +5,37 @@ const governmentSchemeService = require('../services/governmentSchemeService');
 const { authenticateToken } = require('../middleware/auth');
 const LandConverter = require('../utils/landConverter');
 const logger = require('../utils/logger');
+const { badRequest, notFound, serverError, ok } = require('../utils/httpResponses');
+
+function getUserId(req) {
+  return req.user?._id || req.user?.userId || req.user?.id || null;
+}
+
+function parsePositiveNumber(value, defaultValue, { min = 0, max = 1000000 } = {}) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeLocation(input = {}) {
+  return {
+    state: String(input.state || '').trim(),
+    district: String(input.district || '').trim()
+  };
+}
 
 router.get('/recommend', async (req, res) => {
   try {
     const farmerProfile = {
-      location: {
-        state: req.query.state || 'Punjab',
-        district: req.query.district || 'Ludhiana'
-      },
+      location: normalizeLocation({
+        state: req.query.state,
+        district: req.query.district
+      }),
       farmDetails: {
-        landSize: parseFloat(req.query.landSize) || 2.5,
+        landSize: parsePositiveNumber(req.query.landSize, 2.5, { min: 0.01, max: 10000 }),
         landOwnership: req.query.landOwnership !== 'false'
       },
-      annualIncome: parseFloat(req.query.annualIncome) || 80000,
+      annualIncome: parsePositiveNumber(req.query.annualIncome, 80000, { min: 0, max: 50000000 }),
       cropsGrown: req.query.cropsGrown ? req.query.cropsGrown.split(',') : ['wheat', 'rice'],
       socialCategory: req.query.socialCategory || ''
     };
@@ -27,16 +45,14 @@ router.get('/recommend', async (req, res) => {
       sortBy: req.query.sortBy || 'relevance_score'
     });
 
-    res.json({
-      success: true,
-      data: recommendations
-    });
+    return ok(res, recommendations, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error recommending schemes (GET):', error);
     logger.error('Error stack:', error.stack);
-    res.json({
-      success: true,
-      data: []
+    return ok(res, [], {
+      source: 'AgriSmart AI',
+      isFallback: true,
+      degradedReason: 'government_schemes_recommendation_error'
     });
   }
 });
@@ -49,16 +65,16 @@ router.post('/recommend', async (req, res) => {
     let { farmerProfile, filters } = req.body;
 
     if (!farmerProfile) {
-      if (req.headers.authorization) {
+      if (req.headers.authorization && process.env.JWT_SECRET) {
         try {
           const token = req.headers.authorization.replace('Bearer ', '');
           const jwt = require('jsonwebtoken');
-          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
           const User = require('../models/User');
           const user = await User.findById(decoded.userId);
           if (user && user.farmerProfile) {
             farmerProfile = {
-              location: user.farmerProfile.location || { state: 'Punjab', district: 'Ludhiana' },
+              location: normalizeLocation(user.farmerProfile.location || {}),
               farmDetails: {
                 landSize: user.farmerProfile.landDetails?.totalArea || user.farmerProfile.landSize || 2.5,
                 landOwnership: user.farmerProfile.landDetails?.landOwnership !== false
@@ -74,7 +90,7 @@ router.post('/recommend', async (req, res) => {
       
       if (!farmerProfile) {
         farmerProfile = {
-          location: { state: 'Punjab', district: 'Ludhiana' },
+          location: normalizeLocation(req.body?.location || {}),
           farmDetails: {
             landSize: LandConverter.toHectares(1, 0), // 1 sq ft in hectares
             landSizeSqFeet: 1,
@@ -87,7 +103,7 @@ router.post('/recommend', async (req, res) => {
         };
       }
     } else {
-      farmerProfile.location = farmerProfile.location || { state: 'Punjab', district: 'Ludhiana' };
+      farmerProfile.location = normalizeLocation(farmerProfile.location || req.body?.location || {});
       
       if (farmerProfile.farmDetails) {
         if (farmerProfile.farmDetails.landSizeSqFeet !== undefined || farmerProfile.farmDetails.landSizeCents !== undefined) {
@@ -188,28 +204,33 @@ router.post('/recommend', async (req, res) => {
       hasData: !!recommendations
     });
 
-    res.json({
-      success: true,
-      data: recommendations
+    const isFallbackMode = Boolean(recommendations?.fallback || recommendations?.error);
+    return ok(res, recommendations, {
+      source: 'AgriSmart AI',
+      isFallback: isFallbackMode,
+      degradedReason: isFallbackMode ? 'government_schemes_fallback_mode' : null
     });
   } catch (error) {
     logger.error('Unexpected error in recommend route:', error);
     logger.error('Error stack:', error.stack);
-    
-    res.json({
-      success: true,
-      data: {
-        totalSchemesFound: 0,
-        eligibleSchemes: 0,
-        recommendedSchemes: 0,
-        allSchemes: [],
-        eligibleSchemesList: [],
-        topRecommendations: [],
-        schemesByCategory: {},
-        schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
-        fallback: true,
-        error: 'Service temporarily unavailable'
-      }
+
+    const fallbackResponse = {
+      totalSchemesFound: 0,
+      eligibleSchemes: 0,
+      recommendedSchemes: 0,
+      allSchemes: [],
+      eligibleSchemesList: [],
+      topRecommendations: [],
+      schemesByCategory: {},
+      schemesByPriority: { highPriority: [], mediumPriority: [], lowPriority: [] },
+      fallback: true,
+      error: 'Service temporarily unavailable'
+    };
+
+    return ok(res, fallbackResponse, {
+      source: 'AgriSmart AI',
+      isFallback: true,
+      degradedReason: 'government_schemes_recommend_unexpected_error'
     });
   }
 });
@@ -221,49 +242,31 @@ router.get('/:schemeId', async (req, res) => {
     const scheme = await governmentSchemeService.getSchemeDetails(schemeId);
 
     if (!scheme) {
-      return res.status(404).json({
-        success: false,
-        error: 'Scheme not found'
-      });
+      return notFound(res, 'Scheme not found');
     }
 
-    res.json({
-      success: true,
-      data: scheme
-    });
+    return ok(res, scheme, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error getting scheme details:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get scheme details'
-    });
+    return serverError(res, 'Failed to get scheme details');
   }
 });
 
 router.post('/:schemeId/eligibility', authenticateToken, async (req, res) => {
   try {
     const { schemeId } = req.params;
-    const { farmerProfile } = req.body;
+    const { farmerProfile } = req.body || {};
 
     if (!farmerProfile) {
-      return res.status(400).json({
-        success: false,
-        error: 'Farmer profile is required'
-      });
+      return badRequest(res, 'Farmer profile is required');
     }
 
     const eligibility = await governmentSchemeService.checkSchemeEligibility(schemeId, farmerProfile);
 
-    res.json({
-      success: true,
-      data: eligibility
-    });
+    return ok(res, eligibility, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error checking eligibility:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to check eligibility'
-    });
+    return serverError(res, 'Failed to check eligibility');
   }
 });
 
@@ -283,29 +286,28 @@ router.get('/test', async (req, res) => {
       cropsGrown: ['wheat', 'rice']
     }, { showOnlyEligible: false });
     
-    res.json({
-      success: true,
-      message: 'Database test',
-      getAllApplicableSchemes: {
+    return ok(
+      res,
+      {
+        message: 'Database test',
+        getAllApplicableSchemes: {
         schemesCount: schemes.length,
         schemes: schemes.slice(0, 3)
-      },
-      recommendSchemes: {
+        },
+        recommendSchemes: {
         totalSchemesFound: recommendations.totalSchemesFound,
         allSchemesCount: recommendations.allSchemes?.length,
         eligibleSchemes: recommendations.eligibleSchemes,
         firstScheme: recommendations.allSchemes?.[0]?.name
+        },
+        databaseLoaded: !!governmentSchemeService.schemeDatabase,
+        centralSchemesCount: governmentSchemeService.schemeDatabase?.central ? Object.keys(governmentSchemeService.schemeDatabase.central).length : 0
       },
-      databaseLoaded: !!governmentSchemeService.schemeDatabase,
-      centralSchemesCount: governmentSchemeService.schemeDatabase?.central ? Object.keys(governmentSchemeService.schemeDatabase.central).length : 0
-    });
+      { source: 'AgriSmart AI', isFallback: false }
+    );
   } catch (error) {
     logger.error('Test endpoint error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      stack: error.stack
-    });
+    return serverError(res, error.message, error.stack);
   }
 });
 
@@ -327,48 +329,40 @@ router.get('/categories/list', async (req, res) => {
       { id: 'disaster', name: 'Disaster Relief', icon: 'warning' }
     ];
 
-    res.json({
-      success: true,
-      data: categories
-    });
+    return ok(res, categories, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error getting categories:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get categories'
-    });
+    return serverError(res, 'Failed to get categories');
   }
 });
 
 router.post('/:schemeId/apply', authenticateToken, async (req, res) => {
   try {
     const { schemeId } = req.params;
-    const { farmerProfile, documents } = req.body;
+    const { farmerProfile, documents } = req.body || {};
 
     if (!farmerProfile) {
-      return res.status(400).json({
-        success: false,
-        error: 'Farmer profile is required'
-      });
+      return badRequest(res, 'Farmer profile is required');
     }
 
     if (!farmerProfile.farmerId && req.user) {
-      farmerProfile.farmerId = req.user.userId;
-      farmerProfile.userId = req.user.userId;
+      const userId = getUserId(req);
+      farmerProfile.farmerId = userId;
+      farmerProfile.userId = userId;
     }
 
     const result = await governmentSchemeService.applyForScheme(schemeId, farmerProfile, documents || []);
 
-    res.json({
-      success: result.success,
-      data: result
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false
+        ? 'government_schemes_application_degraded'
+        : null
     });
   } catch (error) {
     logger.error('Error applying for scheme:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to submit application'
-    });
+    return serverError(res, 'Failed to submit application');
   }
 });
 
@@ -378,45 +372,39 @@ router.get('/applications/:applicationId', authenticateToken, async (req, res) =
 
     const status = await governmentSchemeService.trackApplication(applicationId);
 
-    res.json({
-      success: status.success !== false,
-      data: status
+    return ok(res, status, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(status?.fallback || status?.success === false),
+      degradedReason: status?.fallback || status?.success === false
+        ? 'government_schemes_tracking_degraded'
+        : null
     });
   } catch (error) {
     logger.error('Error tracking application:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to track application'
-    });
+    return serverError(res, 'Failed to track application');
   }
 });
 
 router.get('/applications', authenticateToken, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
+    const farmerId = getUserId(req);
 
     const applications = await governmentSchemeService.getFarmerApplications(farmerId);
 
-    res.json({
-      success: true,
-      data: applications
-    });
+    return ok(res, applications, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error getting applications:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get applications'
-    });
+    return serverError(res, 'Failed to get applications');
   }
 });
 
 router.post('/calendar', authenticateToken, async (req, res) => {
   try {
-    const { farmerProfile } = req.body;
+    let { farmerProfile } = req.body || {};
 
     if (!farmerProfile && req.user) {
       const User = require('../models/User');
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(getUserId(req));
       if (user && user.farmerProfile) {
         farmerProfile = {
           farmerId: user._id,
@@ -432,24 +420,15 @@ router.post('/calendar', authenticateToken, async (req, res) => {
     }
 
     if (!farmerProfile) {
-      return res.status(400).json({
-        success: false,
-        error: 'Farmer profile is required'
-      });
+      return badRequest(res, 'Farmer profile is required');
     }
 
     const calendar = await governmentSchemeService.getSchemeCalendar(farmerProfile);
 
-    res.json({
-      success: true,
-      data: calendar
-    });
+    return ok(res, calendar, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error getting calendar:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get calendar'
-    });
+    return serverError(res, 'Failed to get calendar');
   }
 });
 

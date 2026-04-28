@@ -4,6 +4,7 @@ const DiseaseController = require('../controllers/DiseaseController');
 const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
+const { notFound, serverError, ok } = require('../utils/httpResponses');
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -35,10 +36,7 @@ router.get('/:id/medication', async (req, res) => {
     const disease = await Disease.findById(req.params.id);
     
     if (!disease) {
-      return res.status(404).json({
-        success: false,
-        error: 'Disease not found'
-      });
+      return notFound(res, 'Disease not found');
     }
 
     const { crop, severity } = req.query;
@@ -51,17 +49,11 @@ router.get('/:id/medication', async (req, res) => {
       { language }
     );
 
-    res.json({
-      success: true,
-      data: medication
-    });
+    return ok(res, medication, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     const logger = require('../utils/logger');
     logger.error('Error fetching medication:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 router.get('/:id', DiseaseController.getById);

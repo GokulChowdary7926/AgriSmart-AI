@@ -1,7 +1,4 @@
 
-const fs = require('fs');
-const path = require('path');
-
 const existingDB = require('./cropKnowledgeBase.js');
 
 const additionalCrops = {
@@ -425,6 +422,9 @@ function expandCropDatabase() {
 }
 
 module.exports = expandCropDatabase();
+
+
+
 
 
 

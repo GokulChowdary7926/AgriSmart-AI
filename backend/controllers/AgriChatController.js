@@ -1,43 +1,88 @@
+const mongoose = require('mongoose');
 const agriChatService = require('../services/agriChatService');
 const logger = require('../utils/logger');
+const { badRequest, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
 
 class AgriChatController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
   static async getNearbyUsers(req, res) {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
       
       if (!userId) {
         logger.error('No user ID found in request');
-        return res.json({
-          success: true,
-          data: [],
-          count: 0,
-          message: 'User authentication required. Please log in again.'
-        });
+        return AgriChatController.success(
+          res,
+          [],
+          {
+            isFallback: true,
+            degradedReason: 'agri_chat_unauthenticated',
+            extra: {
+              count: 0,
+              message: 'User authentication required. Please log in again.'
+            }
+          }
+        );
       }
 
-      const radius = parseInt(req.query.radius) || 50000; // Default 50km
-      const limit = parseInt(req.query.limit) || 50;
+      const radius = AgriChatController.parsePositiveInt(req.query.radius, 50000, { min: 100, max: 200000 });
+      const limit = AgriChatController.parsePositiveInt(req.query.limit, 50, { min: 1, max: 100 });
+
+      if (!mongoReady()) {
+        return AgriChatController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { count: 0, message: 'Nearby user store unavailable.' } });
+      }
 
       const nearbyUsers = await agriChatService.findNearbySellersDealers(userId, radius, limit);
 
-      res.json({
-        success: true,
-        data: nearbyUsers || [],
-        count: nearbyUsers?.length || 0,
-        message: nearbyUsers?.length > 0 
-          ? `Found ${nearbyUsers.length} sellers/dealers` 
-          : 'No sellers/dealers found. You can still search for users.'
-      });
+      return AgriChatController.success(
+        res,
+        nearbyUsers || [],
+        {
+          extra: {
+            count: nearbyUsers?.length || 0,
+            message: nearbyUsers?.length > 0
+              ? `Found ${nearbyUsers.length} sellers/dealers`
+              : 'No sellers/dealers found. You can still search for users.'
+          }
+        }
+      );
     } catch (error) {
       logger.error('Error getting nearby users:', error);
-      res.json({
-        success: true,
-        data: [],
-        count: 0,
-        message: 'Unable to load nearby sellers/dealers. You can still search for users.',
-        error: error.message
-      });
+      return AgriChatController.success(
+        res,
+        [],
+        {
+          isFallback: true,
+          degradedReason: 'agri_chat_nearby_unavailable',
+          extra: {
+            count: 0,
+            message: 'Unable to load nearby sellers/dealers. You can still search for users.',
+            error: error.message
+          }
+        }
+      );
     }
   }
 
@@ -47,25 +92,18 @@ class AgriChatController {
       const { q, role } = req.query;
 
       if (!q || q.trim().length < 2) {
-        return res.status(400).json({
-          success: false,
-          error: 'Search query must be at least 2 characters'
-        });
+        return badRequest(res, 'Search query must be at least 2 characters');
+      }
+      if (!mongoReady()) {
+        return AgriChatController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { count: 0 } });
       }
 
       const users = await agriChatService.searchUsers(userId, q.trim(), role);
 
-      res.json({
-        success: true,
-        data: users,
-        count: users.length
-      });
+      return AgriChatController.success(res, users, { extra: { count: users.length } });
     } catch (error) {
       logger.error('Error searching users:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to search users'
-      });
+      return serverError(res, error.message || 'Failed to search users');
     }
   }
 
@@ -75,24 +113,18 @@ class AgriChatController {
       const { otherUserId } = req.body;
 
       if (!otherUserId) {
-        return res.status(400).json({
-          success: false,
-          error: 'otherUserId is required'
-        });
+        return badRequest(res, 'otherUserId is required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Conversation store unavailable', { degradedReason: 'mongo_unavailable' });
       }
 
       const conversation = await agriChatService.getOrCreateConversation(userId, otherUserId);
 
-      res.json({
-        success: true,
-        data: conversation
-      });
+      return AgriChatController.success(res, conversation);
     } catch (error) {
       logger.error('Error getting/creating conversation:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to get/create conversation'
-      });
+      return serverError(res, error.message || 'Failed to get/create conversation');
     }
   }
 
@@ -102,32 +134,48 @@ class AgriChatController {
       
       if (!userId) {
         logger.error('No user ID found in request');
-        return res.json({
-          success: true,
-          data: [],
-          count: 0,
-          message: 'User authentication required. Please log in again.'
-        });
+        return AgriChatController.success(
+          res,
+          [],
+          {
+            isFallback: true,
+            degradedReason: 'agri_chat_unauthenticated',
+            extra: {
+              count: 0,
+              message: 'User authentication required. Please log in again.'
+            }
+          }
+        );
       }
 
-      const limit = parseInt(req.query.limit) || 50;
+      const limit = AgriChatController.parsePositiveInt(req.query.limit, 50, { min: 1, max: 100 });
+
+      if (!mongoReady()) {
+        return AgriChatController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { count: 0 } });
+      }
 
       const conversations = await agriChatService.getUserConversations(userId, limit);
 
-      res.json({
-        success: true,
-        data: conversations || [],
-        count: conversations?.length || 0
-      });
+      return AgriChatController.success(
+        res,
+        conversations || [],
+        { extra: { count: conversations?.length || 0 } }
+      );
     } catch (error) {
       logger.error('Error getting conversations:', error);
-      res.json({
-        success: true,
-        data: [],
-        count: 0,
-        message: 'Unable to load conversations. Please try again later.',
-        error: error.message
-      });
+      return AgriChatController.success(
+        res,
+        [],
+        {
+          isFallback: true,
+          degradedReason: 'agri_chat_conversations_unavailable',
+          extra: {
+            count: 0,
+            message: 'Unable to load conversations. Please try again later.',
+            error: error.message
+          }
+        }
+      );
     }
   }
 
@@ -135,8 +183,12 @@ class AgriChatController {
     try {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
       const { conversationId } = req.params;
-      const limit = parseInt(req.query.limit) || 50;
+      const limit = AgriChatController.parsePositiveInt(req.query.limit, 50, { min: 1, max: 100 });
       const before = req.query.before || null;
+
+      if (!mongoReady()) {
+        return AgriChatController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { count: 0 } });
+      }
 
       const messages = await agriChatService.getConversationMessages(
         conversationId,
@@ -145,17 +197,10 @@ class AgriChatController {
         before
       );
 
-      res.json({
-        success: true,
-        data: messages,
-        count: messages.length
-      });
+      return AgriChatController.success(res, messages, { extra: { count: messages.length } });
     } catch (error) {
       logger.error('Error getting messages:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to get messages'
-      });
+      return serverError(res, error.message || 'Failed to get messages');
     }
   }
 
@@ -174,10 +219,10 @@ class AgriChatController {
       } = req.body;
 
       if (!content || !content.trim()) {
-        return res.status(400).json({
-          success: false,
-          error: 'Message content is required'
-        });
+        return badRequest(res, 'Message content is required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Message store unavailable; cannot send right now', { degradedReason: 'mongo_unavailable' });
       }
 
       let finalConversationId = conversationId;
@@ -189,10 +234,7 @@ class AgriChatController {
       }
 
       if (!finalConversationId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Either conversationId or recipientId is required'
-        });
+        return badRequest(res, 'Either conversationId or recipientId is required');
       }
 
       let finalRecipientId = recipientId;
@@ -216,10 +258,7 @@ class AgriChatController {
       }
 
       if (!finalRecipientId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Recipient not found'
-        });
+        return notFound(res, 'Recipient not found');
       }
 
       const message = await agriChatService.sendMessage(
@@ -234,16 +273,10 @@ class AgriChatController {
         replyTo
       );
 
-      res.json({
-        success: true,
-        data: message
-      });
+      return AgriChatController.success(res, message);
     } catch (error) {
       logger.error('Error sending message:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to send message'
-      });
+      return serverError(res, error.message || 'Failed to send message');
     }
   }
 }

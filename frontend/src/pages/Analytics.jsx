@@ -12,22 +12,12 @@ import {
   FormControl,
   InputLabel,
   Button,
-  Tabs,
-  Tab,
   LinearProgress,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Chip,
 } from '@mui/material';
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
@@ -38,21 +28,17 @@ import {
   Legend,
   ResponsiveContainer
 } from 'recharts';
-import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import api from '../services/api';
 import logger from '../services/logger';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import DownloadIcon from '@mui/icons-material/Download';
 
 const Analytics = () => {
-  const { user } = useAuth();
   const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [dashboardData, setDashboardData] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
   const [insights, setInsights] = useState([]);
-  const [activeTab, setActiveTab] = useState(0);
   const [timeRange, setTimeRange] = useState('30days');
 
   useEffect(() => {
@@ -167,9 +153,6 @@ const Analytics = () => {
   const safeFarmInfo = (safeDashboardData.farmInfo && typeof safeDashboardData.farmInfo === 'object')
     ? safeDashboardData.farmInfo
     : { size: 0, sizeUnit: 'ha' };
-  const recentCrops = Array.isArray(safeDashboardData.recentCrops) ? safeDashboardData.recentCrops : [];
-  const marketTrends = Array.isArray(safeDashboardData.marketTrends) ? safeDashboardData.marketTrends : [];
-
   if (!dashboardData) {
     return (
       <Container sx={{ mt: 4 }}>

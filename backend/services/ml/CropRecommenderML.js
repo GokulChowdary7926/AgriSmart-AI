@@ -40,7 +40,7 @@ class CropRecommenderML {
   }
 
   async predictWithEnhancedModel(features, scriptPath) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const pythonProcess = spawn('python3', [scriptPath, JSON.stringify(features)], {
         cwd: path.dirname(scriptPath),
         env: { ...process.env, PYTHONUNBUFFERED: '1' }
@@ -86,7 +86,7 @@ class CropRecommenderML {
       return await this.predictWithEnhancedModel(features, enhancedScriptPath);
     }
     
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const pythonProcess = spawn('python3', [
         this.pythonScriptPath,
         JSON.stringify(features)
@@ -128,7 +128,7 @@ class CropRecommenderML {
   }
 
   predictWithJavaScript(features) {
-    const { temperature, rainfall, ph, humidity, soil_type, state } = features;
+    const { temperature, rainfall, ph, humidity, soil_type } = features;
     
     const cropDatabase = [
       {

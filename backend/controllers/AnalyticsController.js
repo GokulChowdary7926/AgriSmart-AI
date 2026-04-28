@@ -1,10 +1,33 @@
 const Analytics = require('../models/Analytics');
 const logger = require('../utils/logger');
+const { serverError, ok } = require('../utils/httpResponses');
+
+function parsePositiveInt(value, defaultValue, { min = 1, max = 365 } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function parseDateOrDefault(value, fallback) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
 
 class AnalyticsController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
   static async track(req, res) {
     try {
-      const { eventType, eventData, device, platform, language } = req.body;
+      const body = req.body || {};
+      const { eventType, eventData, device, platform, language } = body;
       
       try {
         if (Analytics && typeof Analytics === 'function') {
@@ -17,9 +40,9 @@ class AnalyticsController {
             language: language || 'en',
             location: {
               ip: req.ip,
-              ...req.body.location
+              ...(body.location || {})
             },
-            sessionId: req.body.sessionId
+            sessionId: body.sessionId
           });
           
           await analytics.save();
@@ -28,16 +51,22 @@ class AnalyticsController {
         logger.warn('Analytics model not available, skipping tracking');
       }
       
-      res.json({
-        success: true,
-        message: 'Event tracked successfully'
-      });
+      return AnalyticsController.success(
+        res,
+        { message: 'Event tracked successfully' },
+        { extra: { message: 'Event tracked successfully' } }
+      );
     } catch (error) {
       logger.error('Error tracking event:', error);
-      res.json({
-        success: true,
-        message: 'Event tracked successfully'
-      });
+      return AnalyticsController.success(
+        res,
+        { message: 'Event tracked successfully' },
+        {
+          isFallback: true,
+          degradedReason: 'analytics_track_degraded',
+          extra: { message: 'Event tracked successfully' }
+        }
+      );
     }
   }
   
@@ -46,8 +75,8 @@ class AnalyticsController {
       const userId = req.user?._id || req.user?.userId;
       const { startDate, endDate } = req.query;
       
-      const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const end = endDate ? new Date(endDate) : new Date();
+      const start = parseDateOrDefault(startDate, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+      const end = parseDateOrDefault(endDate, new Date());
       
       let analytics = { recentActivity: [], events: [] };
       
@@ -59,16 +88,14 @@ class AnalyticsController {
         logger.warn('Analytics model not available, using defaults');
       }
       
-      res.json({
-        success: true,
-        data: analytics
-      });
+      return AnalyticsController.success(res, analytics);
     } catch (error) {
       logger.error('Error fetching user analytics:', error);
-      res.json({
-        success: true,
-        data: { recentActivity: [], events: [] }
-      });
+      return AnalyticsController.success(
+        res,
+        { recentActivity: [], events: [] },
+        { isFallback: true, degradedReason: 'analytics_unavailable' }
+      );
     }
   }
   
@@ -76,8 +103,8 @@ class AnalyticsController {
     try {
       const { startDate, endDate, eventType } = req.query;
       
-      const start = startDate ? new Date(startDate) : null;
-      const end = endDate ? new Date(endDate) : null;
+      const start = startDate ? parseDateOrDefault(startDate, null) : null;
+      const end = endDate ? parseDateOrDefault(endDate, null) : null;
       
       let counts = {};
       
@@ -89,16 +116,14 @@ class AnalyticsController {
         logger.warn('Analytics model not available, using defaults');
       }
       
-      res.json({
-        success: true,
-        data: counts
-      });
+      return AnalyticsController.success(res, counts);
     } catch (error) {
       logger.error('Error fetching event counts:', error);
-      res.json({
-        success: true,
-        data: {}
-      });
+      return AnalyticsController.success(
+        res,
+        {},
+        { isFallback: true, degradedReason: 'analytics_event_counts_unavailable' }
+      );
     }
   }
   
@@ -106,27 +131,26 @@ class AnalyticsController {
     try {
       const userId = req.user?._id || req.user?.userId;
       const { days = 7 } = req.query;
+      const safeDays = parsePositiveInt(days, 7, { min: 1, max: 90 });
       
       let timeline = [];
       
       try {
         if (Analytics && typeof Analytics.getActivityTimeline === 'function') {
-          timeline = await Analytics.getActivityTimeline(userId, parseInt(days));
+          timeline = await Analytics.getActivityTimeline(userId, safeDays);
         }
       } catch (analyticsError) {
         logger.warn('Analytics model not available, using defaults');
       }
       
-      res.json({
-        success: true,
-        data: timeline
-      });
+      return AnalyticsController.success(res, timeline);
     } catch (error) {
       logger.error('Error fetching activity timeline:', error);
-      res.json({
-        success: true,
-        data: []
-      });
+      return AnalyticsController.success(
+        res,
+        [],
+        { isFallback: true, degradedReason: 'analytics_timeline_unavailable' }
+      );
     }
   }
 
@@ -139,12 +163,16 @@ class AnalyticsController {
         const realTimeData = await realTimeAnalyticsService.getRealTimeDashboard();
         
         if (realTimeData.success) {
-          return res.json({
-            success: true,
-            data: realTimeData.data,
-            timestamp: realTimeData.timestamp,
-            source: 'realtime'
-          });
+          return AnalyticsController.success(
+            res,
+            realTimeData.data,
+            {
+              source: 'realtime',
+              extra: {
+                timestamp: realTimeData.timestamp
+              }
+            }
+          );
         }
       } catch (realtimeError) {
         logger.warn('Real-time analytics unavailable, using fallback:', realtimeError.message);
@@ -174,9 +202,9 @@ class AnalyticsController {
         sizeUnit: 'ha'
       };
       
-      res.json({
-        success: true,
-        data: {
+      return AnalyticsController.success(
+        res,
+        {
           summary: {
             metrics: {
               activeCrops: dashboardData.userStats?.cropRecommendations || 0,
@@ -195,19 +223,29 @@ class AnalyticsController {
           systemStats: dashboardData.systemStats,
           cropStats: dashboardData.cropStats,
           diseaseStats: dashboardData.diseaseStats,
-          predictions: dashboardData.predictions,
+          predictions: dashboardData.predictions
+        },
+        {
+          isFallback: (dashboardData.source || 'realtime') !== 'realtime',
+          degradedReason: (dashboardData.source || 'realtime') !== 'realtime' ? 'analytics_fallback_mode' : null,
           source: dashboardData.source || 'realtime',
-          timestamp: dashboardData.timestamp
+          extra: {
+            timestamp: dashboardData.timestamp
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('Error fetching dashboard:', error);
       const analyticsService = require('../services/analyticsService');
       const fallbackData = analyticsService.getFallbackAnalytics();
+      const fallbackFarmInfo = {
+        size: 2.5,
+        sizeUnit: 'ha'
+      };
       
-      res.json({
-        success: true,
-        data: {
+      return AnalyticsController.success(
+        res,
+        {
           summary: {
             metrics: {
               activeCrops: fallbackData.userStats?.cropRecommendations || 3,
@@ -221,19 +259,22 @@ class AnalyticsController {
           },
           marketTrends: fallbackData.marketStats?.topPerformingCommodities || [],
           recentActivity: fallbackData.userStats?.recentActivity || ['Crop recommendation (Rice)', 'Weather check'],
-          farmInfo: {
-            size: user?.farmerProfile?.farmSize || user?.farmerProfile?.landDetails?.totalArea || 2.5,
-            sizeUnit: user?.farmerProfile?.farmSizeUnit || 'ha'
-          },
+          farmInfo: fallbackFarmInfo,
           userStats: fallbackData.userStats,
           systemStats: fallbackData.systemStats,
           cropStats: fallbackData.cropStats,
           diseaseStats: fallbackData.diseaseStats,
-          predictions: fallbackData.predictions,
+          predictions: fallbackData.predictions
+        },
+        {
           source: 'fallback',
-          timestamp: fallbackData.timestamp
+          isFallback: true,
+          degradedReason: 'analytics_dashboard_error',
+          extra: {
+            timestamp: fallbackData.timestamp
+          }
         }
-      });
+      );
     }
   }
   
@@ -245,6 +286,8 @@ class AnalyticsController {
     try {
       const userId = req.user?._id || req.user?.userId || null;
       const { startDate, endDate } = req.query;
+      const safeStartDate = parseDateOrDefault(startDate, null);
+      const safeEndDate = parseDateOrDefault(endDate, null);
       
       const days = 30;
       const historicalData = [];
@@ -269,18 +312,19 @@ class AnalyticsController {
         });
       }
       
-      res.json({
-        success: true,
-        data: historicalData,
-        userId: userId || 'anonymous',
-        dateRange: { startDate, endDate }
-      });
+      return AnalyticsController.success(
+        res,
+        historicalData,
+        {
+          extra: {
+            userId: userId || 'anonymous',
+            dateRange: { startDate: safeStartDate, endDate: safeEndDate }
+          }
+        }
+      );
     } catch (error) {
       logger.error('Error fetching historical data:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to fetch historical data'
-      });
+      return serverError(res, error.message || 'Failed to fetch historical data');
     }
   }
   
@@ -319,19 +363,21 @@ class AnalyticsController {
         }
       ];
       
-      res.json({
-        success: true,
-        data: insights,
-        userId: userId || 'anonymous'
-      });
+      return AnalyticsController.success(
+        res,
+        insights,
+        {
+          extra: {
+            userId: userId || 'anonymous'
+          }
+        }
+      );
     } catch (error) {
       logger.error('Error fetching insights:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to fetch insights'
-      });
+      return serverError(res, error.message || 'Failed to fetch insights');
     }
   }
 }
 
-module.exports = AnalyticsController;
+const { bindStaticMethods } = require('../utils/bindControllerMethods');
+module.exports = bindStaticMethods(AnalyticsController);

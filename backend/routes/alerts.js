@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const WeatherData = require('../models/WeatherData');
-const Crop = require('../models/Crop');
 const Disease = require('../models/Disease');
 const logger = require('../utils/logger');
+const { ok } = require('../utils/httpResponses');
 
 router.get('/', async (req, res) => {
   try {
@@ -12,15 +11,12 @@ router.get('/', async (req, res) => {
     
     const alerts = await generateAlerts(userId, state, district);
     
-    res.json({
-      success: true,
-      data: alerts
-    });
+    return ok(res, alerts, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Alerts error:', error);
-    res.json({
-      success: true,
-      data: [
+    return ok(
+      res,
+      [
         {
           id: 'system_alert',
           type: 'info',
@@ -30,14 +26,18 @@ router.get('/', async (req, res) => {
           timestamp: new Date(),
           icon: '✅'
         }
-      ]
-    });
+      ],
+      {
+        source: 'AgriSmart AI',
+        isFallback: true,
+        degradedReason: 'alerts_generation_error'
+      }
+    );
   }
 });
 
 async function generateAlerts(userId, state, district) {
   const alerts = [];
-  const now = new Date();
   
   const weatherAlerts = await getWeatherAlerts(state, district);
   alerts.push(...weatherAlerts);
@@ -56,7 +56,7 @@ async function generateAlerts(userId, state, district) {
   return alerts.slice(0, 10); // Limit to 10 alerts
 }
 
-async function getWeatherAlerts(state, district) {
+async function getWeatherAlerts(_state, _district) {
   const alerts = [];
   
   alerts.push({
@@ -84,7 +84,7 @@ async function getWeatherAlerts(state, district) {
   return alerts;
 }
 
-async function getDiseaseAlerts(state, district) {
+async function getDiseaseAlerts(_state, _district) {
   const alerts = [];
   
   try {
@@ -112,7 +112,7 @@ async function getDiseaseAlerts(state, district) {
   return alerts;
 }
 
-async function getUserCropAlerts(userId) {
+async function getUserCropAlerts(_userId) {
   const alerts = [];
   
   alerts.push({

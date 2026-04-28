@@ -6,11 +6,7 @@ const API_CACHE_NAME = 'krishi-mitra-api-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
-  '/offline.html',
-  '/manifest.json',
-  '/favicon.ico',
-  '/logo192.png',
-  '/logo512.png'
+  '/offline.html'
 ];
 
 const API_ENDPOINTS = [

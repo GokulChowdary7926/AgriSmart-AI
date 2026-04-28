@@ -3,6 +3,13 @@ const express = require('express');
 const router = express.Router();
 const iotService = require('../services/IoTService');
 const { authenticateToken } = require('../middleware/auth');
+const { badRequest, serverError, ok } = require('../utils/httpResponses');
+
+function parsePositiveInt(value, defaultValue, { min = 1, max = 365 } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+}
 
 router.get('/sensors/:sensorId/readings', authenticateToken, async (req, res) => {
   try {
@@ -18,38 +25,40 @@ router.get('/sensors/:sensorId/readings', authenticateToken, async (req, res) =>
       endTime
     );
     
-    res.json({
-      success: true,
-      sensor_id: sensorId,
-      count: readings.length,
-      readings
-    });
+    return ok(
+      res,
+      readings,
+      {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        sensor_id: sensorId,
+        count: readings.length
+      }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 router.get('/sensors/:sensorId/analyze', authenticateToken, async (req, res) => {
   try {
     const { sensorId } = req.params;
-    const periodDays = parseInt(req.query.period_days || '7');
+    const periodDays = parsePositiveInt(req.query.period_days, 7, { min: 1, max: 90 });
     
     const analysis = await iotService.analyzeSensorData(sensorId, periodDays);
     
-    res.json({
-      success: true,
-      sensor_id: sensorId,
-      period_days: periodDays,
-      analysis
-    });
+    return ok(
+      res,
+      analysis,
+      {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        sensor_id: sensorId,
+        period_days: periodDays
+      }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -63,10 +72,7 @@ router.post('/irrigation/recommendation', authenticateToken, async (req, res) =>
     } = req.body;
     
     if (!soil_moisture || !crop_type || !soil_type) {
-      return res.status(400).json({
-        success: false,
-        error: 'soil_moisture, crop_type, and soil_type are required'
-      });
+      return badRequest(res, 'soil_moisture, crop_type, and soil_type are required');
     }
     
     const recommendation = await iotService.getIrrigationRecommendation(
@@ -76,15 +82,9 @@ router.post('/irrigation/recommendation', authenticateToken, async (req, res) =>
       soil_type
     );
     
-    res.json({
-      success: true,
-      recommendation
-    });
+    return ok(res, recommendation, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -94,19 +94,20 @@ router.post('/sensors/data', async (req, res) => {
     
     await iotService.processSensorData('webhook', sensorData);
     
-    res.json({
-      success: true,
-      message: 'Sensor data received'
-    });
+    return ok(
+      res,
+      { message: 'Sensor data received' },
+      { source: 'AgriSmart AI', isFallback: false, message: 'Sensor data received' }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 module.exports = router;
+
+
+
 
 
 

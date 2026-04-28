@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Container,
-  Paper,
   Typography,
   Box,
   Grid,
@@ -23,7 +22,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useTheme } from '../contexts/ThemeContext';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
 import LanguageSwitcher from '../components/common/LanguageSwitcher';
 
 export default function Settings() {
@@ -65,12 +64,12 @@ export default function Settings() {
       });
 
       if (response.data.success) {
-        setMessage({ type: 'success', text: 'Settings saved successfully' });
+        setMessage({ type: 'success', text: t('settings.savedSuccess', 'Settings saved successfully') });
       }
     } catch (error) {
       setMessage({
         type: 'error',
-        text: error.response?.data?.error || 'Failed to save settings'
+        text: getApiErrorMessage(error, t('settings.failedSave', 'Failed to save settings'))
       });
     } finally {
       setLoading(false);
@@ -240,7 +239,7 @@ export default function Settings() {
               disabled={loading}
               size="large"
             >
-              {loading ? 'Saving...' : (t('settings.save') || 'Save Settings')}
+              {loading ? t('settings.saving', 'Saving...') : (t('settings.save') || 'Save Settings')}
             </Button>
           </Box>
         </Grid>
@@ -248,6 +247,9 @@ export default function Settings() {
     </Container>
   );
 }
+
+
+
 
 
 

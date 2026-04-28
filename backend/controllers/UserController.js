@@ -1,18 +1,45 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const logger = require('../utils/logger');
+const { badRequest, notFound, serverError, serviceUnavailable, ok, forbidden } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
+
+function parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+}
 
 class UserController {
+  static success(res, data, { source = 'AgriSmart AI', isFallback = false, degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
   static async getAll(req, res) {
     try {
       if (req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied. Admin role required.'
-        });
+        return forbidden(res, 'Access denied. Admin role required.');
+      }
+      if (!mongoReady()) {
+        return UserController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { pagination: { page: 1, limit: 0, total: 0, pages: 0 } } });
       }
 
       const { page = 1, limit = 20, role, search } = req.query;
-      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const safePage = parsePositiveInt(page, 1, { min: 1, max: 100000 });
+      const safeLimit = parsePositiveInt(limit, 20, { min: 1, max: 100 });
+      const skip = (safePage - 1) * safeLimit;
 
       const query = {};
       if (role) {
@@ -30,84 +57,72 @@ class UserController {
       const users = await User.find(query)
         .select('-password')
         .skip(skip)
-        .limit(parseInt(limit))
+        .limit(safeLimit)
         .sort({ createdAt: -1 });
 
       const total = await User.countDocuments(query);
 
-      res.json({
-        success: true,
-        data: users,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / parseInt(limit))
+      return UserController.success(
+        res,
+        users,
+        {
+          extra: {
+            pagination: {
+              page: safePage,
+              limit: safeLimit,
+              total,
+              pages: Math.ceil(total / safeLimit)
+            }
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('Error getting users:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch users'
-      });
+      return serverError(res, 'Failed to fetch users');
     }
   }
 
   static async getById(req, res) {
     try {
       const { id } = req.params;
+      const requesterId = (req.user?.id || req.user?.userId || req.user?._id || '').toString();
       
-      if (req.user.id !== id && req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied'
-        });
+      if (requesterId !== id && req.user.role !== 'admin') {
+        return forbidden(res, 'Access denied');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'User store unavailable', { degradedReason: 'mongo_unavailable' });
       }
 
       const user = await User.findById(id).select('-password');
       
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
+        return notFound(res, 'User not found');
       }
 
-      res.json({
-        success: true,
-        data: user
-      });
+      return UserController.success(res, user);
     } catch (error) {
       logger.error('Error getting user:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch user'
-      });
+      return serverError(res, 'Failed to fetch user');
     }
   }
 
   static async getCurrentUser(req, res) {
     try {
-      const user = await User.findById(req.user.id || req.user.userId).select('-password');
+      const userId = req.user?.id || req.user?.userId || req.user?._id;
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'User store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
+      const user = await User.findById(userId).select('-password');
       
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
+        return notFound(res, 'User not found');
       }
 
-      res.json({
-        success: true,
-        data: user
-      });
+      return UserController.success(res, user);
     } catch (error) {
       logger.error('Error getting current user:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch user profile'
-      });
+      return serverError(res, 'Failed to fetch user profile');
     }
   }
 
@@ -115,12 +130,13 @@ class UserController {
     try {
       const { id } = req.params;
       const updateData = req.body;
+      const requesterId = (req.user?.id || req.user?.userId || req.user?._id || '').toString();
 
-      if (req.user.id !== id && req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied'
-        });
+      if (requesterId !== id && req.user.role !== 'admin') {
+        return forbidden(res, 'Access denied');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'User store unavailable', { degradedReason: 'mongo_unavailable' });
       }
 
       delete updateData.password;
@@ -136,30 +152,27 @@ class UserController {
       ).select('-password');
 
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
+        return notFound(res, 'User not found');
       }
 
       logger.info(`User ${id} profile updated`);
-      res.json({
-        success: true,
-        data: user,
-        message: 'Profile updated successfully'
-      });
+      return UserController.success(
+        res,
+        user,
+        { extra: { message: 'Profile updated successfully' } }
+      );
     } catch (error) {
       logger.error('Error updating user:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to update user'
-      });
+      return serverError(res, error.message || 'Failed to update user');
     }
   }
 
   static async updateCurrentUser(req, res) {
     try {
-      const userId = req.user.id || req.user.userId;
+      const userId = req.user?.id || req.user?.userId || req.user?._id;
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'User store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const updateData = req.body;
 
       delete updateData.password;
@@ -175,78 +188,65 @@ class UserController {
       ).select('-password');
 
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
+        return notFound(res, 'User not found');
       }
 
       logger.info(`User ${userId} profile updated`);
-      res.json({
-        success: true,
-        data: user,
-        message: 'Profile updated successfully'
-      });
+      return UserController.success(
+        res,
+        user,
+        { extra: { message: 'Profile updated successfully' } }
+      );
     } catch (error) {
       logger.error('Error updating current user:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to update profile'
-      });
+      return serverError(res, error.message || 'Failed to update profile');
     }
   }
 
   static async delete(req, res) {
     try {
       const { id } = req.params;
+      const requesterId = (req.user?.id || req.user?.userId || req.user?._id || '').toString();
 
-      if (req.user.id !== id && req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied'
-        });
+      if (requesterId !== id && req.user.role !== 'admin') {
+        return forbidden(res, 'Access denied');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'User store unavailable', { degradedReason: 'mongo_unavailable' });
       }
 
-      if (req.user.id === id && req.user.role === 'admin') {
+      if (requesterId === id && req.user.role === 'admin') {
         const user = await User.findById(id);
         if (user && user.role === 'admin') {
-          return res.status(400).json({
-            success: false,
-            error: 'Admins cannot delete their own account'
-          });
+          return badRequest(res, 'Admins cannot delete their own account');
         }
       }
 
       const user = await User.findByIdAndDelete(id);
 
       if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
+        return notFound(res, 'User not found');
       }
 
       logger.info(`User ${id} deleted`);
-      res.json({
-        success: true,
-        message: 'User deleted successfully'
-      });
+      return UserController.success(
+        res,
+        { message: 'User deleted successfully' },
+        { extra: { message: 'User deleted successfully' } }
+      );
     } catch (error) {
       logger.error('Error deleting user:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to delete user'
-      });
+      return serverError(res, 'Failed to delete user');
     }
   }
 
   static async getStats(req, res) {
     try {
       if (req.user.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied. Admin role required.'
-        });
+        return forbidden(res, 'Access denied. Admin role required.');
+      }
+      if (!mongoReady()) {
+        return UserController.success(res, { total: 0, byRole: { farmers: 0, experts: 0, admins: 0, others: 0 }, recentRegistrations: 0, last30Days: 0 }, { isFallback: true, degradedReason: 'mongo_unavailable' });
       }
 
       const totalUsers = await User.countDocuments();
@@ -260,38 +260,33 @@ class UserController {
         createdAt: { $gte: thirtyDaysAgo }
       });
 
-      res.json({
-        success: true,
-        data: {
-          total: totalUsers,
-          byRole: {
-            farmers,
-            experts,
-            admins,
-            others: totalUsers - farmers - experts - admins
-          },
-          recentRegistrations: recentUsers,
-          last30Days: recentUsers
-        }
+      return UserController.success(res, {
+        total: totalUsers,
+        byRole: {
+          farmers,
+          experts,
+          admins,
+          others: totalUsers - farmers - experts - admins
+        },
+        recentRegistrations: recentUsers,
+        last30Days: recentUsers
       });
     } catch (error) {
       logger.error('Error getting user stats:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch user statistics'
-      });
+      return serverError(res, 'Failed to fetch user statistics');
     }
   }
 
   static async search(req, res) {
     try {
       const { q, limit = 10 } = req.query;
+      const safeLimit = parsePositiveInt(limit, 10, { min: 1, max: 50 });
 
       if (!q || q.length < 2) {
-        return res.status(400).json({
-          success: false,
-          error: 'Search query must be at least 2 characters'
-        });
+        return badRequest(res, 'Search query must be at least 2 characters');
+      }
+      if (!mongoReady()) {
+        return UserController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { count: 0 } });
       }
 
       const users = await User.find({
@@ -303,24 +298,24 @@ class UserController {
         ]
       })
         .select('-password')
-        .limit(parseInt(limit));
+        .limit(safeLimit);
 
-      res.json({
-        success: true,
-        data: users,
-        count: users.length
-      });
+      return UserController.success(
+        res,
+        users,
+        { extra: { count: users.length } }
+      );
     } catch (error) {
       logger.error('Error searching users:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to search users'
-      });
+      return serverError(res, 'Failed to search users');
     }
   }
 }
 
 module.exports = UserController;
+
+
+
 
 
 

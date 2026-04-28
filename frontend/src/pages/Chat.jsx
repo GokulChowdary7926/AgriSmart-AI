@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
 import {
   Paper,
   TextField,
@@ -16,17 +15,14 @@ import {
   Drawer,
   Tooltip,
   Button,
-  Grid,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   Fade,
   Chip,
-  Divider,
   Menu,
-  MenuItem,
-  Collapse
+  MenuItem
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -34,24 +30,13 @@ import {
   Person as PersonIcon,
   Image as ImageIcon,
   History as HistoryIcon,
-  Clear as ClearIcon,
-  Download as DownloadIcon,
   ThumbUp as ThumbUpIcon,
   ThumbDown as ThumbDownIcon,
-  Agriculture as AgricultureIcon,
-  Cloud as CloudIcon,
-  AttachMoney as MoneyIcon,
-  LocalHospital as HospitalIcon,
-  AccountBalance as SchemeIcon,
-  Water as WaterIcon,
-  Science as ScienceIcon,
-  Info as InfoIcon,
   Close as CloseIcon,
   ContentCopy as CopyIcon,
   Refresh as RefreshIcon,
   MoreVert as MoreVertIcon,
   Delete as DeleteIcon,
-  Edit as EditIcon,
   Add as AddIcon,
   Menu as MenuIcon
 } from '@mui/icons-material';
@@ -60,11 +45,377 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSnackbar } from 'notistack';
 import { useTheme } from '@mui/material/styles';
 import logger from '../services/logger';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
+import { detectRealtimeLocation, getStoredLocation } from '../services/realtimeLocation';
 import LanguageSwitcher from '../components/common/LanguageSwitcher';
 import CropDetailsCard from '../components/CropDetailsCard';
+import { normalizeSessionMessages } from './chatSessionUtils';
 
-const TypingIndicator = () => (
+const extractApiPayload = (responseData) => {
+  const dataPayload = responseData?.data && typeof responseData.data === 'object' ? responseData.data : {};
+  return {
+    ...dataPayload,
+    ...responseData
+  };
+};
+
+const categorizeCrop = (key = '') => {
+  const normalized = String(key).toLowerCase();
+  const categories = {
+    cereals: ['rice', 'wheat', 'maize', 'ragi', 'sorghum', 'pearlmillet'],
+    pulses: ['blackgram', 'greengram', 'redgram', 'chickpea', 'beans'],
+    oilseeds: ['groundnut', 'sesame', 'sunflower', 'mustard', 'soybean', 'cotton'],
+    vegetables: ['tomato', 'chilli', 'brinjal', 'onion', 'okra', 'cabbage', 'cauliflower', 'coriander', 'tapioca'],
+    fruits: ['banana', 'mango', 'grapes'],
+    plantation_spices: ['sugarcane', 'coconut', 'turmeric', 'moringa']
+  };
+  const found = Object.entries(categories).find(([, keys]) => keys.includes(normalized));
+  return found ? found[0] : 'others';
+};
+
+const inferMessageLanguage = (text, fallbackLanguage = 'en') => {
+  const value = String(text || '').trim();
+  if (!value) return String(fallbackLanguage || 'en').toLowerCase().split('-')[0];
+  if (/[\u0B80-\u0BFF]/.test(value)) return 'ta';
+  if (/[a-z]/i.test(value)) return 'en';
+  return String(fallbackLanguage || 'en').toLowerCase().split('-')[0];
+};
+
+const isSimpleCropCommand = (text) => {
+  const value = String(text || '').toLowerCase().trim();
+  if (!value) return false;
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length > 3) return false;
+  const cropTerms = [
+    'rice', 'paddy', 'wheat', 'maize', 'tomato', 'groundnut', 'cotton', 'sugarcane',
+    'beans', 'chilli', 'brinjal', 'banana', 'coconut', 'ragi', 'blackgram', 'greengram', 'turmeric', 'onion', 'tapioca', 'cassava',
+    'sorghum', 'cholam', 'pearl millet', 'pearlmillet', 'cumbu', 'redgram', 'pigeon pea', 'chickpea', 'sesame', 'gingelly',
+    'sunflower', 'mustard', 'soybean', 'coriander', 'okra', 'ladyfinger', 'cabbage', 'cauliflower', 'moringa', 'mango', 'grapes',
+    'நெல்', 'அரிசி', 'கோதுமை', 'மக்காச்சோளம்', 'தக்காளி', 'நிலக்கடலை', 'பருத்தி', 'கரும்பு', 'பீன்ஸ்', 'பயறு', 'மிளகாய்', 'கத்தரி',
+    'வாழை', 'தேங்காய்', 'கேழ்வரகு', 'உளுந்து', 'பாசிப்பயறு', 'மஞ்சள்', 'வெங்காயம்', 'மரவள்ளிக்கிழங்கு',
+    'சோளம்', 'கம்பு', 'துவரை', 'கொண்டைக்கடலை', 'எள்', 'சூரியகாந்தி', 'கடுகு', 'சோயாபீன்', 'கொத்தமல்லி', 'வெண்டை',
+    'முட்டைக்கோஸ்', 'பூக்கோசு', 'முருங்கை', 'மாம்பழம்', 'திராட்சை'
+  ];
+  return tokens.some((token) => cropTerms.some((term) => token.includes(term) || term.includes(token)));
+};
+
+const buildStructuredFallbackFromUserInput = (userInput, language = 'en', location = null) => {
+  const query = String(userInput || '').toLowerCase();
+  const state = location?.state || 'Tamil Nadu';
+  const district = location?.district || location?.city || '';
+  const locationLabel = district ? `${district}, ${state}` : state;
+  const cropAliasMap = [
+    { key: 'rice', en: 'Rice (Paddy)', ta: 'நெல்', aliases: ['rice', 'paddy', 'நெல்', 'அரிசி'] },
+    { key: 'wheat', en: 'Wheat', ta: 'கோதுமை', aliases: ['wheat', 'கோதுமை', 'gothumai'] },
+    { key: 'maize', en: 'Maize', ta: 'மக்காச்சோளம்', aliases: ['maize', 'corn', 'மக்காச்சோளம்'] },
+    { key: 'tomato', en: 'Tomato', ta: 'தக்காளி', aliases: ['tomato', 'தக்காளி'] },
+    { key: 'groundnut', en: 'Groundnut', ta: 'நிலக்கடலை', aliases: ['groundnut', 'peanut', 'நிலக்கடலை'] },
+    { key: 'beans', en: 'Beans', ta: 'பீன்ஸ்', aliases: ['beans', 'பீன்ஸ்', 'பயறு'] },
+    { key: 'chilli', en: 'Chilli', ta: 'மிளகாய்', aliases: ['chilli', 'chili', 'மிளகாய்'] },
+    { key: 'brinjal', en: 'Brinjal', ta: 'கத்தரி', aliases: ['brinjal', 'eggplant', 'கத்தரி'] },
+    { key: 'cotton', en: 'Cotton', ta: 'பருத்தி', aliases: ['cotton', 'பருத்தி'] },
+    { key: 'sugarcane', en: 'Sugarcane', ta: 'கரும்பு', aliases: ['sugarcane', 'கரும்பு'] },
+    { key: 'banana', en: 'Banana', ta: 'வாழை', aliases: ['banana', 'வாழை'] },
+    { key: 'coconut', en: 'Coconut', ta: 'தேங்காய்', aliases: ['coconut', 'தேங்காய்'] },
+    { key: 'ragi', en: 'Ragi', ta: 'கேழ்வரகு', aliases: ['ragi', 'finger millet', 'கேழ்வரகு'] },
+    { key: 'blackgram', en: 'Blackgram', ta: 'உளுந்து', aliases: ['blackgram', 'urad', 'உளுந்து'] },
+    { key: 'greengram', en: 'Greengram', ta: 'பாசிப்பயறு', aliases: ['greengram', 'moong', 'பாசிப்பயறு'] },
+    { key: 'turmeric', en: 'Turmeric', ta: 'மஞ்சள்', aliases: ['turmeric', 'மஞ்சள்'] },
+    { key: 'onion', en: 'Onion', ta: 'வெங்காயம்', aliases: ['onion', 'வெங்காயம்'] },
+    { key: 'tapioca', en: 'Tapioca', ta: 'மரவள்ளிக்கிழங்கு', aliases: ['tapioca', 'cassava', 'மரவள்ளிக்கிழங்கு'] },
+    { key: 'sorghum', en: 'Sorghum', ta: 'சோளம்', aliases: ['sorghum', 'cholam', 'சோளம்'] },
+    { key: 'pearlmillet', en: 'Pearl Millet', ta: 'கம்பு', aliases: ['pearl millet', 'pearlmillet', 'cumbu', 'கம்பு'] },
+    { key: 'redgram', en: 'Redgram', ta: 'துவரை', aliases: ['redgram', 'pigeon pea', 'pigeonpea', 'tur', 'துவரை'] },
+    { key: 'chickpea', en: 'Chickpea', ta: 'கொண்டைக்கடலை', aliases: ['chickpea', 'bengalgram', 'கொண்டைக்கடலை'] },
+    { key: 'sesame', en: 'Sesame', ta: 'எள்', aliases: ['sesame', 'gingelly', 'எள்'] },
+    { key: 'sunflower', en: 'Sunflower', ta: 'சூரியகாந்தி', aliases: ['sunflower', 'சூரியகாந்தி'] },
+    { key: 'mustard', en: 'Mustard', ta: 'கடுகு', aliases: ['mustard', 'கடுகு'] },
+    { key: 'soybean', en: 'Soybean', ta: 'சோயாபீன்', aliases: ['soybean', 'சோயாபீன்'] },
+    { key: 'coriander', en: 'Coriander', ta: 'கொத்தமல்லி', aliases: ['coriander', 'கொத்தமல்லி'] },
+    { key: 'okra', en: 'Okra', ta: 'வெண்டை', aliases: ['okra', 'ladyfinger', 'வெண்டை'] },
+    { key: 'cabbage', en: 'Cabbage', ta: 'முட்டைக்கோஸ்', aliases: ['cabbage', 'முட்டைக்கோஸ்'] },
+    { key: 'cauliflower', en: 'Cauliflower', ta: 'பூக்கோசு', aliases: ['cauliflower', 'பூக்கோசு'] },
+    { key: 'moringa', en: 'Moringa', ta: 'முருங்கை', aliases: ['moringa', 'drumstick', 'முருங்கை'] },
+    { key: 'mango', en: 'Mango', ta: 'மாம்பழம்', aliases: ['mango', 'மாம்பழம்'] },
+    { key: 'grapes', en: 'Grapes', ta: 'திராட்சை', aliases: ['grapes', 'திராட்சை'] }
+  ];
+  const matchedCrop = cropAliasMap.find((crop) => crop.aliases.some((alias) => query.includes(alias)));
+  const isCultivationOrHarvestQuery = [
+    'cultivation', 'harvest', 'harvesting', 'sowing', 'seed', 'season',
+    'சாகுபடி', 'அறுவடை', 'விதைப்பு', 'பருவம்'
+  ].some((keyword) => query.includes(keyword));
+  const isCropRecommendationQuery = [
+    'crop recommendation', 'recommendation', 'best crop', 'my area', 'location',
+    'பயிர் பரிந்துரை', 'எந்த பயிர்', 'என் பகுதி', 'என் இடம்'
+  ].some((keyword) => query.includes(keyword));
+
+  if (matchedCrop && isCultivationOrHarvestQuery) {
+    if (language === 'ta') {
+      return [
+        `### **${matchedCrop.ta} சாகுபடி & அறுவடை வழிகாட்டி (${locationLabel})**`,
+        '',
+        '### **பருவம் (Season)**',
+        matchedCrop.key === 'wheat'
+          ? '- ரபி பருவம் (நவம்பர்-டிசம்பர் விதைப்பு, மார்ச்-ஏப்ரல் அறுவடை).'
+          : matchedCrop.key === 'rice'
+            ? '- சம்பா / குறுவை (பகுதி வானிலை அடிப்படையில்).'
+            : '- உள்ளூர் பருவம் + வானிலை கணிப்பை வைத்து விதைப்பு தேதி நிர்ணயிக்கவும்.',
+        '',
+        '### **மண் & நிலத் தயாரிப்பு**',
+        '- மண் பரிசோதனை செய்து pH, NPK மதிப்பை உறுதி செய்யவும்.',
+        '- ஏக்கருக்கு 2-3 டன் கம்போஸ்ட்/FYM சேர்த்து நிலத்தை தயார் செய்யவும்.',
+        '',
+        '### **நீர் மேலாண்மை**',
+        matchedCrop.key === 'wheat'
+          ? '- முக்கிய கட்டங்களில் 4-6 பாசனம் (CRI, tillering, flowering, grain filling).'
+          : '- வளர்ச்சி கட்டத்தைப் பொறுத்து கட்டுப்படுத்தப்பட்ட பாசனம் செய்யவும்.',
+        '',
+        '### **உர திட்டம்**',
+        '- அடிப்படை உரம் + நைட்ரஜன் பிரிப்பு (2-3 தவணை).',
+        '- குறைபாடு இருந்தால் மைக்ரோநியூட்ரியன்ட் இலைத் தெளிப்பு செய்யவும்.',
+        '',
+        '### **அறுவடை**',
+        '- தானிய ஈரப்பதம்/பழுப்பு நிலையை பார்த்து அறுவடை நாள் தேர்வு செய்யவும்.',
+        '- அறுவடைக்கு முன் 5-7 நாட்கள் பாசனம் குறைக்கவும்.',
+        '',
+        '### **அடுத்த படிகள் (Next Steps)**',
+        '1. இந்த வாரம் மண் பரிசோதனை + விதை திட்டம்.',
+        '2. பாசனம் & உர அட்டவணையை காலண்டரில் நிரப்பவும்.',
+        '3. அறுவடை முன் சந்தை விலை போக்கை சரிபார்க்கவும்.'
+      ].join('\n');
+    }
+
+    return [
+      `### **${matchedCrop.en} Cultivation & Harvesting Guide (${locationLabel})**`,
+      '',
+      '### **Season**',
+      matchedCrop.key === 'wheat'
+        ? '- Rabi season (sow in Nov-Dec, harvest in Mar-Apr).'
+        : matchedCrop.key === 'rice'
+          ? '- Samba/Kuruvai windows based on local weather.'
+          : '- Finalize sowing window using local weather trend.',
+      '',
+      '### **Soil & Land Preparation**',
+      '- Run a soil test for pH and NPK status.',
+      '- Add 2-3 tons/acre of compost/FYM before sowing.',
+      '',
+      '### **Water Management**',
+      matchedCrop.key === 'wheat'
+        ? '- Plan 4-6 irrigations at critical stages (CRI, tillering, flowering, grain filling).'
+        : '- Use stage-wise controlled irrigation.',
+      '',
+      '### **Fertilizer Plan**',
+      '- Basal application + split nitrogen in 2-3 doses.',
+      '- Add micronutrient foliar spray if deficiency appears.',
+      '',
+      '### **Harvesting**',
+      '- Harvest at proper grain maturity/moisture stage.',
+      '- Reduce irrigation 5-7 days before harvest.',
+      '',
+      '### **Next Steps**',
+      '1. Complete soil test and seed plan this week.',
+      '2. Create irrigation/fertilizer schedule by crop stage.',
+      '3. Check mandi trend before harvest window.'
+    ].join('\n');
+  }
+
+  if (matchedCrop) {
+    if (language === 'ta') {
+      return [
+        `### **${matchedCrop.ta} சாகுபடி விரிவான வழிகாட்டி (${locationLabel})**`,
+        '',
+        '### **பருவம்**',
+        matchedCrop.key === 'wheat'
+          ? '- ரபி பருவம் சிறந்தது.'
+          : matchedCrop.key === 'rice'
+            ? '- சம்பா / குறுவை பருவம் பொருத்தமானது.'
+            : '- உள்ளூர் வானிலை அடிப்படையில் விதைப்பு தேதி தேர்வு செய்யவும்.',
+        '',
+        '### **மண் மற்றும் பாசனம்**',
+        '- மண் பரிசோதனை செய்து pH, NPK அளவை உறுதி செய்யவும்.',
+        '- வளர்ச்சி கட்டத்திற்கேற்ற கட்டுப்படுத்தப்பட்ட பாசனம் செய்யவும்.',
+        '',
+        '### **உர மற்றும் பாதுகாப்பு**',
+        '- கம்போஸ்ட்/FYM அடிப்படை உரமாக பயன்படுத்தவும்.',
+        '- நைட்ரஜன் உரத்தை 2-3 தவணைகளில் பிரித்து இடவும்.',
+        '- பூச்சி/நோய் அறிகுறிகளை வாரம் 2 முறை கண்காணிக்கவும்.',
+        '',
+        '### **அடுத்த படிகள்**',
+        '1. விதைப்பு தேதி + உர அட்டவணையை திட்டமிடவும்.',
+        '2. உள்ளூர் சந்தை போக்கை பார்த்து அறுவடைத் திட்டம் அமைக்கவும்.'
+      ].join('\n');
+    }
+
+    return [
+      `### **${matchedCrop.en} Detailed Cultivation Guide (${locationLabel})**`,
+      '',
+      '### **Season**',
+      matchedCrop.key === 'wheat'
+        ? '- Rabi window is typically best.'
+        : matchedCrop.key === 'rice'
+          ? '- Samba/Kuruvai windows are usually suitable.'
+          : '- Finalize sowing date based on local weather.',
+      '',
+      '### **Soil and Irrigation**',
+      '- Run a soil test and confirm pH/NPK status.',
+      '- Use stage-wise controlled irrigation.',
+      '',
+      '### **Fertilizer and Protection**',
+      '- Apply compost/FYM as basal dose.',
+      '- Split nitrogen into 2-3 applications.',
+      '- Monitor field twice weekly for pests/diseases.',
+      '',
+      '### **Next Steps**',
+      '1. Create sowing + fertilizer schedule.',
+      '2. Track local mandi trend for harvest planning.'
+    ].join('\n');
+  }
+
+  if (!isCropRecommendationQuery) {
+    return language === 'ta'
+      ? 'உங்கள் கேள்வியை பெற்றுள்ளேன். பயிர் பெயர், பகுதி, பிரச்சினை ஆகியவற்றை கூறினால் துல்லியமான விவசாய ஆலோசனை தருகிறேன்.'
+      : 'I received your question. Share crop name, area, and issue to get precise agriculture advice.';
+  }
+
+  if (language === 'ta') {
+    return [
+      `### **${locationLabel} பகுதியுக்கான பயிர் பரிந்துரை**`,
+      '',
+      '### **பருவம் (Season)**',
+      '**தற்போதைய பருவம்:** கோடை / சைத்',
+      '',
+      '### **மண்**',
+      '- களிமண் கலந்த வடிகால் வசதி கொண்ட மண் சிறந்தது.',
+      '- மண் pH 6.5 முதல் 7.5 இடையில் இருந்தால் விளைச்சல் மேம்படும்.',
+      '',
+      '### **நீர்**',
+      '- நெல்: மிதமான முதல் அதிக நீர் தேவை.',
+      '- மக்காச்சோளம்/நிலக்கடலை: கட்டுப்படுத்தப்பட்ட பாசனம் போதுமானது.',
+      '',
+      '### **உர மேலாண்மை**',
+      '- அடிப்படை உரமாக ஏக்கருக்கு 2-3 டன் கம்போஸ்ட்/மாட்டு சாணம் இடவும்.',
+      '- NPK அளவை மண் பரிசோதனை அடிப்படையில் 2-3 தவணைகளாக பிரித்து இடவும்.',
+      '- குறைபாடு இருந்தால் மைக்ரோநியூட்ரியன்ட் இலைத் தெளிப்பு செய்யவும்.',
+      '',
+      '### **பூச்சி கட்டுப்பாடு**',
+      '- வாரத்திற்கு 2 முறை புல ஆய்வு செய்யவும்.',
+      '- மஞ்சள் ஒட்டும் பொறி மற்றும் பெரோமோன் டிராப் பயன்படுத்தவும்.',
+      '- தேவைப்பட்டால் மட்டுமே பரிந்துரைக்கப்பட்ட அளவில் மருந்து பயன்படுத்தவும்.',
+      '',
+      '### **அடுத்த படிகள் (Next Steps)**',
+      '1. மண் பரிசோதனை செய்து பொருத்தமான பயிரை இறுதி செய்யவும்.',
+      '2. சிறிய பகுதியிலிருந்து தொடங்கி முடிவை மதிப்பீடு செய்யவும்.',
+      '3. அருகிலுள்ள மண்டி விலை பார்த்து பயிர் கலவையை தீர்மானிக்கவும்.'
+    ].join('\n');
+  }
+
+  return [
+    `### **Crop Recommendations for ${locationLabel}**`,
+    '',
+    '### **Season**',
+    '**Current season:** Zaid / Summer',
+    '',
+    '### **Soil**',
+    '- Prefer well-drained loam to clay-loam soils.',
+    '- Maintain pH near 6.5-7.5 for better nutrient availability.',
+    '',
+    '### **Water**',
+    '- Rice requires medium-to-high irrigation support.',
+    '- Maize/groundnut can perform with controlled irrigation.',
+    '',
+    '### **Fertilizer**',
+    '- Apply 2-3 tons/acre FYM or compost as basal dose.',
+    '- Split NPK application into 2-3 growth stages.',
+    '- Use micronutrient foliar spray when deficiency is observed.',
+    '',
+    '### **Pest Control**',
+    '- Scout field twice weekly for early symptoms.',
+    '- Use sticky/pheromone traps for monitoring.',
+    '- Apply plant protection chemicals only at recommended dose.',
+    '',
+    '### **Next Steps**',
+    '1. Complete soil test and finalize crop mix.',
+    '2. Start with a pilot patch before scaling.',
+    '3. Validate local mandi trend before final sowing decision.'
+  ].join('\n');
+};
+
+const sanitizeAssistantResponse = (text, language = 'en', userInput = '', location = null) => {
+  const value = String(text || '').trim();
+  if (!value) return value;
+  const normalized = value.toLowerCase();
+  const looksLikeUpstreamLimitError =
+    normalized.includes('query length limit exceeded') ||
+    normalized.includes('max allowed query');
+
+  if (!looksLikeUpstreamLimitError) return value;
+  return buildStructuredFallbackFromUserInput(userInput, language, location);
+};
+
+const isAgricultureQuery = (input, { hasRecentAgriContext = false } = {}) => {
+  const text = String(input || '').trim().toLowerCase();
+  if (!text) return false;
+  const normalized = text.replace(/[\s\-_/]+/g, '');
+  const containsKeyword = (keyword) => {
+    const key = String(keyword || '').toLowerCase();
+    if (!key) return false;
+    return text.includes(key) || normalized.includes(key.replace(/[\s\-_/]+/g, ''));
+  };
+
+  const explicitNonAgri = [
+    'coding', 'programming', 'javascript', 'python code', 'interview question',
+    'movie', 'song', 'cricket score', 'football score', 'stock tips', 'crypto', 'bitcoin'
+  ];
+  if (explicitNonAgri.some((keyword) => containsKeyword(keyword))) {
+    return false;
+  }
+
+  const agriKeywords = [
+    'agri', 'agriculture', 'farm', 'farming', 'farmer', 'crop', 'crops', 'seed', 'sowing',
+    'harvest', 'harvesting', 'irrigation', 'soil', 'fertility', 'fertilizer', 'fertiliser',
+    'pest', 'disease', 'plant', 'weather', 'rainfall', 'market price', 'mandi', 'yield',
+    'organic farming', 'compost', 'manure', 'npk', 'ph', 'livestock', 'dairy',
+    // Core crop names and common commodity terms
+    'rice', 'paddy', 'wheat', 'maize', 'onion', 'tomato', 'potato', 'groundnut', 'cotton', 'sugarcane',
+    'pearlmillet', 'pearl millet', 'kambu', 'cumbu', 'sorghum', 'millet',
+    'விவசாய', 'பயிர்', 'விதை', 'நடவு', 'அறுவடை', 'மண்', 'உரம்', 'பாசனம்',
+    'நோய்', 'பூச்சி', 'விளைச்சல்', 'சந்தை', 'வானிலை', 'கால்நடை', 'பசளை',
+    'கம்போஸ்ட்', 'நெல்', 'அரிசி', 'கோதுமை', 'கரும்பு', 'பருத்தி', 'மக்காச்சோளம்', 'வெங்காயம்', 'தக்காளி', 'கம்பு', 'சோளம்'
+  ];
+
+  const followUpKeywords = [
+    'detail', 'details', 'detailed', 'explain', 'explanation', 'more', 'elaborate',
+    'விவரம்', 'விரிவாக', 'விரிவான', 'விளக்கம்', 'மேலும்'
+  ];
+
+  if (followUpKeywords.some((keyword) => containsKeyword(keyword))) {
+    return hasRecentAgriContext;
+  }
+
+  // Accept common single-token crop queries to avoid false blocks.
+  const likelyCropTokens = [
+    'pearlmillet', 'pearlmillet', 'bajra', 'cumbu', 'kambu', 'sorghum', 'ragi',
+    'rice', 'paddy', 'wheat', 'maize', 'millet',
+    'நெல்', 'கோதுமை', 'மக்காச்சோளம்', 'கம்பு', 'சோளம்', 'கேழ்வரகு'
+  ];
+  const compactToken = normalized;
+  if (compactToken && !compactToken.includes(' ') && likelyCropTokens.some((token) => compactToken === token || compactToken.includes(token))) {
+    return true;
+  }
+
+  return agriKeywords.some((keyword) => containsKeyword(keyword));
+};
+
+const hasRecentAgricultureContext = (messageList) => {
+  const recentMessages = Array.isArray(messageList) ? messageList.slice(-8) : [];
+  return recentMessages.some((msg) => {
+    if (!msg || msg.role !== 'assistant') return false;
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    return isAgricultureQuery(content, { hasRecentAgriContext: false });
+  });
+};
+
+const TypingIndicator = ({ label }) => (
   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1.5 }}>
     <Typography
       variant="body2"
@@ -77,7 +428,7 @@ const TypingIndicator = () => (
         gap: 0.5
       }}
     >
-      Analysing
+      {label}
       <Box
         component="span"
         sx={{
@@ -140,6 +491,7 @@ const TypingIndicator = () => (
 );
 
 export default function Chat() {
+  const CROP_PANEL_PREFS_KEY = 'chat:supported-crops-prefs';
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -148,7 +500,10 @@ export default function Chat() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [quickReplies, setQuickReplies] = useState([]);
-  const [popularQuestions, setPopularQuestions] = useState([]);
+  const [supportedCrops, setSupportedCrops] = useState([]);
+  const [showAllSupportedCrops, setShowAllSupportedCrops] = useState(false);
+  const [supportedCropSearch, setSupportedCropSearch] = useState('');
+  const [selectedCropCategory, setSelectedCropCategory] = useState('all');
   const [feedback, setFeedback] = useState({});
   const [userLocation, setUserLocation] = useState(null);
   const [typing, setTyping] = useState(false);
@@ -168,15 +523,57 @@ export default function Chat() {
   const messagesContainerRef = useRef(null);
   const streamIntervalRef = useRef(null);
 
+  const getWelcomeMessage = () => ({
+    id: 'welcome',
+    role: 'assistant',
+    content: t('chatbot.responses.welcome'),
+    timestamp: new Date(),
+    intent: 'welcome',
+    suggestions: [
+      t('chatbot.suggestions.crop'),
+      t('chatbot.suggestions.market'),
+      t('chatbot.suggestions.weather'),
+      t('chatbot.suggestions.disease')
+    ]
+  });
+
   useEffect(() => {
     initializeChat();
     fetchQuickReplies();
-    fetchPopularQuestions();
+    fetchSupportedCrops();
     getUserLocation();
     if (user) {
       loadSessions();
     }
-  }, [user]);
+  }, [user, language]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CROP_PANEL_PREFS_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (typeof saved?.search === 'string') setSupportedCropSearch(saved.search);
+      if (typeof saved?.showAll === 'boolean') setShowAllSupportedCrops(saved.showAll);
+      if (typeof saved?.category === 'string') setSelectedCropCategory(saved.category);
+    } catch (_) {
+      // Ignore malformed local preference payload.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        CROP_PANEL_PREFS_KEY,
+        JSON.stringify({
+          search: supportedCropSearch,
+          showAll: showAllSupportedCrops,
+          category: selectedCropCategory
+        })
+      );
+    } catch (_) {
+      // Ignore storage write failures.
+    }
+  }, [supportedCropSearch, showAllSupportedCrops, selectedCropCategory]);
 
   useEffect(() => {
     scrollToBottom();
@@ -198,35 +595,23 @@ export default function Chat() {
   };
 
   const initializeChat = () => {
-    const welcomeMessage = {
-      id: 'welcome',
-      role: 'assistant',
-      content: '👋 **Hello! I\'m Agri-GPT**, your AI agricultural assistant.\n\nI can help you with:\n\n🌾 **Crop Recommendations** - Get personalized crop suggestions for your area\n🩺 **Disease Diagnosis** - Identify and treat plant diseases\n🌤️ **Weather Forecasts** - Plan your farming activities\n💰 **Market Prices** - Stay updated with current prices\n🏛️ **Government Schemes** - Learn about available benefits\n💧 **Irrigation Advice** - Optimize water usage\n\n**What would you like to know today?**',
-      timestamp: new Date(),
-      intent: 'welcome',
-      suggestions: [
-        'Crop advice for my area',
-        'Current market prices',
-        'Weather forecast',
-        'Disease identification'
-      ]
-    };
-    setMessages([welcomeMessage]);
+    setMessages([getWelcomeMessage()]);
   };
 
-  const getUserLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        () => {
-          setUserLocation({ lat: 20.5937, lng: 78.9629 }); // Default India
-        }
-      );
+  const getUserLocation = async () => {
+    try {
+      const liveLocation = await detectRealtimeLocation(api, language);
+      if (liveLocation) {
+        setUserLocation(liveLocation);
+        return;
+      }
+    } catch (error) {
+      logger.warn('Live location unavailable, trying cached location', error);
+    }
+
+    const storedLocation = getStoredLocation();
+    if (storedLocation) {
+      setUserLocation(storedLocation);
     }
   };
 
@@ -234,21 +619,23 @@ export default function Chat() {
     try {
       const response = await api.get('/agri-gpt/quick-replies');
       if (response.data.success) {
-        setQuickReplies(response.data.quickReplies || []);
+        const payload = extractApiPayload(response.data);
+        setQuickReplies(payload.quickReplies || []);
       }
     } catch (error) {
       logger.error('Failed to fetch quick replies', error);
     }
   };
 
-  const fetchPopularQuestions = async () => {
+  const fetchSupportedCrops = async () => {
     try {
-      const response = await api.get('/agri-gpt/popular-questions');
-      if (response.data.success) {
-        setPopularQuestions(response.data.popularQuestions || []);
+      const response = await api.get('/chat/crops-supported');
+      if (response?.data?.success) {
+        const payload = extractApiPayload(response.data);
+        setSupportedCrops(Array.isArray(payload.crops) ? payload.crops : []);
       }
     } catch (error) {
-      logger.error('Failed to fetch popular questions', error);
+      logger.error('Failed to load supported crops', error);
     }
   };
 
@@ -256,10 +643,35 @@ export default function Chat() {
     try {
       const response = await api.get('/agri-gpt/sessions');
       if (response.data.success) {
-        setSessions(response.data.sessions || []);
+        const payload = extractApiPayload(response.data);
+        setSessions(payload.sessions || []);
       }
     } catch (error) {
       logger.error('Failed to load sessions', error);
+    }
+  };
+
+  const handleSelectSession = async (selectedSessionId) => {
+    if (!selectedSessionId) return;
+
+    try {
+      setLoading(true);
+      const response = await api.get(`/agri-gpt/sessions/${selectedSessionId}`);
+      if (response?.data?.success) {
+        const payload = extractApiPayload(response.data);
+        setSessionId(selectedSessionId);
+        setMessages(normalizeSessionMessages(payload.messages, getWelcomeMessage));
+        return;
+      }
+      throw new Error(getApiErrorMessage(response?.data, 'Unable to load selected chat session.'));
+    } catch (error) {
+      logger.error('Failed to load selected session', error);
+      enqueueSnackbar(
+        getApiErrorMessage(error, t('chatbot.loadSessionFailed', 'Unable to load this chat. Please try again.')),
+        { variant: 'error' }
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -315,6 +727,30 @@ export default function Chat() {
     };
     setMessages(prev => [...prev, userMsg]);
     setMessage('');
+
+    const inferredLanguage = inferMessageLanguage(messageText, language);
+    const uiLanguage = String(language || 'en').toLowerCase().split('-')[0];
+    const responseLanguage = uiLanguage === 'ta' && isSimpleCropCommand(messageText)
+      ? 'ta'
+      : inferredLanguage;
+    const hasRecentAgriContext = hasRecentAgricultureContext(messages);
+    if (!isAgricultureQuery(messageText, { hasRecentAgriContext })) {
+      const nonAgriText = responseLanguage === 'ta'
+        ? '### **இது விவசாய உதவி சாட்பாட்**\n\nஇந்த சாட்பாட் **விவசாயம் தொடர்பான கேள்விகளுக்கே** பதில் வழங்கும்.\n\n**தயவு செய்து இந்த தலைப்புகளில் கேளுங்கள்:**\n- பயிர் பரிந்துரை\n- மண் வளம் மற்றும் உர மேலாண்மை\n- நோய் / பூச்சி கட்டுப்பாடு\n- பாசனம் மற்றும் வானிலை ஆலோசனை\n- சந்தை விலை மற்றும் அரசு திட்டங்கள்'
+        : '### **This is an agriculture-focused chatbot**\n\nI answer **agriculture-related questions only**.\n\n**Please ask about topics like:**\n- Crop recommendations\n- Soil fertility and fertilizer planning\n- Pest and disease management\n- Irrigation and weather guidance\n- Market prices and government schemes';
+
+      const botMsg = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: nonAgriText,
+        timestamp: new Date(),
+        source: 'AgriSmart AI',
+        provider: 'AgriSmart AI'
+      };
+      setMessages(prev => [...prev, botMsg]);
+      return;
+    }
+
     setTyping(true);
     setLoading(true);
 
@@ -329,20 +765,35 @@ export default function Chat() {
     setMessages(prev => [...prev, placeholderMsg]);
 
     try {
+      const activeLocation = userLocation || getStoredLocation();
       const response = await api.post('/agri-gpt/chat', {
         message: messageText,
         sessionId: sessionId,
-        language: language,
-        location: userLocation,
+        language: responseLanguage,
+        location: activeLocation,
+        hasRecentAgriContext,
+        recentMessages: messages
+          .slice(-6)
+          .map((msg) => ({
+            role: msg?.role === 'assistant' ? 'assistant' : 'user',
+            content: typeof msg?.content === 'string' ? msg.content.slice(0, 300) : ''
+          }))
+          .filter((msg) => msg.content),
         profile: {
           crops: user?.crops || [],
           landSize: user?.landSize || 0,
           experience: user?.experience || 'intermediate'
         }
       });
+      const payload = extractApiPayload(response.data);
 
-      if (response.data.success !== false && (response.data.message || response.data.response || response.data.text)) {
-        const fullResponse = response.data.message || response.data.response || response.data.text;
+      if (response.data.success !== false && (payload.message || payload.response || payload.text)) {
+        const fullResponse = sanitizeAssistantResponse(
+          payload.message || payload.response || payload.text,
+          responseLanguage,
+          messageText,
+          activeLocation
+        );
         
         setMessages(prev => prev.filter(m => m.id !== messageId));
         
@@ -352,35 +803,36 @@ export default function Chat() {
           setMessages(prev => prev.map(m => 
             m.id === messageId ? {
               ...m,
-          intent: response.data.context || response.data.intent,
-          data: response.data.context || response.data.data,
-          cropDetails: response.data.cropDetails,
-          suggestions: response.data.suggestions,
-          confidence: response.data.confidence || 0.9,
-          source: response.data.provider || response.data.source,
-              provider: response.data.provider,
+          intent: payload.context || payload.intent,
+          data: payload.context || payload.data,
+          cropDetails: payload.cropDetails,
+          suggestions: payload.suggestions,
+          confidence: payload.confidence || 0.9,
+          source: 'AgriSmart AI',
+              provider: 'AgriSmart AI',
               streaming: false
             } : m
           ));
         }, fullResponse.length * 30 + 100);
 
-        if (response.data.cropDetails) {
-          setSelectedCropData(response.data.cropDetails);
-          enqueueSnackbar('Detailed crop information available! Click "View Details" to see more.', { 
+        if (payload.cropDetails) {
+          setSelectedCropData(payload.cropDetails);
+          enqueueSnackbar(t('chatbot.cropDetailsAvailable', 'Detailed crop information available! Click "View Details" to see more.'), { 
             variant: 'info',
             autoHideDuration: 4000
           });
         }
 
-        if (response.data.sessionId) {
-          setSessionId(response.data.sessionId);
+        if (payload.sessionId) {
+          setSessionId(payload.sessionId);
         }
-      } else if (response.data.error) {
+      } else {
         setMessages(prev => prev.filter(m => m.id !== messageId));
+        const backendErrorMessage = getApiErrorMessage(response.data, 'Please try again.');
         const errorMsg = {
           id: messageId,
           role: 'assistant',
-          content: `I apologize, but I encountered an error: ${response.data.error}. Please try again.`,
+          content: `I apologize, but I encountered an error: ${backendErrorMessage}. Please try again.`,
           timestamp: new Date(),
           error: true
         };
@@ -388,21 +840,90 @@ export default function Chat() {
       }
     } catch (error) {
       logger.error('Chat error', error);
+      const isNetworkError =
+        !error?.response ||
+        String(error?.message || '').toLowerCase().includes('network') ||
+        String(error?.code || '').toLowerCase().includes('network');
+
+      const fallbackResponse = buildStructuredFallbackFromUserInput(
+        messageText,
+        responseLanguage,
+        userLocation || getStoredLocation()
+      );
       setMessages(prev => prev.filter(m => m.id !== messageId));
+      if (isNetworkError) {
+        const botMsg = {
+          id: messageId,
+          role: 'assistant',
+          content: fallbackResponse,
+          timestamp: new Date(),
+          source: 'AgriSmart AI',
+          provider: 'AgriSmart AI',
+          fallback: true
+        };
+        setMessages(prev => [...prev, botMsg]);
+        enqueueSnackbar(
+          t('chatbot.networkFallback', 'Network issue detected. Showing locally generated guidance.'),
+          { variant: 'warning' }
+        );
+      } else {
+        const backendErrorMessage = getApiErrorMessage(
+          error,
+          "I'm having trouble connecting right now. Please check your connection and try again."
+        );
       const errorMsg = {
         id: messageId,
         role: 'assistant',
-        content: 'I apologize, but I\'m having trouble connecting right now. Please check your connection and try again.',
+          content: `I apologize, but ${backendErrorMessage}`,
         timestamp: new Date(),
         error: true
       };
       setMessages(prev => [...prev, errorMsg]);
-      enqueueSnackbar('Failed to get response. Please try again.', { variant: 'error' });
+        enqueueSnackbar(
+          getApiErrorMessage(error, t('chatbot.failedToGetResponse', 'Failed to get response. Please try again.')),
+          { variant: 'error' }
+        );
+      }
     } finally {
       setLoading(false);
       setTyping(false);
     }
   };
+
+  const normalizedCropSearch = String(supportedCropSearch || '').trim().toLowerCase();
+  const filteredSupportedCrops = normalizedCropSearch
+    ? supportedCrops.filter((item) =>
+      String(item?.english || '').toLowerCase().includes(normalizedCropSearch)
+      || String(item?.tamil || '').toLowerCase().includes(normalizedCropSearch)
+      || String(item?.key || '').toLowerCase().includes(normalizedCropSearch))
+    : supportedCrops;
+  const categoryFilteredCrops = selectedCropCategory === 'all'
+    ? filteredSupportedCrops
+    : filteredSupportedCrops.filter((item) => categorizeCrop(item?.key) === selectedCropCategory);
+  const categoryLabels = {
+    all: language === 'ta' ? 'அனைத்தும்' : 'All',
+    cereals: language === 'ta' ? 'தானியங்கள்' : 'Cereals',
+    pulses: language === 'ta' ? 'பருப்புகள்' : 'Pulses',
+    oilseeds: language === 'ta' ? 'எண்ணெய் விதைகள்' : 'Oilseeds',
+    vegetables: language === 'ta' ? 'காய்கறிகள்' : 'Vegetables',
+    fruits: language === 'ta' ? 'பழங்கள்' : 'Fruits',
+    plantation_spices: language === 'ta' ? 'தோட்ட/மசாலா பயிர்கள்' : 'Plantation & Spices',
+    others: language === 'ta' ? 'பிற பயிர்கள்' : 'Other Crops'
+  };
+  const groupedSupportedCrops = categoryFilteredCrops.reduce((acc, item) => {
+    const category = categorizeCrop(item?.key);
+    acc[category] = acc[category] || [];
+    acc[category].push(item);
+    return acc;
+  }, {});
+  const orderedCategories = ['cereals', 'pulses', 'oilseeds', 'vegetables', 'fruits', 'plantation_spices', 'others'];
+  const groupedEntries = orderedCategories
+    .filter((category) => Array.isArray(groupedSupportedCrops[category]) && groupedSupportedCrops[category].length > 0)
+    .map((category) => ({
+      category,
+      crops: showAllSupportedCrops ? groupedSupportedCrops[category] : groupedSupportedCrops[category].slice(0, 4)
+    }))
+    .slice(0, showAllSupportedCrops ? undefined : 3);
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -411,58 +932,61 @@ export default function Chat() {
     }
   };
 
-  const handleQuickReply = (reply) => {
-    handleSendMessage(reply);
-  };
-
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      enqueueSnackbar('Please upload an image file', { variant: 'error' });
+      enqueueSnackbar(t('chatbot.uploadImageFile', 'Please upload an image file'), { variant: 'error' });
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = async (event) => {
+    reader.onload = async () => {
       try {
         setLoading(true);
+        const activeLocation = userLocation || getStoredLocation();
         const formData = new FormData();
         formData.append('image', file);
         formData.append('message', 'Analyze this image and provide agricultural advice');
         formData.append('sessionId', sessionId);
         formData.append('language', language);
-        if (userLocation) {
-          formData.append('latitude', userLocation.lat);
-          formData.append('longitude', userLocation.lng);
+        if (activeLocation) {
+          formData.append('location', JSON.stringify(activeLocation));
+          formData.append('latitude', String(activeLocation.lat));
+          formData.append('longitude', String(activeLocation.lng));
         }
 
         const response = await api.post('/agri-gpt/chat/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
+        const payload = extractApiPayload(response.data);
 
         if (response.data.success) {
+          const safeResponse = sanitizeAssistantResponse(
+            payload.response || payload.text || 'Image analyzed successfully',
+            language
+          );
           const botMsg = {
             id: Date.now() + 1,
             role: 'assistant',
-            content: response.data.response || response.data.text || 'Image analyzed successfully',
+            content: safeResponse,
             timestamp: new Date(),
-            intent: response.data.intent,
-            data: response.data.data,
-            cropDetails: response.data.cropDetails,
-            imageAnalysis: response.data.imageAnalysis
+            intent: payload.intent,
+            data: payload.data,
+            cropDetails: payload.cropDetails,
+            imageAnalysis: payload.imageAnalysis
           };
           setMessages(prev => [...prev, botMsg]);
 
-          if (response.data.cropDetails) {
-            setSelectedCropData(response.data.cropDetails);
+          if (payload.cropDetails) {
+            setSelectedCropData(payload.cropDetails);
             setCropDetailsDialogOpen(true);
           }
         }
       } catch (error) {
         logger.error('Image upload error', error);
-        enqueueSnackbar('Failed to analyze image. Please try again.', { variant: 'error' });
+        enqueueSnackbar(getApiErrorMessage(error, t('chatbot.failedToAnalyzeImage', 'Failed to analyze image. Please try again.')), { variant: 'error' });
       } finally {
         setLoading(false);
       }
@@ -472,7 +996,7 @@ export default function Chat() {
 
   const handleCopyMessage = (content) => {
     navigator.clipboard.writeText(content);
-    enqueueSnackbar('Message copied to clipboard', { variant: 'success' });
+    enqueueSnackbar(t('chatbot.messageCopied', 'Message copied to clipboard'), { variant: 'success' });
     setMessageMenuAnchor(null);
   };
 
@@ -535,6 +1059,7 @@ export default function Chat() {
       }}>
         <Box display="flex" alignItems="center" gap={2}>
           <IconButton 
+            aria-label={t('common.menu', 'Open chat sidebar')}
             onClick={() => setSidebarOpen(!sidebarOpen)}
             sx={{ color: 'text.primary' }}
           >
@@ -549,6 +1074,7 @@ export default function Chat() {
           {user && (
             <Tooltip title="Chat History">
               <IconButton 
+                aria-label={t('chatbot.chatHistory', 'Open chat history')}
                 size="small" 
                 onClick={() => setDrawerOpen(true)}
                 sx={{ color: 'text.secondary' }}
@@ -559,6 +1085,7 @@ export default function Chat() {
           )}
           <Tooltip title="New Chat">
             <IconButton 
+              aria-label={t('chatbot.newChat', 'Start new chat')}
               size="small" 
               onClick={handleNewChat}
               sx={{ color: 'text.secondary' }}
@@ -603,6 +1130,7 @@ export default function Chat() {
                 key={session.sessionId}
                 button
                 onClick={() => {
+                  handleSelectSession(session.sessionId);
                   setSidebarOpen(false);
                 }}
                     sx={{
@@ -653,7 +1181,7 @@ export default function Chat() {
         }}
       >
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {Array.isArray(messages) && messages.map((msg, index) => {
+          {Array.isArray(messages) && messages.map((msg) => {
             const isStreaming = streamingMessage === msg.id && msg.role === 'assistant';
             const rawContent = isStreaming ? streamingContent : msg.content;
             const displayContent = typeof rawContent === 'string' 
@@ -752,6 +1280,7 @@ export default function Chat() {
                         <>
                           <Tooltip title="Copy">
                             <IconButton
+                              aria-label={t('common.copy', 'Copy message')}
                               size="small"
                               onClick={() => handleCopyMessage(msg.content)}
                               sx={{ 
@@ -764,6 +1293,7 @@ export default function Chat() {
                           </Tooltip>
                           <Tooltip title="Regenerate">
                             <IconButton
+                              aria-label={t('chatbot.regenerate', 'Regenerate response')}
                               size="small"
                               onClick={() => handleRegenerate(msg.id)}
                               sx={{ 
@@ -778,6 +1308,7 @@ export default function Chat() {
                       )}
                       <Tooltip title="More">
                         <IconButton
+                          aria-label={t('common.more', 'More options')}
                           size="small"
                           onClick={(e) => {
                             setMessageMenuAnchor(e.currentTarget);
@@ -906,24 +1437,6 @@ export default function Chat() {
                               : 'rgba(0, 0, 0, 0.03)'
                           },
                           '& blockquote': {
-                            borderLeft: `3px solid ${theme.palette.primary.main}`,
-                            pl: 1.5,
-                            ml: 0,
-                            fontStyle: 'italic',
-                            color: 'text.secondary',
-                            mb: 1.5,
-                            fontSize: '0.875rem'
-                          },
-                          '& hr': {
-                            border: 'none',
-                            height: '1px',
-                            background: theme.palette.mode === 'dark'
-                              ? 'linear-gradient(to right, transparent, rgba(100, 181, 246, 0.3), transparent)'
-                              : 'linear-gradient(to right, transparent, rgba(33, 150, 243, 0.3), transparent)',
-                            my: 2.5,
-                            mx: 0
-                          },
-                          '& blockquote': {
                             borderLeft: `4px solid ${theme.palette.mode === 'dark' ? '#64b5f6' : '#2196f3'}`,
                             pl: 2,
                             ml: 0,
@@ -939,23 +1452,27 @@ export default function Chat() {
                             py: 1,
                             borderRadius: '0 4px 4px 0'
                           },
-                          '& ul, & ol': {
-                            '& li': {
-                              '& strong': {
-                                color: theme.palette.mode === 'dark' ? '#bbdefb' : '#1976d2',
-                                fontWeight: 600
-                              }
-                            }
+                          '& hr': {
+                            border: 'none',
+                            height: '1px',
+                            background: theme.palette.mode === 'dark'
+                              ? 'linear-gradient(to right, transparent, rgba(100, 181, 246, 0.3), transparent)'
+                              : 'linear-gradient(to right, transparent, rgba(33, 150, 243, 0.3), transparent)',
+                            my: 2.5,
+                            mx: 0
+                          },
+                          '& ul li strong, & ol li strong': {
+                            color: theme.palette.mode === 'dark' ? '#bbdefb' : '#1976d2',
+                            fontWeight: 600
                           }
                         }}
                       >
                         {displayContent && displayContent.trim() !== '' ? (
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[rehypeRaw]}
                             key={isStreaming ? streamingContent.length : msg.content}
                           components={{
-                          h1: ({node, ...props}) => (
+                          h1: ({...props}) => (
                             <Typography 
                               variant="h6" 
                               component="h1" 
@@ -970,7 +1487,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          h2: ({node, ...props}) => (
+                          h2: ({...props}) => (
                             <Typography 
                               variant="subtitle1" 
                               component="h2" 
@@ -985,7 +1502,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          h3: ({node, ...props}) => (
+                          h3: ({...props}) => (
                             <Typography 
                               variant="subtitle2" 
                               component="h3" 
@@ -1002,7 +1519,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          h4: ({node, ...props}) => (
+                          h4: ({...props}) => (
                             <Typography 
                               variant="body1" 
                               component="h4" 
@@ -1017,7 +1534,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          p: ({node, ...props}) => (
+                          p: ({...props}) => (
                             <Typography 
                               variant="body2" 
                               component="p" 
@@ -1030,7 +1547,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          code: ({node, inline, className, children, ...props}) => {
+                          code: ({ inline, className, children, ...props}) => {
                             const match = /language-(\w+)/.exec(className || '');
                             const language = match ? match[1] : '';
                             
@@ -1098,7 +1615,7 @@ export default function Chat() {
                               </Box>
                             );
                           },
-                          table: ({node, ...props}) => (
+                          table: ({...props}) => (
                             <Box 
                               component="table" 
                               sx={{ 
@@ -1117,7 +1634,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          thead: ({node, ...props}) => (
+                          thead: ({...props}) => (
                             <Box 
                               component="thead" 
                               sx={{
@@ -1128,8 +1645,8 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          tbody: ({node, ...props}) => <Box component="tbody" {...props} />,
-                          th: ({node, ...props}) => (
+                          tbody: ({...props}) => <Box component="tbody" {...props} />,
+                          th: ({...props}) => (
                             <Box 
                               component="th" 
                               sx={{
@@ -1150,7 +1667,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          td: ({node, ...props}) => (
+                          td: ({...props}) => (
                             <Box 
                               component="td" 
                               sx={{
@@ -1166,7 +1683,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          tr: ({node, ...props}) => (
+                          tr: ({...props}) => (
                             <Box 
                               component="tr" 
                               sx={{
@@ -1184,7 +1701,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          ul: ({node, ...props}) => (
+                          ul: ({...props}) => (
                             <Box 
                               component="ul" 
                               sx={{ 
@@ -1200,7 +1717,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          ol: ({node, ...props}) => (
+                          ol: ({...props}) => (
                             <Box 
                               component="ol" 
                               sx={{ 
@@ -1216,7 +1733,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          li: ({node, ...props}) => (
+                          li: ({...props}) => (
                             <Box 
                               component="li" 
                               sx={{ 
@@ -1231,7 +1748,7 @@ export default function Chat() {
                               {...props} 
                             />
                           ),
-                          hr: ({node, ...props}) => (
+                          hr: ({...props}) => (
                             <Box
                               component="hr"
                               sx={{
@@ -1246,7 +1763,7 @@ export default function Chat() {
                               {...props}
                             />
                           ),
-                          blockquote: ({node, ...props}) => (
+                          blockquote: ({...props}) => (
                             <Box
                               component="blockquote"
                               sx={{
@@ -1268,7 +1785,7 @@ export default function Chat() {
                               {...props}
                             />
                           ),
-                          strong: ({node, ...props}) => (
+                          strong: ({...props}) => (
                             <Box
                               component="strong"
                               sx={{
@@ -1278,7 +1795,7 @@ export default function Chat() {
                               {...props}
                             />
                           ),
-                          em: ({node, ...props}) => (
+                          em: ({...props}) => (
                             <Box
                               component="em"
                               sx={{
@@ -1480,6 +1997,7 @@ export default function Chat() {
                       <Box sx={{ display: 'flex', gap: 1, mt: 1.5, pt: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
                           <Tooltip title="Helpful">
                             <IconButton
+                              aria-label={t('chatbot.feedbackHelpful', 'Mark as helpful')}
                               size="small"
                               onClick={() => handleFeedback(msg.id, true)}
                             sx={{
@@ -1492,6 +2010,7 @@ export default function Chat() {
                           </Tooltip>
                           <Tooltip title="Not helpful">
                             <IconButton
+                              aria-label={t('chatbot.feedbackNotHelpful', 'Mark as not helpful')}
                               size="small"
                               onClick={() => handleFeedback(msg.id, false)}
                             sx={{
@@ -1502,13 +2021,6 @@ export default function Chat() {
                             <ThumbDownIcon sx={{ fontSize: 18 }} />
                             </IconButton>
                           </Tooltip>
-                        {msg.provider && (
-                          <Chip
-                            label={msg.provider}
-                            size="small"
-                            sx={{ height: 24, fontSize: '0.7rem', ml: 'auto' }}
-                          />
-                        )}
                         </Box>
                       )}
                   </Box>
@@ -1519,7 +2031,7 @@ export default function Chat() {
           })}
 
           {/* Typing Indicator */}
-          {typing && (
+          {typing && !streamingMessage && !messages.some((msg) => msg?.streaming) && (
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
               <Avatar 
                 sx={{ 
@@ -1542,7 +2054,7 @@ export default function Chat() {
                   borderColor: 'divider'
                 }}
               >
-                <TypingIndicator />
+                      <TypingIndicator label={t('chatbot.typing', 'Analysing')} />
               </Box>
             </Box>
                 )}
@@ -1560,7 +2072,7 @@ export default function Chat() {
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             {quickReplies.slice(0, 4).map((reply, index) => (
               <Chip
-                key={index}
+                key={`${reply}-${index}`}
                 label={reply}
                 onClick={() => handleSendMessage(reply)}
                 sx={{
@@ -1607,8 +2119,9 @@ export default function Chat() {
             style={{ display: 'none' }}
             id="chat-file-input"
                 />
-          <Tooltip title="Upload Image">
+          <Tooltip title={t('chatbot.uploadImage', 'Upload Image')}>
                 <IconButton
+                  aria-label={t('chatbot.uploadImage', 'Upload image')}
                   onClick={() => fileInputRef.current?.click()}
               sx={{ color: 'text.secondary', mr: 0.5 }}
                 >
@@ -1622,7 +2135,7 @@ export default function Chat() {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Ask me anything about agriculture..."
+            placeholder={t('chatbot.placeholder')}
             variant="standard"
             InputProps={{
               disableUnderline: true
@@ -1667,15 +2180,15 @@ export default function Chat() {
           const msg = messages.find(m => m.id === selectedMessageId);
           if (msg) handleCopyMessage(msg.content);
         }}>
-          <CopyIcon sx={{ mr: 1, fontSize: 18 }} /> Copy
+          <CopyIcon sx={{ mr: 1, fontSize: 18 }} /> {t('common.copy', 'Copy')}
         </MenuItem>
         {messages.find(m => m.id === selectedMessageId)?.role === 'assistant' && (
           <MenuItem onClick={() => handleRegenerate(selectedMessageId)}>
-            <RefreshIcon sx={{ mr: 1, fontSize: 18 }} /> Regenerate
+            <RefreshIcon sx={{ mr: 1, fontSize: 18 }} /> {t('chatbot.regenerate', 'Regenerate')}
           </MenuItem>
         )}
         <MenuItem onClick={() => handleDeleteMessage(selectedMessageId)}>
-          <DeleteIcon sx={{ mr: 1, fontSize: 18 }} /> Delete
+          <DeleteIcon sx={{ mr: 1, fontSize: 18 }} /> {t('common.delete')}
         </MenuItem>
       </Menu>
 
@@ -1687,8 +2200,11 @@ export default function Chat() {
       >
         <Box sx={{ width: 320, p: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">Chat History</Typography>
-            <IconButton onClick={() => setDrawerOpen(false)}>
+            <Typography variant="h6">{t('chatbot.chatHistory', 'Chat History')}</Typography>
+            <IconButton
+              aria-label={t('common.close', 'Close history drawer')}
+              onClick={() => setDrawerOpen(false)}
+            >
               <CloseIcon />
             </IconButton>
           </Box>
@@ -1698,11 +2214,12 @@ export default function Chat() {
                 key={session.sessionId}
                     button
                 onClick={() => {
+                  handleSelectSession(session.sessionId);
                   setDrawerOpen(false);
                 }}
                   >
                     <ListItemText
-                  primary={session.title || 'Untitled Chat'}
+                  primary={session.title || t('chatbot.untitledChat', 'Untitled Chat')}
                   secondary={new Date(session.updatedAt).toLocaleDateString()}
                     />
                   </ListItem>
@@ -1718,12 +2235,12 @@ export default function Chat() {
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>Crop Details</DialogTitle>
+        <DialogTitle>{t('chatbot.cropDetails', 'Crop Details')}</DialogTitle>
         <DialogContent>
           {selectedCropData && <CropDetailsCard cropData={selectedCropData} />}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCropDetailsDialogOpen(false)}>Close</Button>
+          <Button onClick={() => setCropDetailsDialogOpen(false)}>{t('common.close')}</Button>
         </DialogActions>
       </Dialog>
         </Box>

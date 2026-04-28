@@ -34,20 +34,73 @@ import api from '../services/api';
 import { useLanguage } from '../contexts/LanguageContext';
 import logger from '../services/logger';
 
+const extractApiPayload = (responseData) => {
+  const dataPayload = responseData?.data && typeof responseData.data === 'object' ? responseData.data : {};
+  return {
+    ...dataPayload,
+    ...responseData
+  };
+};
+
+const normalizeDiseaseDetails = (result, diseasePayload = {}) => {
+  const baseDisease = {
+    ...(result?.diseaseInfo || {}),
+    ...(diseasePayload || {})
+  };
+
+  const treatmentFromDetection = result?.treatment;
+  const medication = result?.medication;
+
+  const normalizedTreatments = Array.isArray(baseDisease?.treatments) && baseDisease.treatments.length > 0
+    ? baseDisease.treatments
+    : [
+      ...(Array.isArray(treatmentFromDetection?.organicOptions)
+        ? treatmentFromDetection.organicOptions.map((name) => ({ name, type: 'Organic' }))
+        : []),
+      ...(Array.isArray(treatmentFromDetection?.chemicalOptions)
+        ? treatmentFromDetection.chemicalOptions.map((name) => ({ name, type: 'Chemical' }))
+        : []),
+      ...(Array.isArray(medication?.chemical_treatments)
+        ? medication.chemical_treatments.map((item) => ({ ...item, type: item?.type || 'Chemical' }))
+        : []),
+      ...(Array.isArray(medication?.organic_treatments)
+        ? medication.organic_treatments.map((item) => ({ ...item, type: item?.type || 'Organic' }))
+        : []),
+      ...(Array.isArray(medication?.biological_treatments)
+        ? medication.biological_treatments.map((item) => ({ ...item, type: item?.type || 'Biological' }))
+        : [])
+    ];
+
+  const normalizedPrevention = baseDisease?.prevention || treatmentFromDetection?.preventiveMeasures || [];
+  const normalizedSymptoms = baseDisease?.symptoms
+    || (Array.isArray(result?.detection?.symptoms)
+      ? { visual: result.detection.symptoms.map((symptom) => ({ description: symptom })) }
+      : null);
+
+  return {
+    ...baseDisease,
+    symptoms: normalizedSymptoms || baseDisease?.symptoms || {},
+    treatments: normalizedTreatments,
+    prevention: normalizedPrevention,
+    treatmentOptions: baseDisease?.treatmentOptions || treatmentFromDetection?.organicOptions || treatmentFromDetection?.chemicalOptions || []
+  };
+};
+
 export default function Diseases() {
   const { t } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDisease, setSelectedDisease] = useState(null);
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
-  const [pageTab, setPageTab] = useState(0); // 0 = Browse, 1 = Detect
+  const [pageTab, setPageTab] = useState(0);
 
   const { data: diseases, isLoading } = useQuery({
     queryKey: ['diseases', searchTerm],
     queryFn: async () => {
       const params = searchTerm ? { search: searchTerm } : {};
       const response = await api.get('/diseases', { params });
-      return response.data.data || [];
+      const payload = extractApiPayload(response.data);
+      return payload.data || [];
     }
   });
 
@@ -80,14 +133,31 @@ export default function Diseases() {
   ) || [];
 
   const handleDetectionComplete = (result) => {
-    if (result?.diseaseInfo?._id) {
-      api.get(`/diseases/${result.diseaseInfo._id}`)
+    const diseaseId = result?.diseaseInfo?._id || result?.diseaseInfo?.id || result?._id || result?.id;
+    if (diseaseId) {
+      api.get(`/diseases/${diseaseId}`)
         .then(response => {
-          setSelectedDisease(response.data.data);
+          const payload = extractApiPayload(response.data);
+          const diseasePayload = payload.data || result?.diseaseInfo || null;
+          setSelectedDisease(normalizeDiseaseDetails(result, diseasePayload));
           setOpen(true);
-          setPageTab(0); // Switch to browse tab
+          setPageTab(0);
         })
-        .catch(err => logger.error('Error fetching disease details', err));
+        .catch(err => {
+          logger.error('Error fetching disease details', err);
+          if (result?.diseaseInfo) {
+            setSelectedDisease(normalizeDiseaseDetails(result, result.diseaseInfo));
+            setOpen(true);
+            setPageTab(0);
+          }
+        });
+      return;
+    }
+
+    if (result?.diseaseInfo) {
+      setSelectedDisease(normalizeDiseaseDetails(result, result.diseaseInfo));
+      setOpen(true);
+      setPageTab(0);
     }
   };
 
@@ -295,7 +365,7 @@ export default function Diseases() {
                             console.error('Error rendering symptom:', error, symptom);
                             return (
                               <ListItem key={index}>
-                                <ListItemText primary="Symptom information" />
+                                <ListItemText primary={t('diseases.symptomInfo', 'Symptom information')} />
                               </ListItem>
                             );
                           }
@@ -322,10 +392,10 @@ export default function Diseases() {
                     <List>
                       {selectedDisease.treatments.filter(t => t != null).map((treatment, index) => {
                         try {
-                          const treatmentName = treatment?.name || treatment?.title || treatment?.method || treatment?.description || 'Treatment';
-                          const treatmentType = treatment?.type || treatment?.category || 'General';
-                          const dosage = treatment?.dosage || treatment?.amount || treatment?.dose || 'N/A';
-                          const frequency = treatment?.frequency || treatment?.application || treatment?.interval || 'N/A';
+                          const treatmentName = treatment?.name || treatment?.title || treatment?.method || treatment?.description || t('diseases.treatment', 'Treatment');
+                          const treatmentType = treatment?.type || treatment?.category || t('diseases.general', 'General');
+                          const dosage = treatment?.dosage || treatment?.amount || treatment?.dose || t('common.notAvailable');
+                          const frequency = treatment?.frequency || treatment?.application || treatment?.interval || t('common.notAvailable');
                           
                           return (
                             <ListItem key={index}>
@@ -338,9 +408,9 @@ export default function Diseases() {
                         } catch (error) {
                           logger.error('Error rendering treatment', error, { treatment });
                           return (
-                            <ListItem key={index}>
-                              <ListItemText primary="Treatment information" />
-                            </ListItem>
+                              <ListItem key={index}>
+                                <ListItemText primary={t('diseases.treatmentInfo', 'Treatment information')} />
+                              </ListItem>
                           );
                         }
                       })}
@@ -350,12 +420,12 @@ export default function Diseases() {
                       {Array.isArray(selectedDisease.treatmentOptions) ? (
                         selectedDisease.treatmentOptions.filter(t => t != null).map((treatment, index) => (
                           <ListItem key={index}>
-                            <ListItemText primary={typeof treatment === 'string' ? treatment : (treatment?.name || treatment?.title || String(treatment || 'Treatment'))} />
+                            <ListItemText primary={typeof treatment === 'string' ? treatment : (treatment?.name || treatment?.title || String(treatment || t('diseases.treatment', 'Treatment')))} />
                           </ListItem>
                         ))
                       ) : (
                         <ListItem>
-                          <ListItemText primary={typeof selectedDisease.treatmentOptions === 'string' ? selectedDisease.treatmentOptions : 'Treatment information'} />
+                          <ListItemText primary={typeof selectedDisease.treatmentOptions === 'string' ? selectedDisease.treatmentOptions : t('diseases.treatmentInfo', 'Treatment information')} />
                         </ListItem>
                       )}
                     </List>
@@ -487,7 +557,7 @@ export default function Diseases() {
         ) : (
           <DialogContent>
             <Alert severity="error">
-              Error loading disease details. Please try again.
+              {t('diseases.loadDetailsError', 'Error loading disease details. Please try again.')}
             </Alert>
           </DialogContent>
         )}

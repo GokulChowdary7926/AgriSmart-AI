@@ -1,5 +1,3 @@
-const logger = require('../utils/logger');
-
 class RuleBasedChatbot {
   constructor() {
     this.knowledgeBase = this.initializeKnowledgeBase();
@@ -104,6 +102,29 @@ class RuleBasedChatbot {
           fertilizer: 'N: 80-100 kg/ha, P: 40-50 kg/ha, K: 40-50 kg/ha',
           diseases: ['Leaf Curl', 'Bacterial Blight', 'Fusarium Wilt'],
           yield: '15-25 quintals per hectare'
+        },
+        sugarcane: {
+          name: 'Sugarcane',
+          description: 'Sugarcane is a long-duration cash crop used for sugar, jaggery, and ethanol production.',
+          seasons: {
+            spring: {
+              sowing: 'February-March',
+              harvesting: 'January-March (next year)',
+              varieties: ['Co 0238', 'Co 86032', 'Co 0118'],
+              duration: '10-14 months'
+            },
+            autumn: {
+              sowing: 'September-October',
+              harvesting: 'November-January (next year)',
+              varieties: ['Co 0238', 'Co 98014', 'CoJ 64'],
+              duration: '12-16 months'
+            }
+          },
+          soil: 'Deep, fertile, well-drained loam to clay loam soil, pH 6.5-7.5',
+          water: 'Requires 1500-2500mm water with regular irrigation',
+          fertilizer: 'N: 250-300 kg/ha, P: 100-125 kg/ha, K: 100-125 kg/ha',
+          diseases: ['Red Rot', 'Smut', 'Wilt', 'Pokkah Boeng'],
+          yield: '700-1000 quintals per hectare'
         }
       },
       diseases: {
@@ -275,21 +296,24 @@ class RuleBasedChatbot {
       return {
         success: true,
         response: answer,
-        provider: 'rule-based',
-        source: 'Local Knowledge Base'
+        provider: 'AgriSmart AI',
+        source: 'AgriSmart AI'
       };
     }
     
     return {
-      success: false,
-      response: `I understand you're asking about "${message}". While I'm currently experiencing limitations with AI services, I can help you with:\n\n🌾 **Crop Information** - Ask about Rice, Wheat, Tomato, Potato, Cotton\n🩺 **Disease Help** - Ask about Rice Blast, Bacterial Blight, Wheat Rust, Tomato Blight\n🌱 **General Topics** - Soil preparation, Fertilizer, Irrigation, Harvesting\n\nPlease try rephrasing your question or use our specific features:\n- Crop Recommendations\n- Disease Detection\n- Weather Forecast\n- Market Prices`,
-      provider: 'fallback',
-      source: 'Rule-Based Chatbot'
+      success: true,
+      response: `### **Agricultural Guidance**\n\nI can help with practical farming advice. For your question: **"${message}"**, please include one of these details so I can provide a precise answer:\n\n- Crop name (for example: Rice, Wheat, Sugarcane, Tomato)\n- Topic (season, soil, irrigation, fertilizer, disease, yield)\n- Your location (state/district)\n\nYou can also ask directly like:\n- "Sugarcane cultivation in Punjab"\n- "Best fertilizer schedule for sugarcane"\n- "Sugarcane irrigation plan in summer"\n\nOr use these feature pages for live data:\n- Crop Recommendations\n- Disease Detection\n- Weather Forecast\n- Market Prices`,
+      provider: 'AgriSmart AI',
+      source: 'AgriSmart AI'
     };
   }
 }
 
 module.exports = new RuleBasedChatbot();
+
+
+
 
 
 

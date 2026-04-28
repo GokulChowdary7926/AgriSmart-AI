@@ -1,6 +1,7 @@
 
 const redis = require('redis');
 const logger = require('../utils/logger');
+const { badRequest } = require('../utils/httpResponses');
 
 class SecurityMiddleware {
   constructor() {
@@ -16,9 +17,8 @@ class SecurityMiddleware {
             reconnectStrategy: false
           }
         });
-        this.redisClient.on('error', (err) => {
+        this.redisClient.on('error', (_err) => {
           if (!this.redisErrorLogged) {
-            logger.warn('⚠️ Redis not available, continuing without rate limiting cache');
             this.redisErrorLogged = true;
           }
           this.redisClient.quit().catch(() => {});
@@ -31,7 +31,6 @@ class SecurityMiddleware {
           this.redisClient.quit().catch(() => {});
         });
       } catch (error) {
-        logger.warn('⚠️ Redis not available, continuing without rate limiting cache');
         this.redisClient = null;
       }
     }
@@ -64,10 +63,7 @@ class SecurityMiddleware {
         for (const pattern of sqlPatterns) {
           if (pattern.test(param)) {
             logger.warn('⚠️ Potential SQL injection attempt in query params');
-            return res.status(400).json({ 
-              success: false,
-              error: 'Invalid input detected' 
-            });
+            return badRequest(res, 'Invalid input detected');
           }
         }
       }
@@ -83,10 +79,7 @@ class SecurityMiddleware {
       for (const pattern of sqlPatterns) {
         if (pattern.test(bodyStr)) {
           logger.warn('⚠️ Potential SQL injection attempt in request body');
-          return res.status(400).json({ 
-            success: false,
-            error: 'Invalid input detected' 
-          });
+          return badRequest(res, 'Invalid input detected');
         }
       }
     }
@@ -109,7 +102,7 @@ class SecurityMiddleware {
       if (typeof param === 'string') {
         for (const pattern of xssPatterns) {
           if (pattern.test(param)) {
-            return res.status(400).json({ error: 'Invalid input' });
+            return badRequest(res, 'Invalid input');
           }
         }
       }
@@ -119,7 +112,7 @@ class SecurityMiddleware {
       const bodyStr = JSON.stringify(req.body || {});
       for (const pattern of xssPatterns) {
         if (pattern.test(bodyStr)) {
-          return res.status(400).json({ error: 'Invalid input' });
+          return badRequest(res, 'Invalid input');
         }
       }
     }
@@ -128,7 +121,7 @@ class SecurityMiddleware {
   }
 
   async ipRateLimit(req, res, next) {
-    if (!this.redisClient) {
+    if (!this.redisClient || !this.redisClient.isReady || this.redisClient.isOpen === false) {
       return next();
     }
     
@@ -153,7 +146,8 @@ class SecurityMiddleware {
       
       if (current > limit) {
         return res.status(429).json({
-          error: 'Rate limit exceeded',
+          success: false,
+          error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded' },
           retry_after: 60
         });
       }
@@ -163,7 +157,9 @@ class SecurityMiddleware {
       
       next();
     } catch (error) {
-      logger.error(`Rate limiting error: ${error.message}`);
+      if (error.message && !error.message.includes('client is closed')) {
+        logger.error(`Rate limiting error: ${error.message}`);
+      }
       next();
     }
   }
@@ -178,6 +174,9 @@ class SecurityMiddleware {
 }
 
 module.exports = new SecurityMiddleware();
+
+
+
 
 
 

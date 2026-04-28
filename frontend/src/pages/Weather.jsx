@@ -9,9 +9,7 @@ import {
   Divider,
   Chip,
   IconButton,
-  Fade,
   useTheme,
-  alpha,
   Tabs,
   Tab,
   Container,
@@ -26,7 +24,6 @@ import {
   Collapse
 } from '@mui/material';
 import {
-  MyLocation as MyLocationIcon,
   Refresh as RefreshIcon,
   Settings as SettingsIcon,
   Add as AddIcon,
@@ -40,20 +37,22 @@ import {
   Cloud as CloudIcon,
   Thunderstorm as StormIcon,
   AcUnit as SnowIcon,
-  Warning as WarningIcon,
   Notifications as AlertIcon,
-  CalendarToday as CalendarIcon,
   ChevronRight as ChevronRightIcon,
   ExpandMore as ExpandMoreIcon,
-  Agriculture as AgricultureIcon,
-  Timeline as TimelineIcon
+  Agriculture as AgricultureIcon
 } from '@mui/icons-material';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../services/api';
+import logger from '../services/logger';
 import { useSnackbar } from 'notistack';
+import { useLanguage } from '../contexts/LanguageContext';
+import { getBestAvailableLocation } from '../services/realtimeLocation';
 
 export default function Weather() {
+  const WEATHER_SETTINGS_STORAGE_KEY = 'weather:ui-settings';
+  const { t, language } = useLanguage();
   const [location, setLocation] = useState(null);
   const [locationLoading, setLocationLoading] = useState(true);
   const [tabValue, setTabValue] = useState(0);
@@ -61,11 +60,16 @@ export default function Weather() {
   const [locationsMenuAnchor, setLocationsMenuAnchor] = useState(null);
   const [settingsMenuAnchor, setSettingsMenuAnchor] = useState(null);
   const [expandedAlerts, setExpandedAlerts] = useState({});
+  const [temperatureUnit, setTemperatureUnit] = useState('c');
+  const [windSpeedUnit, setWindSpeedUnit] = useState('kmh');
+  const [timeFormat, setTimeFormat] = useState('12h');
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const { enqueueSnackbar } = useSnackbar();
-  const theme = useTheme();
+  useTheme();
+  const locale = language === 'ta' ? 'ta-IN' : 'en-IN';
 
   const savedLocations = [
-    { id: 1, name: 'Current Location', lat: null, lng: null },
+    { id: 1, name: t('weather.currentLocation', 'Current Location'), lat: null, lng: null },
     { id: 2, name: 'Mumbai, Maharashtra', lat: 19.0760, lng: 72.8777 },
     { id: 3, name: 'Delhi', lat: 28.6139, lng: 77.2090 },
     { id: 4, name: 'Bengaluru, Karnataka', lat: 12.9716, lng: 77.5946 },
@@ -73,35 +77,56 @@ export default function Weather() {
   ];
 
   useEffect(() => {
-    const detectLocation = () => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setLocation({
-              lat: position.coords.latitude.toString(),
-              lng: position.coords.longitude.toString()
-            });
-            setLocationLoading(false);
-          },
-          (error) => {
-            logger.error('Geolocation error', error);
-            setLocation({ lat: '28.6139', lng: '77.2090' });
-            setLocationLoading(false);
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0
+    const detectLocation = async () => {
+      try {
+        const resolved = await getBestAvailableLocation(api, language);
+        if (resolved?.lat && resolved?.lng) {
+          setLocation({ lat: String(resolved.lat), lng: String(resolved.lng) });
+          if (resolved.city || resolved.state) {
+            setSelectedLocation([resolved.city, resolved.state].filter(Boolean).join(', '));
           }
-        );
-      } else {
-        setLocation({ lat: '28.6139', lng: '77.2090' });
+        } else {
+          enqueueSnackbar(t('weather.locationUnavailable', 'Live location unavailable. Enable location access for local weather.'), { variant: 'warning' });
+        }
+      } catch (error) {
+        logger.error('Geolocation error', error);
+      } finally {
         setLocationLoading(false);
       }
     };
 
     detectLocation();
+  }, [enqueueSnackbar, language, t]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(WEATHER_SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.temperatureUnit === 'c' || parsed?.temperatureUnit === 'f') setTemperatureUnit(parsed.temperatureUnit);
+      if (parsed?.windSpeedUnit === 'kmh' || parsed?.windSpeedUnit === 'ms') setWindSpeedUnit(parsed.windSpeedUnit);
+      if (parsed?.timeFormat === '12h' || parsed?.timeFormat === '24h') setTimeFormat(parsed.timeFormat);
+      if (typeof parsed?.autoRefresh === 'boolean') setAutoRefresh(parsed.autoRefresh);
+    } catch (_) {
+      // Ignore invalid persisted settings.
+    }
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        WEATHER_SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          temperatureUnit,
+          windSpeedUnit,
+          timeFormat,
+          autoRefresh
+        })
+      );
+    } catch (_) {
+      // Ignore storage errors.
+    }
+  }, [temperatureUnit, windSpeedUnit, timeFormat, autoRefresh]);
 
   const { data: weather, isLoading, refetch } = useQuery({
     queryKey: ['weather', location?.lat, location?.lng],
@@ -112,7 +137,7 @@ export default function Weather() {
       return response.data.data;
     },
     enabled: !!location?.lat && !!location?.lng && !locationLoading,
-    refetchInterval: 300000
+    refetchInterval: autoRefresh ? 300000 : false
   });
 
   const { data: forecast } = useQuery({
@@ -170,7 +195,7 @@ export default function Weather() {
           
           return type === 'weather' || 
                  weatherKeywords.some(keyword => title.includes(keyword) || source.includes(keyword)) ||
-                 alert.severity; // If it has severity, it's likely a weather alert
+                 alert.severity;
         });
       } catch {
         return getMockAlerts();
@@ -189,7 +214,7 @@ export default function Weather() {
         start: new Date(),
         end: new Date(Date.now() + 24 * 60 * 60 * 1000),
         areas: ['Maharashtra', 'Goa'],
-        source: 'IMD Mumbai',
+        source: 'AgriSmart AI',
         agricultural_impact: {
           affected_crops: ['Rice', 'Sugarcane'],
           recommended_actions: ['Ensure drainage', 'Delay harvesting', 'Protect stored grains'],
@@ -204,7 +229,7 @@ export default function Weather() {
         start: new Date(),
         end: new Date(Date.now() + 48 * 60 * 60 * 1000),
         areas: ['North India'],
-        source: 'India Meteorological Department',
+        source: 'AgriSmart AI',
         agricultural_impact: {
           affected_crops: ['Wheat', 'Vegetables'],
           recommended_actions: ['Increase irrigation frequency', 'Use mulch', 'Provide shade'],
@@ -214,24 +239,22 @@ export default function Weather() {
     ];
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setLocationLoading(true);
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({
-            lat: position.coords.latitude.toString(),
-            lng: position.coords.longitude.toString()
-          });
-          setLocationLoading(false);
-          refetch();
-          enqueueSnackbar('Location refreshed', { variant: 'success' });
-        },
-        (error) => {
-          setLocationLoading(false);
-          enqueueSnackbar('Failed to refresh location', { variant: 'error' });
+    try {
+      const resolved = await getBestAvailableLocation(api, language);
+      if (resolved?.lat && resolved?.lng) {
+        setLocation({ lat: String(resolved.lat), lng: String(resolved.lng) });
+        if (resolved.city || resolved.state) {
+          setSelectedLocation([resolved.city, resolved.state].filter(Boolean).join(', '));
         }
-      );
+        refetch();
+        enqueueSnackbar(t('weather.locationRefreshed', 'Location refreshed'), { variant: 'success' });
+      } else {
+        enqueueSnackbar(t('weather.failedRefreshLocation', 'Failed to refresh location'), { variant: 'error' });
+      }
+    } finally {
+      setLocationLoading(false);
     }
   };
 
@@ -247,30 +270,36 @@ export default function Weather() {
 
   const getWeatherGradient = (condition) => {
     const conditionLower = condition?.toLowerCase() || '';
-    const hour = new Date().getHours();
-    const isNight = hour >= 18 || hour < 6;
     
     if (conditionLower.includes('rain') || conditionLower.includes('storm') || conditionLower.includes('thunder')) {
-      return isNight 
-        ? 'linear-gradient(135deg, #2c3e50 0%, #34495e 50%, #1a252f 100%)'
-        : 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #667eea 100%)';
+      return 'linear-gradient(135deg, #111827 0%, #1f2937 45%, #0b1220 100%)';
     }
     if (conditionLower.includes('cloud') || conditionLower.includes('overcast')) {
-      return isNight
-        ? 'linear-gradient(135deg, #4a5568 0%, #2d3748 50%, #1a202c 100%)'
-        : 'linear-gradient(135deg, #74b9ff 0%, #0984e3 50%, #74b9ff 100%)';
+      return 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #020617 100%)';
     }
     if (conditionLower.includes('snow')) {
-      return 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 50%, #a5b4fc 100%)';
+      return 'linear-gradient(135deg, #1f2937 0%, #334155 50%, #0f172a 100%)';
     }
     if (conditionLower.includes('clear') || conditionLower.includes('sun')) {
-      return isNight
-        ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)'
-        : 'linear-gradient(135deg, #f093fb 0%, #f5576c 30%, #4facfe 70%, #00f2fe 100%)';
+      return 'linear-gradient(135deg, #0b1020 0%, #111827 55%, #020617 100%)';
     }
-    return isNight
-      ? 'linear-gradient(135deg, #2d3748 0%, #1a202c 100%)'
-      : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+    return 'linear-gradient(135deg, #111827 0%, #1f2937 100%)';
+  };
+
+  const toDisplayTemp = (value) => {
+    const celsius = Number(value || 0);
+    if (temperatureUnit === 'f') return Math.round((celsius * 9) / 5 + 32);
+    return Math.round(celsius);
+  };
+
+  const tempUnitLabel = temperatureUnit === 'f' ? '°F' : '°C';
+
+  const toDisplayWind = (value) => {
+    const speedMs = Number(value || 0);
+    if (windSpeedUnit === 'kmh') {
+      return { value: (speedMs * 3.6).toFixed(1), unit: 'km/h' };
+    }
+    return { value: speedMs.toFixed(1), unit: 'm/s' };
   };
 
   const getWeatherIcon = (condition, size = 'large') => {
@@ -293,21 +322,21 @@ export default function Weather() {
   };
 
   const formatTime = (dateString) => {
-    if (!dateString) return 'Now';
+    if (!dateString) return t('weather.now', 'Now');
     const date = new Date(dateString);
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: timeFormat === '12h' });
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'Today';
+    if (!dateString) return t('weather.today', 'Today');
     const date = new Date(dateString);
     const today = new Date();
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    if (date.toDateString() === today.toDateString()) return 'Today';
-    if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
-    return date.toLocaleDateString('en-US', { weekday: 'long' });
+    if (date.toDateString() === today.toDateString()) return t('weather.today', 'Today');
+    if (date.toDateString() === tomorrow.toDateString()) return t('weather.tomorrow', 'Tomorrow');
+    return date.toLocaleDateString(locale, { weekday: 'long' });
   };
 
   const getAlertSeverity = (severity) => {
@@ -347,7 +376,7 @@ export default function Weather() {
         <Box sx={{ textAlign: 'center' }}>
           <CircularProgress size={60} sx={{ color: 'white', mb: 3 }} />
           <Typography variant="h6" sx={{ color: 'white' }}>
-            Loading weather data...
+            {t('weather.loadingData', 'Loading weather data...')}
           </Typography>
         </Box>
       </Box>
@@ -357,19 +386,21 @@ export default function Weather() {
   if (!weather) {
     return (
       <Box sx={{ p: 3, textAlign: 'center', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography variant="h6" color="text.secondary">Unable to load weather data</Typography>
+        <Typography variant="h6" color="text.secondary">{t('weather.unableToLoad', 'Unable to load weather data')}</Typography>
       </Box>
     );
   }
 
   const gradient = getWeatherGradient(weather.conditions?.main);
-  const currentTemp = Math.round(weather.temperature?.current || 0);
-  const highTemp = Math.round(weather.temperature?.max || 0);
-  const lowTemp = Math.round(weather.temperature?.min || 0);
+  const currentTemp = toDisplayTemp(weather.temperature?.current || 0);
+  const highTemp = toDisplayTemp(weather.temperature?.max || 0);
+  const lowTemp = toDisplayTemp(weather.temperature?.min || 0);
+  const feelsLikeTemp = toDisplayTemp(weather.temperature?.feels_like || weather.temperature?.current || 0);
+  const windDisplay = toDisplayWind(weather.wind?.speed || 0);
 
   const chartData = hourlyForecast?.slice(0, 12).map((hour, index) => ({
-    time: index === 0 ? 'Now' : formatTime(hour.time),
-    temp: Math.round(hour.temperature || 0),
+    time: index === 0 ? t('weather.now', 'Now') : formatTime(hour.time),
+    temp: toDisplayTemp(hour.temperature || 0),
     pop: hour.precipitation?.probability || 0
   })) || [];
 
@@ -391,6 +422,7 @@ export default function Weather() {
             <IconButton 
               size="small" 
               sx={{ color: 'white' }}
+              aria-label={t('weather.selectLocation', 'Select location')}
               onClick={(e) => setLocationsMenuAnchor(e.currentTarget)}
             >
               <ChevronRightIcon />
@@ -398,16 +430,44 @@ export default function Weather() {
           </Box>
           
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <IconButton sx={{ color: 'white' }} onClick={handleRefresh}>
+            <IconButton
+              sx={{ color: 'white' }}
+              aria-label={t('common.refresh', 'Refresh')}
+              onClick={handleRefresh}
+            >
               <RefreshIcon />
             </IconButton>
             <IconButton 
               sx={{ color: 'white' }}
+              aria-label={t('common.settings', 'Open settings')}
               onClick={(e) => setSettingsMenuAnchor(e.currentTarget)}
             >
               <SettingsIcon />
             </IconButton>
           </Box>
+        </Box>
+
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+          <Chip
+            size="small"
+            label={`${t('weather.units', 'Units')}: ${temperatureUnit === 'f' ? '°F' : '°C'}`}
+            sx={{ background: 'rgba(255,255,255,0.12)', color: 'white' }}
+          />
+          <Chip
+            size="small"
+            label={`${t('weather.windLabel', 'Wind')}: ${windSpeedUnit === 'kmh' ? 'km/h' : 'm/s'}`}
+            sx={{ background: 'rgba(255,255,255,0.12)', color: 'white' }}
+          />
+          <Chip
+            size="small"
+            label={`${t('weather.timeFormat', 'Time Format')}: ${timeFormat === '24h' ? '24h' : '12h'}`}
+            sx={{ background: 'rgba(255,255,255,0.12)', color: 'white' }}
+          />
+          <Chip
+            size="small"
+            label={`${t('weather.autoRefresh', 'Auto Refresh')}: ${autoRefresh ? t('common.on', 'On') : t('common.off', 'Off')}`}
+            sx={{ background: 'rgba(255,255,255,0.12)', color: 'white' }}
+          />
         </Box>
 
         <motion.div
@@ -427,14 +487,20 @@ export default function Weather() {
                   letterSpacing: -4
                 }}
               >
-                {currentTemp}°
+                {currentTemp}{tempUnitLabel}
               </Typography>
             </Box>
             <Typography variant="h5" sx={{ mb: 2, opacity: 0.9, textTransform: 'capitalize' }}>
               {weather.conditions?.description || weather.conditions?.main}
             </Typography>
             <Typography variant="body1" sx={{ opacity: 0.8 }}>
-              Feels like {Math.round(weather.temperature?.feels_like || currentTemp)}° • H: {highTemp}° L: {lowTemp}°
+              {t('weather.feelsLikeSummary', {
+                feelsLike: feelsLikeTemp,
+                high: highTemp,
+                low: lowTemp,
+                defaultValue: 'Feels like {{feelsLike}}{{unit}} • H: {{high}}{{unit}} L: {{low}}{{unit}}',
+                unit: tempUnitLabel
+              })}
             </Typography>
           </Box>
         </motion.div>
@@ -443,12 +509,12 @@ export default function Weather() {
       <Container maxWidth="lg">
         <Grid container spacing={2} sx={{ mb: 4 }}>
           {[
-            { icon: <SunIcon />, label: 'FEELS LIKE', value: `${Math.round(weather.temperature?.feels_like || currentTemp)}°` },
-            { icon: <HumidityIcon />, label: 'HUMIDITY', value: `${weather.humidity || 0}%` },
-            { icon: <WindIcon />, label: 'WIND', value: `${weather.wind?.speed?.toFixed(1) || 0} m/s` },
-            { icon: <PressureIcon />, label: 'PRESSURE', value: `${weather.pressure || 1013} hPa` },
-            { icon: <SunIcon />, label: 'SUNRISE', value: weather.sunrise ? new Date(weather.sunrise).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '6:00 AM' },
-            { icon: <MoonIcon />, label: 'SUNSET', value: weather.sunset ? new Date(weather.sunset).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '6:00 PM' }
+            { icon: <SunIcon />, label: t('weather.feelsLike', 'FEELS LIKE'), value: `${feelsLikeTemp}${tempUnitLabel}` },
+            { icon: <HumidityIcon />, label: t('weather.humidityLabel', 'HUMIDITY'), value: `${weather.humidity || 0}%` },
+            { icon: <WindIcon />, label: t('weather.windLabel', 'WIND'), value: `${windDisplay.value} ${windDisplay.unit}` },
+            { icon: <PressureIcon />, label: t('weather.pressureLabel', 'PRESSURE'), value: `${weather.pressure || 1013} hPa` },
+            { icon: <SunIcon />, label: t('weather.sunriseLabel', 'SUNRISE'), value: weather.sunrise ? new Date(weather.sunrise).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: timeFormat === '12h' }) : '6:00 AM' },
+            { icon: <MoonIcon />, label: t('weather.sunsetLabel', 'SUNSET'), value: weather.sunset ? new Date(weather.sunset).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: timeFormat === '12h' }) : '6:00 PM' }
           ].map((item, index) => (
             <Grid item xs={6} sm={4} md={2} key={index}>
               <motion.div
@@ -459,10 +525,10 @@ export default function Weather() {
                 <Paper sx={{ 
                   p: 2, 
                   textAlign: 'center', 
-                  background: 'rgba(255, 255, 255, 0.1)',
+                  background: 'rgba(9, 13, 26, 0.72)',
                   backdropFilter: 'blur(10px)',
                   borderRadius: 2,
-                  border: '1px solid rgba(255, 255, 255, 0.2)'
+                  border: '1px solid rgba(255, 255, 255, 0.14)'
                 }}>
                   <Box sx={{ color: 'white', mb: 1 }}>
                     {item.icon}
@@ -482,9 +548,9 @@ export default function Weather() {
         <Paper sx={{ 
           mb: 3, 
           borderRadius: 2,
-          background: 'rgba(255, 255, 255, 0.1)',
+          background: 'rgba(9, 13, 26, 0.72)',
           backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255, 255, 255, 0.2)'
+          border: '1px solid rgba(255, 255, 255, 0.14)'
         }}>
           <Tabs 
             value={tabValue} 
@@ -496,9 +562,9 @@ export default function Weather() {
               '& .MuiTabs-indicator': { backgroundColor: 'white' }
             }}
           >
-            <Tab label="Hourly" />
-            <Tab label="10-Day" />
-            <Tab label="Alerts" />
+            <Tab label={t('weather.hourly', 'Hourly')} />
+            <Tab label={t('weather.tenDay', '10-Day')} />
+            <Tab label={t('weather.alertsTab', 'Alerts')} />
           </Tabs>
         </Paper>
 
@@ -512,25 +578,25 @@ export default function Weather() {
               <Paper sx={{ 
                 p: 3, 
                 borderRadius: 2,
-                background: 'rgba(255, 255, 255, 0.1)',
+                background: 'rgba(9, 13, 26, 0.72)',
                 backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)'
+                border: '1px solid rgba(255, 255, 255, 0.14)'
               }}>
                 <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-                  HOURLY FORECAST
+                  {t('weather.hourlyForecast', 'HOURLY FORECAST')}
                 </Typography>
                 <Box sx={{ overflowX: 'auto', pb: 2 }}>
                   <Box sx={{ display: 'flex', gap: 2, minWidth: 'max-content' }}>
                     {hourlyForecast?.slice(0, 24).map((hour, index) => (
                       <Box key={index} sx={{ textAlign: 'center', minWidth: 80 }}>
                         <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                          {index === 0 ? 'Now' : formatTime(hour.time)}
+                          {index === 0 ? t('weather.now', 'Now') : formatTime(hour.time)}
                         </Typography>
                         <Box sx={{ my: 1, fontSize: '1.5rem' }}>
                           {getWeatherIcon(hour.conditions?.main, 'small')}
                         </Box>
                         <Typography variant="h6">
-                          {Math.round(hour.temperature || 0)}°
+                          {toDisplayTemp(hour.temperature || 0)}{tempUnitLabel}
                         </Typography>
                         {hour.precipitation?.probability > 0 && (
                           <Typography variant="caption" sx={{ color: '#64B5F6' }}>
@@ -545,7 +611,7 @@ export default function Weather() {
                 {chartData.length > 0 && (
                   <Box sx={{ mt: 4, height: 150 }}>
                     <Typography variant="subtitle2" sx={{ mb: 1, opacity: 0.7 }}>
-                      TEMPERATURE TREND
+                      {t('weather.temperatureTrend', 'TEMPERATURE TREND')}
                     </Typography>
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={chartData}>
@@ -571,7 +637,7 @@ export default function Weather() {
                             borderRadius: 8,
                             color: 'white'
                           }}
-                          formatter={(value) => [`${value}°C`, 'Temperature']}
+                          formatter={(value) => [`${value}${tempUnitLabel}`, 'Temperature']}
                         />
                         <Area 
                           type="monotone" 
@@ -597,18 +663,17 @@ export default function Weather() {
               <Paper sx={{ 
                 p: 3, 
                 borderRadius: 2,
-                background: 'rgba(255, 255, 255, 0.1)',
+                background: 'rgba(9, 13, 26, 0.72)',
                 backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)'
+                border: '1px solid rgba(255, 255, 255, 0.14)'
               }}>
                 <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-                  10-DAY FORECAST
+                  {t('weather.tenDayForecast', '10-DAY FORECAST')}
                 </Typography>
                 <Box>
                   {forecast.slice(0, 10).map((day, index) => {
-                    const dayTemp = Math.round(day.temperature?.day || day.temperature?.max || 0);
-                    const minTemp = Math.round(day.temperature?.min || 0);
-                    const maxTemp = Math.round(day.temperature?.max || day.temperature?.day || 0);
+                    const minTemp = toDisplayTemp(day.temperature?.min || 0);
+                    const maxTemp = toDisplayTemp(day.temperature?.max || day.temperature?.day || 0);
                     const precipProb = day.precipitation?.probability || 0;
                     
                     return (
@@ -635,7 +700,7 @@ export default function Weather() {
                                 fontWeight: index === 0 ? 600 : 400
                               }}
                             >
-                              {index === 0 ? 'Today' : formatDate(day.date)}
+                              {index === 0 ? t('weather.today', 'Today') : formatDate(day.date)}
                             </Typography>
                             
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
@@ -658,10 +723,10 @@ export default function Weather() {
                           
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: { xs: 100, md: 120 }, justifyContent: 'flex-end' }}>
                             <Typography variant="body1" sx={{ opacity: 0.7 }}>
-                              {minTemp}°
+                              {minTemp}{tempUnitLabel}
                             </Typography>
                             <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                              {maxTemp}°
+                              {maxTemp}{tempUnitLabel}
                             </Typography>
                           </Box>
                         </Box>
@@ -685,14 +750,14 @@ export default function Weather() {
               <Paper sx={{ 
                 p: 3, 
                 borderRadius: 2,
-                background: 'rgba(255, 255, 255, 0.1)',
+                background: 'rgba(9, 13, 26, 0.72)',
                 backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)'
+                border: '1px solid rgba(255, 255, 255, 0.14)'
               }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
                   <AlertIcon />
                   <Typography variant="h6" sx={{ fontWeight: 500 }}>
-                    WEATHER ALERTS
+                    {t('weather.alertsTitle', 'WEATHER ALERTS')}
                   </Typography>
                   {weatherAlerts && weatherAlerts.length > 0 && (
                     <Chip 
@@ -710,7 +775,7 @@ export default function Weather() {
                   {!weatherAlerts || weatherAlerts.length === 0 ? (
                     <Box sx={{ textAlign: 'center', py: 4 }}>
                       <Typography variant="body1" sx={{ opacity: 0.7 }}>
-                        No active weather alerts for your area.
+                        {t('weather.noActiveAlerts', 'No active weather alerts for your area.')}
                       </Typography>
                     </Box>
                   ) : (
@@ -754,7 +819,7 @@ export default function Weather() {
                                     {alert.title || alert.message}
                                   </Typography>
                                   <Chip 
-                                    label={alert.severity?.toUpperCase() || 'INFO'} 
+                                    label={alert.severity?.toUpperCase() || t('weather.info', 'INFO')} 
                                     size="small"
                                     sx={{ 
                                       background: alert.severity === 'severe' 
@@ -796,22 +861,22 @@ export default function Weather() {
                                       endIcon={<ExpandMoreIcon sx={{ transform: expandedAlerts[alert.id || index] ? 'rotate(180deg)' : 'rotate(0deg)' }} />}
                                       sx={{ color: 'white', mb: 1 }}
                                     >
-                                      Agricultural Impact
+                                      {t('weather.agriculturalImpact', 'Agricultural Impact')}
                                     </Button>
                                     <Collapse in={expandedAlerts[alert.id || index]}>
                                       <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(0,0,0,0.2)', borderRadius: 1 }}>
                                         <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
                                           <AgricultureIcon sx={{ fontSize: 16 }} />
-                                          AGRICULTURAL IMPACT
+                                          {t('weather.agriculturalImpactCaps', 'AGRICULTURAL IMPACT')}
                                         </Typography>
                                         {alert.agricultural_impact.affected_crops && (
                                           <Typography variant="body2" sx={{ mb: 1 }}>
-                                            <strong>Affected Crops:</strong> {Array.isArray(alert.agricultural_impact.affected_crops) ? alert.agricultural_impact.affected_crops.join(', ') : alert.agricultural_impact.affected_crops}
+                                            <strong>{t('weather.affectedCrops', 'Affected Crops')}:</strong> {Array.isArray(alert.agricultural_impact.affected_crops) ? alert.agricultural_impact.affected_crops.join(', ') : alert.agricultural_impact.affected_crops}
                                           </Typography>
                                         )}
                                         {alert.agricultural_impact.recommended_actions && (
                                           <Typography variant="body2" sx={{ mb: 1 }}>
-                                            <strong>Recommended Actions:</strong> {Array.isArray(alert.agricultural_impact.recommended_actions) ? alert.agricultural_impact.recommended_actions.join(', ') : alert.agricultural_impact.recommended_actions}
+                                            <strong>{t('weather.recommendedActions', 'Recommended Actions')}:</strong> {Array.isArray(alert.agricultural_impact.recommended_actions) ? alert.agricultural_impact.recommended_actions.join(', ') : alert.agricultural_impact.recommended_actions}
                                           </Typography>
                                         )}
                                         {alert.agricultural_impact.risk_level && (
@@ -889,7 +954,7 @@ export default function Weather() {
           <ListItemIcon>
             <AddIcon sx={{ color: 'white' }} />
           </ListItemIcon>
-          <ListItemText>Add Location</ListItemText>
+          <ListItemText>{t('weather.addLocation', 'Add Location')}</ListItemText>
         </MenuItem>
       </Menu>
 
@@ -906,14 +971,70 @@ export default function Weather() {
           }
         }}
       >
-        <MenuItem>
-          <ListItemText>Units: °C, km/h</ListItemText>
+        <MenuItem
+          selected={temperatureUnit === 'c'}
+          onClick={() => {
+            setTemperatureUnit('c');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.unitsCelsius', 'Temperature: Celsius (°C)')}</ListItemText>
         </MenuItem>
-        <MenuItem>
-          <ListItemText>Time Format: 12-hour</ListItemText>
+        <MenuItem
+          selected={temperatureUnit === 'f'}
+          onClick={() => {
+            setTemperatureUnit('f');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.unitsFahrenheit', 'Temperature: Fahrenheit (°F)')}</ListItemText>
         </MenuItem>
-        <MenuItem>
-          <ListItemText>Auto Refresh: On</ListItemText>
+        <MenuItem
+          selected={windSpeedUnit === 'kmh'}
+          onClick={() => {
+            setWindSpeedUnit('kmh');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.windUnitKmh', 'Wind Unit: km/h')}</ListItemText>
+        </MenuItem>
+        <MenuItem
+          selected={windSpeedUnit === 'ms'}
+          onClick={() => {
+            setWindSpeedUnit('ms');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.windUnitMs', 'Wind Unit: m/s')}</ListItemText>
+        </MenuItem>
+        <MenuItem
+          selected={timeFormat === '12h'}
+          onClick={() => {
+            setTimeFormat('12h');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.timeFormat12', 'Time Format: 12-hour')}</ListItemText>
+        </MenuItem>
+        <MenuItem
+          selected={timeFormat === '24h'}
+          onClick={() => {
+            setTimeFormat('24h');
+            setSettingsMenuAnchor(null);
+          }}
+        >
+          <ListItemText>{t('weather.timeFormat24', 'Time Format: 24-hour')}</ListItemText>
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAutoRefresh((prev) => !prev);
+          }}
+        >
+          <ListItemText>
+            {autoRefresh
+              ? t('weather.autoRefreshOn', 'Auto Refresh: On')
+              : t('weather.autoRefreshOff', 'Auto Refresh: Off')}
+          </ListItemText>
         </MenuItem>
       </Menu>
     </Box>

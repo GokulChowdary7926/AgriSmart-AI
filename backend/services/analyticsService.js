@@ -1,5 +1,3 @@
-const mongoose = require('mongoose');
-const axios = require('axios');
 const logger = require('../utils/logger');
 const marketPriceAPIService = require('./marketPriceAPIService');
 
@@ -276,7 +274,7 @@ class AnalyticsService {
     return Math.min(Math.round(score), 100);
   }
 
-  async getRecentActivity(userId) {
+  async getRecentActivity(_userId) {
     return [
       'Crop recommendation (Rice)',
       'Disease detection (Leaf Blight)',
@@ -545,6 +543,7 @@ class AnalyticsService {
 }
 
 module.exports = new AnalyticsService();
+
 
 
 

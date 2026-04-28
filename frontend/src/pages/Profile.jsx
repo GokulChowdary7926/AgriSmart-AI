@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Container,
-  Paper,
   Typography,
   Box,
   Grid,
@@ -16,7 +15,6 @@ import {
   CircularProgress
 } from '@mui/material';
 import {
-  Person as PersonIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
   LocationOn as LocationIcon,
@@ -26,7 +24,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import api from '../services/api';
+import api, { getApiErrorMessage } from '../services/api';
 
 export default function Profile() {
   const { user, farmer, loading } = useAuth();
@@ -83,14 +81,14 @@ export default function Profile() {
       });
 
       if (response.data.success) {
-        setMessage({ type: 'success', text: 'Profile updated successfully' });
+        setMessage({ type: 'success', text: t('profile.updatedSuccess', 'Profile updated successfully') });
         setIsEditing(false);
         window.location.reload();
       }
     } catch (error) {
       setMessage({
         type: 'error',
-        text: error.response?.data?.error || 'Failed to update profile'
+        text: getApiErrorMessage(error, t('profile.updateFailed', 'Failed to update profile'))
       });
     } finally {
       setSaveLoading(false);
@@ -148,15 +146,15 @@ export default function Profile() {
                     fontSize: '2.5rem'
                   }}
                 >
-                  {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                  {user?.name?.charAt(0)?.toUpperCase() || t('profile.defaultInitial', 'U')}
                 </Avatar>
                 <Box flexGrow={1}>
                   <Typography variant="h5" gutterBottom>
-                    {user?.name || 'User'}
+                    {user?.name || t('profile.userFallback', 'User')}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" gutterBottom>
                     <EmailIcon sx={{ fontSize: 16, verticalAlign: 'middle', mr: 0.5 }} />
-                    {user?.email || 'No email'}
+                    {user?.email || t('profile.noEmail', 'No email')}
                   </Typography>
                   {user?.phone && (
                     <Typography variant="body2" color="text.secondary">
@@ -179,7 +177,7 @@ export default function Profile() {
                   onClick={isEditing ? handleCancel : () => setIsEditing(true)}
                   disabled={saveLoading}
                 >
-                  {isEditing ? 'Cancel' : 'Edit Profile'}
+                  {isEditing ? t('common.cancel') : t('profile.editProfile', 'Edit Profile')}
                 </Button>
               </Box>
             </CardContent>
@@ -212,7 +210,7 @@ export default function Profile() {
                     name="email"
                     value={formData.email}
                     disabled
-                    helperText="Email cannot be changed"
+                    helperText={t('profile.emailImmutable', 'Email cannot be changed')}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -349,7 +347,7 @@ export default function Profile() {
                 onClick={handleCancel}
                 disabled={saveLoading}
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 variant="contained"
@@ -357,7 +355,7 @@ export default function Profile() {
                 onClick={handleSave}
                 disabled={saveLoading}
               >
-                {saveLoading ? 'Saving...' : 'Save Changes'}
+                {saveLoading ? t('profile.saving', 'Saving...') : t('profile.saveChanges', 'Save Changes')}
               </Button>
             </Box>
           </Grid>
@@ -366,6 +364,9 @@ export default function Profile() {
     </Container>
   );
 }
+
+
+
 
 
 

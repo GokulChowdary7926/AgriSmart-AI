@@ -1,11 +1,32 @@
+const mongoose = require('mongoose');
 const Crop = require('../models/Crop');
 const logger = require('../utils/logger');
 const cropRecommendationEngine = require('../services/CropRecommendationEngine');
 const enhancedCropRecommendationService = require('../services/EnhancedCropRecommendationService');
 const cropRecommenderML = require('../services/ml/CropRecommenderML');
 const weatherService = require('../services/WeatherService');
+const perplexityCropService = require('../services/PerplexityCropService');
+const marketPriceAPIService = require('../services/marketPriceAPIService');
+const { badRequest, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
 
 class CropController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
   static async getAll(req, res) {
     try {
       const { 
@@ -15,6 +36,10 @@ class CropController {
         limit = 20,
         sort = 'name'
       } = req.query;
+
+      if (!Crop || !mongoReady()) {
+        return CropController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { pagination: { page: parseInt(page), limit: parseInt(limit), total: 0, pages: 0 } } });
+      }
       
       const query = {};
       
@@ -39,51 +64,49 @@ class CropController {
         Crop.countDocuments(query)
       ]);
       
-      res.json({
-        success: true,
-        data: crops,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
+      return CropController.success(
+        res,
+        crops,
+        {
+          extra: {
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              total,
+              pages: Math.ceil(total / limit)
+            }
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('Error fetching crops:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async getById(req, res) {
     try {
+      if (!Crop || !mongoReady()) {
+        return serviceUnavailable(res, 'Crop store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const crop = await Crop.findById(req.params.id);
       
       if (!crop) {
-        return res.status(404).json({
-          success: false,
-          error: 'Crop not found'
-        });
+        return notFound(res, 'Crop not found');
       }
       
-      res.json({
-        success: true,
-        data: crop
-      });
+      return CropController.success(res, crop);
     } catch (error) {
       logger.error('Error fetching crop:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async create(req, res) {
     try {
+      if (!Crop || !mongoReady()) {
+        return serviceUnavailable(res, 'Crop store unavailable; cannot persist right now', { degradedReason: 'mongo_unavailable' });
+      }
       const crop = new Crop({
         ...req.body,
         createdBy: req.user?._id
@@ -91,21 +114,21 @@ class CropController {
       
       await crop.save();
       
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         data: crop
       });
     } catch (error) {
       logger.error('Error creating crop:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
   static async update(req, res) {
     try {
+      if (!Crop || !mongoReady()) {
+        return serviceUnavailable(res, 'Crop store unavailable; cannot update right now', { degradedReason: 'mongo_unavailable' });
+      }
       const crop = await Crop.findByIdAndUpdate(
         req.params.id,
         {
@@ -116,51 +139,41 @@ class CropController {
       );
       
       if (!crop) {
-        return res.status(404).json({
-          success: false,
-          error: 'Crop not found'
-        });
+        return notFound(res, 'Crop not found');
       }
       
-      res.json({
-        success: true,
-        data: crop
-      });
+      return CropController.success(res, crop);
     } catch (error) {
       logger.error('Error updating crop:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
   static async delete(req, res) {
     try {
+      if (!Crop || !mongoReady()) {
+        return serviceUnavailable(res, 'Crop store unavailable; cannot delete right now', { degradedReason: 'mongo_unavailable' });
+      }
       const crop = await Crop.findByIdAndDelete(req.params.id);
       
       if (!crop) {
-        return res.status(404).json({
-          success: false,
-          error: 'Crop not found'
-        });
+        return notFound(res, 'Crop not found');
       }
       
-      res.json({
-        success: true,
-        message: 'Crop deleted successfully'
-      });
+      return CropController.success(
+        res,
+        { message: 'Crop deleted successfully' },
+        { extra: { message: 'Crop deleted successfully' } }
+      );
     } catch (error) {
       logger.error('Error deleting crop:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async recommend(req, res) {
     try {
+      const isFastMode = process.env.NODE_ENV === 'test' || process.env.FEATURE_EXTERNAL_APIS === 'false';
       const requestData = req.method === 'POST' ? (req.body || {}) : (req.query || {});
       
       const rawLat = requestData?.latitude;
@@ -194,8 +207,6 @@ class CropController {
         requestData: requestData
       });
       
-      const locationService = require('../services/locationService');
-
       let lat = null;
       let lng = null;
       
@@ -263,19 +274,33 @@ class CropController {
             location: engineData.location?.state || engineData.location?.region
           });
           
+          let displayWeather = engineData.weather;
+          try {
+            const currentWeather = await weatherService.getWeatherByCoords(lat, lng);
+            if (currentWeather) {
+              displayWeather = {
+                temperature: currentWeather.temperature ?? engineData.weather?.temperature ?? 25,
+                humidity: currentWeather.humidity ?? engineData.weather?.humidity ?? 65,
+                rainfall: currentWeather.rainfall != null ? Math.round(Number(currentWeather.rainfall) * 10) / 10 : (engineData.weather?.rainfall ?? 800),
+                conditions: currentWeather.weather || engineData.weather?.conditions || 'Clear'
+              };
+            }
+          } catch (weatherErr) {
+            logger.warn('Current weather API failed, using engine weather for display:', weatherErr.message);
+          }
+          const climaticRainfall = engineData.weather?.rainfall ?? 800;
           locationData = {
             location: engineData.location,
-            weather: engineData.weather,
+            weather: displayWeather,
             soil: engineData.soil,
-            temperature: engineData.weather?.temperature || 25,
-            rainfall: engineData.weather?.rainfall || 800,
+            temperature: (displayWeather?.temperature ?? engineData.weather?.temperature) || 25,
+            rainfall: climaticRainfall,
             ph: parseFloat(engineData.soil?.ph) || 7.0,
             soilType: engineData.soil?.soil_type || 'alluvial',
-            humidity: engineData.weather?.humidity || 65
+            humidity: (displayWeather?.humidity ?? engineData.weather?.humidity) ?? 65
           };
-          
           const temp = parseFloat(temperature) || locationData.temperature || 25;
-          const rain = parseFloat(rainfall) || locationData.rainfall || 800;
+          const rain = parseFloat(rainfall) || climaticRainfall;
           const soilPh = parseFloat(ph) || locationData.ph || 7.0;
           const soil = soilType || locationData.soilType || 'alluvial';
           
@@ -317,18 +342,11 @@ class CropController {
             locationDataPh: locationData.ph,
             locationDataSoilType: locationData.soilType
           });
-          logger.error('Location data fetched but conditions not set properly:', {
-            locationDataKeys: Object.keys(locationData),
-            locationDataTemp: locationData.temperature,
-            locationDataRainfall: locationData.rainfall,
-            locationDataPh: locationData.ph,
-            locationDataSoilType: locationData.soilType
-          });
         }
         
         if (!temperature || !rainfall || !ph || !soilType) {
           
-          const fallbackLat = latitude ? parseFloat(latitude) : 28.6139; // New Delhi default
+          const fallbackLat = latitude ? parseFloat(latitude) : 28.6139;
           const fallbackLng = longitude ? parseFloat(longitude) : 77.2090;
           
           let defaultTemp = 25;
@@ -384,17 +402,81 @@ class CropController {
       
       if (!conditions.temperature || !conditions.rainfall || !conditions.ph || !conditions.soilType) {
         logger.error('Conditions validation failed:', conditions);
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to determine environmental conditions. Please try again or provide manual parameters.',
-          debug: { conditions }
-        });
+        return serverError(
+          res,
+          'Failed to determine environmental conditions. Please try again or provide manual parameters.',
+          { conditions }
+        );
       }
       
       let recommendations = [];
       let realTimeUsed = false;
-      
-      if (lat !== null && lng !== null) {
+
+      const stateForApi = locationData?.location?.state || state || 'India';
+      const districtForApi = locationData?.location?.district || locationData?.location?.county || '';
+
+      if (perplexityCropService.isAvailable()) {
+        try {
+          const aiResult = await perplexityCropService.getRecommendations({
+            state: stateForApi,
+            district: districtForApi,
+            season: conditions.season || CropController.getCurrentSeason(stateForApi),
+            soilType: conditions.soilType || 'alluvial',
+            temperature: conditions.temperature || 25,
+            rainfall: conditions.rainfall || 800,
+            ph: conditions.ph || 7.0,
+            humidity: locationData?.humidity || 65
+          });
+          if (aiResult.success && aiResult.recommendations && aiResult.recommendations.length >= 3) {
+            let marketPricesByCrop = {};
+            try {
+              const marketList = await marketPriceAPIService.getRealTimePrices(null, stateForApi);
+              if (Array.isArray(marketList)) {
+                marketList.forEach((p) => {
+                  const name = (p.commodity || p.crop || '').toString().toLowerCase().trim();
+                  if (!name) return;
+                  if (!marketPricesByCrop[name]) marketPricesByCrop[name] = [];
+                  const val = p.price?.value ?? p.price?.originalValue;
+                  const unit = p.price?.unit || p.price?.originalUnit || 'kg';
+                  const perQuintal = unit === 'quintal' || unit === 'q' ? val : (val && val * 100) || 0;
+                  marketPricesByCrop[name].push({ perQuintal, perKg: val, market: p.market?.name });
+                });
+              }
+            } catch (marketErr) {
+              logger.warn('Market price fetch for crop enrichment failed:', marketErr.message);
+            }
+            const rawRecs = aiResult.recommendations.slice(0, 10);
+            recommendations = rawRecs.map((rec) => {
+              const cropName = (rec.crop || rec.name || '').toString().trim();
+              const cropKey = cropName.toLowerCase();
+              const prices = marketPricesByCrop[cropKey] || marketPricesByCrop[cropKey.replace(/\s+/g, '')];
+              const bestPrice = prices && prices.length ? prices.reduce((a, b) => (b.perQuintal > a.perQuintal ? b : a), prices[0]) : null;
+              const perTon = bestPrice ? Math.round(bestPrice.perQuintal * 10) : null;
+              const marketPriceDisplay = perTon != null ? `₹${perTon}/ton` : '₹2000-4000/ton';
+              return {
+                crop_name: cropName,
+                name: cropName,
+                crop: cropName,
+                suitability: rec.suitability || 85,
+                suitabilityScore: rec.suitability || 85,
+                confidence: rec.confidence || 0.9,
+                reason: rec.suitabilityReason,
+                reasons: rec.suitabilityReason ? [rec.suitabilityReason] : ['Suitable for your region'],
+                expectedYield: rec.expectedYield || '2-4 tons/ha',
+                duration: rec.duration || '90-120 days',
+                market_price: marketPriceDisplay,
+                marketPrice: marketPriceDisplay
+              };
+            });
+            realTimeUsed = true;
+            logger.info(`✅ Using smart crop recommendations: ${recommendations.length} crops with market prices (₹/ton)`);
+          }
+        } catch (aiErr) {
+          logger.warn('Smart crop recommendation unavailable:', aiErr.message);
+        }
+      }
+
+      if (!realTimeUsed && lat !== null && lng !== null) {
         try {
           const userPreferences = {
             irrigation: requestData.irrigation || 'rainfed',
@@ -411,7 +493,7 @@ class CropController {
           );
           
           if (perfectResult.success && perfectResult.recommendations?.length > 0) {
-            recommendations = perfectResult.recommendations.map(rec => ({
+            recommendations = perfectResult.recommendations.slice(0, 10).map(rec => ({
               crop_name: rec.name || rec.crop_name || rec.crop,
               name: rec.name || rec.crop_name || rec.crop,
               crop: rec.name || rec.crop_name || rec.crop,
@@ -428,7 +510,8 @@ class CropController {
               reasons: rec.reasons || rec.advantages,
               expectedYield: rec.expectedYield || rec.yield,
               profitEstimate: rec.profitability?.estimatedProfit,
-              source: 'Enhanced Perfect Recommendation'
+              market_price: rec.market_price || rec.marketPrice,
+              marketPrice: rec.marketPrice || rec.market_price
             }));
             realTimeUsed = true;
             logger.info(`✅ Using enhanced perfect crop recommendations: ${recommendations.length} crops`);
@@ -451,7 +534,7 @@ class CropController {
             );
             
             if (realTimeResult.success && realTimeResult.recommendations?.length > 0) {
-              recommendations = realTimeResult.recommendations.map(rec => ({
+              recommendations = realTimeResult.recommendations.slice(0, 10).map(rec => ({
                 crop_name: rec.crop,
                 name: rec.crop,
                 crop: rec.crop,
@@ -460,7 +543,8 @@ class CropController {
                 reasons: rec.reasons,
                 expectedYield: rec.expectedYield,
                 profitEstimate: rec.profitEstimate,
-                source: 'Real-Time Service'
+                market_price: rec.market_price || rec.marketPrice,
+                marketPrice: rec.marketPrice || rec.market_price
               }));
               realTimeUsed = true;
               logger.info(`✅ Using real-time crop recommendations: ${recommendations.length} crops`);
@@ -561,6 +645,135 @@ class CropController {
           }
         }
       }
+
+      if (recommendations.length > 0 && recommendations.length < 5) {
+        const fallbackRecs = cropRecommendationEngine.getCropRecommendations(
+          conditions.temperature || 25,
+          locationData?.humidity || weatherData?.humidity || 65,
+          conditions.ph || 7.0,
+          conditions.rainfall || 800,
+          conditions.soilType || 'alluvial',
+          locationData?.location?.state || null,
+          conditions.season || null
+        );
+        const existingNames = new Set(
+          recommendations.map(r => (r.crop || r.name || r.crop_name || '').toString().toLowerCase().trim())
+        );
+        for (const rec of fallbackRecs) {
+          if (recommendations.length >= 10) break;
+          const name = (rec.crop || rec.name || rec.crop_name || '').toString().toLowerCase().trim();
+          if (name && !existingNames.has(name)) {
+            existingNames.add(name);
+            recommendations.push({
+              crop_name: rec.crop_name || rec.crop || rec.name,
+              name: rec.name || rec.crop_name || rec.crop,
+              crop: rec.crop || rec.name || rec.crop_name,
+              suitability: rec.suitability || rec.score,
+              suitabilityScore: rec.suitabilityScore || rec.suitability || rec.score,
+              season: rec.season,
+              duration: rec.duration,
+              expectedYield: rec.expectedYield || rec.yield,
+              market_price: rec.market_price,
+              marketPrice: rec.marketPrice,
+              reasons: rec.reasons || (rec.reason ? [rec.reason] : [])
+            });
+          }
+        }
+        if (recommendations.length > 0) {
+          logger.info(`Padded recommendations to ${recommendations.length} crops (min 5)`);
+        }
+      }
+
+      recommendations = recommendations.slice(0, 10);
+
+      const cropToApiCommodity = {
+        rice: ['paddy', 'rice'],
+        wheat: ['wheat'],
+        maize: ['maize', 'corn'],
+        sugarcane: ['sugarcane', 'sugar cane', 'gur'],
+        cotton: ['cotton'],
+        soybean: ['soybean', 'soya'],
+        potato: ['potato'],
+        onion: ['onion'],
+        tomato: ['tomato'],
+        groundnut: ['groundnut', 'peanut'],
+        mustard: ['mustard', 'rape seed'],
+        chickpea: ['gram', 'chana', 'chickpea'],
+        pigeonpea: ['arhar', 'tur', 'pigeon pea'],
+        bajra: ['bajra', 'pearl millet'],
+        jowar: ['jowar', 'sorghum']
+      };
+
+      function addPriceToMap(map, key, priceObj) {
+        const k = key.toLowerCase().trim();
+        if (!k) return;
+        if (!map[k]) map[k] = [];
+        map[k].push(priceObj);
+      }
+
+      let marketPricesByCrop = {};
+      if (!isFastMode) {
+        try {
+          const marketList = await marketPriceAPIService.getRealTimePrices(null, stateForApi);
+          if (Array.isArray(marketList) && marketList.length > 0) {
+            marketList.forEach((p) => {
+              const apiCommodity = (p.commodity || p.crop || '').toString().toLowerCase().trim();
+              if (!apiCommodity) return;
+              const val = p.price?.originalValue ?? p.price?.value;
+              const unit = (p.price?.originalUnit || p.price?.unit || 'quintal').toString().toLowerCase();
+              const perQuintal = unit === 'quintal' || unit === 'q' ? (val ? parseFloat(val) : 0) : (val ? parseFloat(val) * 100 : 0);
+              const priceObj = { perQuintal, perKg: val ? parseFloat(val) / 100 : 0 };
+              addPriceToMap(marketPricesByCrop, apiCommodity, priceObj);
+              const cropKeyForApi = Object.keys(cropToApiCommodity).find(c => cropToApiCommodity[c].some(a => apiCommodity.includes(a) || a.includes(apiCommodity)));
+              if (cropKeyForApi) addPriceToMap(marketPricesByCrop, cropKeyForApi, priceObj);
+            });
+          }
+        } catch (marketErr) {
+          logger.warn('Market price bulk fetch failed:', marketErr.message);
+        }
+      }
+
+      for (const rec of recommendations) {
+        const cropKey = (rec.crop || rec.name || rec.crop_name || '').toString().toLowerCase().trim();
+        if (!cropKey) continue;
+        const keysToTry = [cropKey, cropKey.replace(/\s+/g, '')];
+        const aliases = cropToApiCommodity[cropKey] || [];
+        keysToTry.push(...aliases);
+        let best = null;
+        for (const k of keysToTry) {
+          const prices = marketPricesByCrop[k];
+          if (prices && prices.length) {
+            const b = prices.reduce((a, p) => (p.perQuintal > a.perQuintal ? p : a), prices[0]);
+            if (!best || b.perQuintal > best.perQuintal) best = b;
+          }
+        }
+        if (!isFastMode && !best && (cropKey in cropToApiCommodity)) {
+          try {
+            for (const apiName of cropToApiCommodity[cropKey]) {
+              const perCropList = await marketPriceAPIService.getRealTimePrices(apiName, stateForApi);
+              if (Array.isArray(perCropList) && perCropList.length > 0) {
+                for (const p of perCropList) {
+                  const val = p.price?.originalValue ?? p.price?.value;
+                  const unit = (p.price?.originalUnit || p.price?.unit || 'quintal').toString().toLowerCase();
+                  const perQuintal = unit === 'quintal' || unit === 'q' ? (val ? parseFloat(val) : 0) : (val ? parseFloat(val) * 100 : 0);
+                  if (perQuintal > 0 && (!best || perQuintal > best.perQuintal)) best = { perQuintal };
+                }
+                if (best) break;
+              }
+            }
+          } catch (e) {
+            logger.debug('Per-commodity market price fetch failed for ' + cropKey, e.message);
+          }
+        }
+        if (best && best.perQuintal > 0) {
+          const perTon = Math.round(best.perQuintal * 10);
+          rec.market_price = `₹${perTon.toLocaleString('en-IN')}/ton`;
+          rec.marketPrice = rec.market_price;
+        } else {
+          rec.market_price = '₹2000-₹4000/ton';
+          rec.marketPrice = rec.market_price;
+        }
+      }
       
       const formattedRecommendations = recommendations.map((rec, index) => {
         const baseRec = {
@@ -570,11 +783,11 @@ class CropController {
           suitability: rec.score || rec.suitabilityScore || rec.suitability || 0,
           suitabilityScore: rec.score || rec.suitabilityScore || rec.suitability || 0,
           season: rec.season || conditions.season || CropController.getCurrentSeason(locationData?.location?.state),
-          duration: rec.duration || '90-120 days',
-          durationUnit: rec.durationUnit || 'days',
-          estimatedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
-          expectedYield: rec.yield || rec.expectedYield || '2-4 tons/ha',
-          yieldUnit: rec.yieldUnit || 'tons/ha',
+          duration: (rec.duration || '90-120').replace(/\s*days\s*$/i, '').trim() || '90-120',
+          durationUnit: 'days',
+          estimatedYield: (rec.yield || rec.expectedYield || '2-4').replace(/\s*tons?\/ha\s*$/i, '').trim() || '2-4',
+          expectedYield: (rec.yield || rec.expectedYield || '2-4').replace(/\s*tons?\/ha\s*$/i, '').trim() || '2-4',
+          yieldUnit: 'tons/ha',
           marketPrice: rec.market_price || rec.marketPrice || '₹2000-₹4000/ton',
           priceUnit: rec.priceUnit || 'ton',
           reason: rec.reason || CropController.generateRecommendationReason(rec, conditions, locationData),
@@ -606,33 +819,35 @@ class CropController {
         return baseRec;
       });
       
-      res.json({
-        success: true,
-        data: {
-          recommendations: formattedRecommendations,
-          conditions,
-          location: locationData?.location || null,
-          soil: locationData?.soil || null,
-          weather: locationData?.weather || null,
-          marketPrices: locationData?.marketPrices || null,
-          diseases: locationData?.diseases || null,
-          environmentalData: locationData ? {
-            latitude: locationData.location?.latitude || lat,
-            longitude: locationData.location?.longitude || lng,
-            temperature: locationData.temperature,
-            rainfall: locationData.rainfall,
-            ph: locationData.ph,
-            soilType: locationData.soilType,
-            humidity: locationData.humidity
-          } : null
+      const recommendationData = {
+        recommendations: formattedRecommendations,
+        conditions,
+        location: locationData?.location || null,
+        soil: locationData?.soil || null,
+        weather: locationData?.weather || null,
+        marketPrices: locationData?.marketPrices || null,
+        diseases: locationData?.diseases || null,
+        environmentalData: locationData ? {
+          latitude: locationData.location?.latitude || lat,
+          longitude: locationData.location?.longitude || lng,
+          temperature: locationData.temperature,
+          rainfall: locationData.rainfall,
+          ph: locationData.ph,
+          soilType: locationData.soilType,
+          humidity: locationData.humidity
+        } : null
+      };
+      return CropController.success(
+        res,
+        recommendationData,
+        {
+          isFallback: !realTimeUsed,
+          degradedReason: !realTimeUsed ? 'crop_recommendation_fallback' : null
         }
-      });
+      );
     } catch (error) {
       logger.error('Error getting recommendations:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 
@@ -661,7 +876,7 @@ class CropController {
   }
 
   static getCurrentSeason(state) {
-    const month = new Date().getMonth() + 1; // 1-12
+    const month = new Date().getMonth() + 1;
     
     const northStates = ['Punjab', 'Haryana', 'Uttar Pradesh', 'Delhi', 'Himachal Pradesh', 'Uttarakhand'];
     if (northStates.includes(state)) {
@@ -678,7 +893,7 @@ class CropController {
   }
 
   static getFallbackRecommendations(conditions) {
-    const { temperature, rainfall, ph, soilType, season } = conditions;
+    const { season } = conditions;
     
     const crops = [
       { name: 'Rice', score: 85, season: 'monsoon', duration: '120-150 days', yield: '4-6 tons/ha' },
@@ -715,19 +930,16 @@ class CropController {
   static async getBySeason(req, res) {
     try {
       const { season } = req.params;
+      if (!Crop || typeof Crop.findBySeason !== 'function' || !mongoReady()) {
+        return CropController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable' });
+      }
       
       const crops = await Crop.findBySeason(season);
       
-      res.json({
-        success: true,
-        data: crops
-      });
+      return CropController.success(res, crops);
     } catch (error) {
       logger.error('Error fetching crops by season:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 
@@ -736,31 +948,25 @@ class CropController {
       const userId = req.user?._id;
       
       let userCrops = [];
-      if (userId) {
+      if (userId && mongoReady()) {
         const CropModel = require('../models/Crop');
         userCrops = await CropModel.find({ createdBy: userId }).limit(10).sort({ createdAt: -1 });
       }
       
-      res.json({
-        success: true,
-        data: {
-          summary: {
-            totalCrops: userCrops.length,
-            activeCrops: userCrops.filter(c => c.status === 'active' || c.status === 'growing').length
-          },
-          recentCrops: userCrops.map(crop => ({
-            name: crop.name,
-            status: crop.status || 'active',
-            healthScore: crop.healthScore || 85
-          }))
-        }
+      return CropController.success(res, {
+        summary: {
+          totalCrops: userCrops.length,
+          activeCrops: userCrops.filter(c => c.status === 'active' || c.status === 'growing').length
+        },
+        recentCrops: userCrops.map(crop => ({
+          name: crop.name,
+          status: crop.status || 'active',
+          healthScore: crop.healthScore || 85
+        }))
       });
     } catch (error) {
       logger.error('Error fetching crops analytics:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 }

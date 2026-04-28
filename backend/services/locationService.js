@@ -1,5 +1,5 @@
-const axios = require('axios');
 const logger = require('../utils/logger');
+const resilientHttpClient = require('./api/resilientHttpClient');
 
 class LocationService {
   constructor() {
@@ -13,8 +13,29 @@ class LocationService {
       return this.geocodingCache.get(cacheKey);
     }
 
+    const fallback = {
+      address: 'Unknown Location',
+      city: 'Unknown',
+      district: 'Unknown',
+      state: 'Unknown',
+      country: 'India',
+      coordinates: [parseFloat(longitude), parseFloat(latitude)],
+      isFallback: true,
+      _source: 'fallback',
+      degradedReason: 'geocoding_unavailable'
+    };
+
+    const httpClient = require('./api/resilientHttpClient');
+    if (process.env.FEATURE_EXTERNAL_APIS === 'false' && !(httpClient && httpClient.request && httpClient.request._isMockFunction)) {
+      this.geocodingCache.set(cacheKey, fallback);
+      return fallback;
+    }
+
     try {
-      const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+      const result = await resilientHttpClient.request({
+        serviceName: 'nominatim-reverse',
+        method: 'get',
+        url: 'https://nominatim.openstreetmap.org/reverse',
         params: {
           lat: latitude,
           lon: longitude,
@@ -24,10 +45,18 @@ class LocationService {
         },
         headers: {
           'User-Agent': 'AgriSmart-AI/1.0'
-        }
+        },
+        timeout: 8000,
+        retry: { maxRetries: 1, baseDelay: 400 },
+        breaker: { threshold: 5, timeout: 30000 }
       });
 
-      const data = response.data;
+      if (!result || !result.success) {
+        logger.warn('Reverse geocoding failed', { code: result?.error?.code });
+        return fallback;
+      }
+
+      const data = result.response?.data || {};
       const location = {
         address: data.display_name,
         city: data.address?.city || data.address?.town || data.address?.village,
@@ -45,14 +74,58 @@ class LocationService {
       return location;
     } catch (error) {
       logger.error('Error getting location from coordinates:', error);
-      return {
-        address: 'Unknown Location',
-        city: 'Unknown',
-        district: 'Unknown',
-        state: 'Unknown',
-        country: 'India',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)]
-      };
+      return fallback;
+    }
+  }
+
+  async searchByQuery(query, options = {}) {
+    if (!query || typeof query !== 'string') return [];
+    const { limit = 5, countryCodes = 'in' } = options;
+    const httpClient = require('./api/resilientHttpClient');
+    if (process.env.FEATURE_EXTERNAL_APIS === 'false' && !(httpClient && httpClient.request && httpClient.request._isMockFunction)) {
+      return [];
+    }
+    try {
+      const result = await resilientHttpClient.request({
+        serviceName: 'nominatim-search',
+        method: 'get',
+        url: 'https://nominatim.openstreetmap.org/search',
+        params: {
+          q: query,
+          format: 'json',
+          addressdetails: 1,
+          limit,
+          countrycodes: countryCodes,
+          'accept-language': 'en'
+        },
+        headers: {
+          'User-Agent': 'AgriSmart-AI/1.0'
+        },
+        timeout: 8000,
+        retry: { maxRetries: 1, baseDelay: 400 },
+        breaker: { threshold: 5, timeout: 30000 }
+      });
+
+      if (!result || !result.success) {
+        logger.warn('Nominatim search failed', { code: result?.error?.code });
+        return [];
+      }
+
+      const list = Array.isArray(result.response?.data) ? result.response.data : [];
+      return list.map((entry) => ({
+        displayName: entry.display_name,
+        latitude: parseFloat(entry.lat),
+        longitude: parseFloat(entry.lon),
+        city: entry.address?.city || entry.address?.town || entry.address?.village || '',
+        district: entry.address?.district || entry.address?.county || entry.address?.municipality || '',
+        state: entry.address?.state || '',
+        country: entry.address?.country || 'India',
+        pincode: entry.address?.postcode || '',
+        raw: entry
+      }));
+    } catch (error) {
+      logger.error('Error in nominatim search:', error);
+      return [];
     }
   }
 

@@ -3,15 +3,19 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const AgriChatController = require('../controllers/AgriChatController');
 const { authenticateToken } = require('../middleware/auth');
+const { ok } = require('../utils/httpResponses');
 
 logger.info('📝 Registering AgriChat routes...');
 
 router.get('/test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'AgriChat routes are working!',
-    timestamp: new Date().toISOString()
-  });
+  return ok(
+    res,
+    {
+      message: 'AgriChat routes are working!',
+      timestamp: new Date().toISOString()
+    },
+    { source: 'AgriSmart AI', isFallback: false }
+  );
 });
 
 router.use(authenticateToken);

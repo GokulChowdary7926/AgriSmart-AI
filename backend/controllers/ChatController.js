@@ -1,6 +1,15 @@
+const mongoose = require('mongoose');
 const ChatSession = require('../models/ChatSession');
-const crypto = require('crypto');
 const logger = require('../utils/logger');
+const { unauthorized, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
 
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -11,9 +20,34 @@ function uuidv4() {
 }
 
 class ChatController {
+  static success(res, data, { source = 'AgriSmart AI', isFallback = false, degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
+  static getUserId(req) {
+    return req.user?._id || req.user?.userId || req.user?.id || null;
+  }
+
   static async getOrCreateSession(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const { language } = req.body;
       
       let session = await ChatSession.findActiveSession(userId);
@@ -28,16 +62,10 @@ class ChatController {
         await session.save();
       }
       
-      res.json({
-        success: true,
-        data: session
-      });
+      return ChatController.success(res, session);
     } catch (error) {
       logger.error('Error getting/creating session:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
@@ -47,10 +75,10 @@ class ChatController {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'User authentication required'
-        });
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
       }
       
       let session = await ChatSession.findOne({
@@ -78,26 +106,26 @@ class ChatController {
       
       await session.addMessage('assistant', aiResponse.content, aiResponse.metadata);
       
-      res.json({
-        success: true,
-        data: {
-          session,
-          response: aiResponse
-        }
+      return ChatController.success(res, {
+        session,
+        response: aiResponse
       });
     } catch (error) {
       logger.error('Error sending message:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async getHistory(req, res) {
     try {
       const { sessionId } = req.params;
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return ChatController.success(res, { messages: [] }, { isFallback: true, degradedReason: 'mongo_unavailable' });
+      }
       
       const session = await ChatSession.findOne({
         sessionId,
@@ -105,49 +133,47 @@ class ChatController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Session not found'
-        });
+        return notFound(res, 'Session not found');
       }
       
-      res.json({
-        success: true,
-        data: session
-      });
+      return ChatController.success(res, session);
     } catch (error) {
       logger.error('Error fetching chat history:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async getUserSessions(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return ChatController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable' });
+      }
       const { limit = 20 } = req.query;
+      const safeLimit = this.parsePositiveInt(limit, 20, { min: 1, max: 100 });
       
-      const sessions = await ChatSession.getUserSessions(userId, parseInt(limit));
+      const sessions = await ChatSession.getUserSessions(userId, safeLimit);
       
-      res.json({
-        success: true,
-        data: sessions
-      });
+      return ChatController.success(res, sessions);
     } catch (error) {
       logger.error('Error fetching user sessions:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
   static async endSession(req, res) {
     try {
       const { sessionId } = req.params;
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       
       const session = await ChatSession.findOne({
         sessionId,
@@ -155,28 +181,24 @@ class ChatController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Session not found'
-        });
+        return notFound(res, 'Session not found');
       }
       
       session.status = 'completed';
       session.endedAt = new Date();
       await session.save();
       
-      res.json({
-        success: true,
-        message: 'Session ended successfully'
-      });
+      return ChatController.success(
+        res,
+        { message: 'Session ended successfully' },
+        { extra: { message: 'Session ended successfully' } }
+      );
     } catch (error) {
       logger.error('Error ending session:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 }
 
-module.exports = ChatController;
+const { bindStaticMethods } = require('../utils/bindControllerMethods');
+module.exports = bindStaticMethods(ChatController);

@@ -18,7 +18,7 @@ class FallbackManager {
       return null;
     }
 
-    if (serviceName === 'weather' && params.lat && params.lng) {
+    if (serviceName === 'weather' && params.lat != null && (params.lng != null || params.lon != null)) {
       return this.customizeWeatherFallback(fallback, params);
     }
 
@@ -28,7 +28,7 @@ class FallbackManager {
 
     return {
       ...fallback,
-      source: 'fallback',
+      source: 'AgriSmart AI',
       note: 'Using fallback data - external API unavailable',
       timestamp: new Date().toISOString()
     };
@@ -117,16 +117,17 @@ class FallbackManager {
 
   customizeWeatherFallback(fallback, params) {
     const lat = params.lat;
+    const lng = params.lng ?? params.lon;
     let tempAdjustment = 0;
     
-    if (lat > 30) tempAdjustment = -5; // North India - cooler
-    if (lat < 15) tempAdjustment = 5;  // South India - warmer
+    if (lat > 30) tempAdjustment = -5;
+    if (lat < 15) tempAdjustment = 5;
     
     return {
       ...fallback,
       temperature: fallback.temperature + tempAdjustment,
       feels_like: fallback.feels_like + tempAdjustment,
-      location: `Lat: ${params.lat}, Lng: ${params.lng}`
+      location: `Lat: ${lat}, Lng: ${lng}`
     };
   }
 
@@ -178,6 +179,9 @@ class FallbackManager {
 }
 
 module.exports = new FallbackManager();
+
+
+
 
 
 

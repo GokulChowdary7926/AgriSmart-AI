@@ -2,9 +2,86 @@ const winston = require('winston');
 const path = require('path');
 const config = require('../config');
 
+const REDACT_KEYS = new Set([
+  'password',
+  'pass',
+  'pwd',
+  'secret',
+  'token',
+  'accesstoken',
+  'access_token',
+  'refreshtoken',
+  'refresh_token',
+  'authorization',
+  'cookie',
+  'apikey',
+  'api_key',
+  'jwt',
+  'jwtsecret',
+  'jwt_secret',
+  'aadhar',
+  'aadhaar',
+  'pan',
+  'creditcard',
+  'card',
+  'cvv',
+  'otp',
+  'twilio_auth_token'
+]);
+
+const REDACT_PATTERNS = [
+  /(Bearer\s+)[A-Za-z0-9._\-]+/g,
+  /(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g, // JWT pattern
+  /(sk-[A-Za-z0-9]{20,})/g, // OpenAI keys
+  /(pplx-[A-Za-z0-9]{20,})/g, // Perplexity keys
+  /(AIza[A-Za-z0-9\-_]{20,})/g // Google keys
+];
+
+function redactString(value) {
+  if (typeof value !== 'string') return value;
+  let result = value;
+  for (const pattern of REDACT_PATTERNS) {
+    result = result.replace(pattern, (match, prefix) => {
+      if (prefix && match.startsWith(prefix)) return `${prefix}[REDACTED]`;
+      return '[REDACTED]';
+    });
+  }
+  return result;
+}
+
+function redactObject(obj, seen = new WeakSet()) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string') return redactString(obj);
+  if (typeof obj !== 'object') return obj;
+  if (seen.has(obj)) return '[Circular]';
+  seen.add(obj);
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => redactObject(item, seen));
+  }
+
+  const out = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const normalizedKey = key.toLowerCase().replace(/[-_]/g, '');
+    if (REDACT_KEYS.has(normalizedKey)) {
+      out[key] = '[REDACTED]';
+      continue;
+    }
+    out[key] = redactObject(value, seen);
+  }
+  return out;
+}
+
+const redactionFormat = winston.format((info) => {
+  const sanitized = redactObject(info);
+  return Object.assign(info, sanitized);
+});
+
 class LoggerService {
   constructor() {
     this.logger = null;
+    this.redactObject = redactObject;
+    this.redactString = redactString;
     this.initialize();
   }
 
@@ -17,6 +94,7 @@ class LoggerService {
     }
 
     const logFormat = winston.format.combine(
+      redactionFormat(),
       winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
       winston.format.errors({ stack: true }),
       winston.format.splat(),
@@ -149,6 +227,9 @@ module.exports = {
   logger: loggerService,
   requestLogger: loggerService.requestLogger.bind(loggerService)
 };
+
+
+
 
 
 

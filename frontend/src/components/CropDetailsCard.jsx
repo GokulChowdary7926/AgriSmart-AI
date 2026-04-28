@@ -8,7 +8,6 @@ import {
   Box,
   Grid,
   Chip,
-  Divider,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -29,11 +28,10 @@ import {
   Grass as SoilIcon,
   TrendingUp as YieldIcon,
   AttachMoney as MoneyIcon,
-  CheckCircle as CheckIcon,
-  Warning as WarningIcon
+  CheckCircle as CheckIcon
 } from '@mui/icons-material';
 
-const CropDetailsCard = ({ cropData, onClose }) => {
+const CropDetailsCard = ({ cropData }) => {
   if (!cropData) return null;
 
   const renderSection = (title, icon, content) => (
@@ -488,6 +486,9 @@ const CropDetailsCard = ({ cropData, onClose }) => {
 };
 
 export default CropDetailsCard;
+
+
+
 
 
 

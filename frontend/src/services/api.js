@@ -1,5 +1,32 @@
 import axios from 'axios';
 import logger from './logger';
+import { getStoredLocation } from './realtimeLocation';
+
+const AUTH_EXPIRED_EVENT = 'auth:expired';
+
+const notifyAuthExpired = (reason = 'unauthorized') => {
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason } }));
+  } catch (_) {
+    // Non-blocking: auth state can still be handled by route guards.
+  }
+};
+
+export const getApiErrorMessage = (errorLike, fallback = 'Something went wrong. Please try again.') => {
+  if (!errorLike) return fallback;
+
+  if (typeof errorLike === 'string') return errorLike;
+
+  const responseData = errorLike.response?.data || errorLike.data || errorLike;
+  const structuredError = responseData?.error;
+
+  if (typeof structuredError === 'string') return structuredError;
+  if (structuredError?.message) return structuredError.message;
+  if (responseData?.message && responseData?.success === false) return responseData.message;
+  if (errorLike.message && typeof errorLike.message === 'string') return errorLike.message;
+
+  return fallback;
+};
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
@@ -17,8 +44,16 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     
-    const language = localStorage.getItem('language') || 'en';
+    const language = localStorage.getItem('language') || localStorage.getItem('i18nextLng') || 'en';
     config.headers['Accept-Language'] = language;
+    config.headers['X-App-Language'] = language;
+    
+    if (String(config.method || '').toLowerCase() === 'get') {
+      config.params = config.params || {};
+      if (!config.params.lang) {
+        config.params.lang = language;
+      }
+    }
     
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
@@ -60,18 +95,22 @@ api.interceptors.response.use(
             
             localStorage.removeItem('token');
             localStorage.removeItem('user');
-            
-            if (!window.location.pathname.includes('/login')) {
-              window.location.href = '/login';
-            }
+
+            notifyAuthExpired('token_invalid_or_expired');
           }
-          break;
+          return Promise.reject({
+            success: false,
+            error: { code: 'UNAUTHORIZED', message: 'Authentication required. Please sign in again.' },
+            message: 'Authentication required. Please sign in again.',
+            statusCode: 401
+          });
           
         case 403:
           logger.error('Access forbidden');
           return Promise.reject({
             success: false,
-            error: 'You do not have permission to access this resource.',
+            error: { code: 'FORBIDDEN', message: 'You do not have permission to access this resource.' },
+            message: 'You do not have permission to access this resource.',
             statusCode: 403
           });
           
@@ -79,7 +118,8 @@ api.interceptors.response.use(
           logger.error('API endpoint not found', { url: originalRequest.url });
           return Promise.reject({
             success: false,
-            error: 'The requested resource was not found.',
+            error: { code: 'NOT_FOUND', message: 'The requested resource was not found.' },
+            message: 'The requested resource was not found.',
             statusCode: 404
           });
           
@@ -88,7 +128,8 @@ api.interceptors.response.use(
           const retryAfter = error.response.headers['retry-after'] || 60;
           return Promise.reject({
             success: false,
-            error: `Too many requests. Please wait ${retryAfter} seconds before trying again.`,
+            error: { code: 'RATE_LIMIT_EXCEEDED', message: `Too many requests. Please wait ${retryAfter} seconds before trying again.` },
+            message: `Too many requests. Please wait ${retryAfter} seconds before trying again.`,
             statusCode: 429,
             retryAfter
           });
@@ -97,7 +138,8 @@ api.interceptors.response.use(
           console.error('Server error:', error.response.data);
           return Promise.reject({
             success: false,
-            error: 'Server error. Please try again later.',
+            error: { code: 'INTERNAL_ERROR', message: 'Server error. Please try again later.' },
+            message: 'Server error. Please try again later.',
             statusCode: 500
           });
           
@@ -105,7 +147,8 @@ api.interceptors.response.use(
           logger.error('Service unavailable');
           return Promise.reject({
             success: false,
-            error: 'Service temporarily unavailable. Please try again later.',
+            error: { code: 'SERVICE_UNAVAILABLE', message: 'Service temporarily unavailable. Please try again later.' },
+            message: 'Service temporarily unavailable. Please try again later.',
             statusCode: 503
           });
       }
@@ -114,7 +157,13 @@ api.interceptors.response.use(
     if (!error.response) {
       return Promise.reject({
         success: false,
-        error: error.code === 'ECONNABORTED' 
+        error: {
+          code: error.code === 'ECONNABORTED' ? 'TIMEOUT' : 'NETWORK_ERROR',
+          message: error.code === 'ECONNABORTED'
+            ? 'Request timeout. Please check your connection and try again.'
+            : 'Network error. Please check your connection.'
+        },
+        message: error.code === 'ECONNABORTED'
           ? 'Request timeout. Please check your connection and try again.'
           : 'Network error. Please check your connection.',
         isNetworkError: true,
@@ -125,15 +174,18 @@ api.interceptors.response.use(
     if (error.response.status >= 500) {
       return Promise.reject({
         success: false,
-        error: 'Server error. Please try again later.',
+        error: { code: 'INTERNAL_ERROR', message: 'Server error. Please try again later.' },
+        message: 'Server error. Please try again later.',
         isServerError: true,
         statusCode: error.response.status
       });
     }
     
     if (error.response?.data) {
+      const normalizedMessage = getApiErrorMessage(error.response.data, 'Request failed');
       return Promise.reject({
         ...error.response.data,
+        message: normalizedMessage,
         statusCode: error.response.status,
         response: error.response // Keep response for debugging
       });
@@ -145,10 +197,10 @@ api.interceptors.response.use(
 
 export const checkApiHealth = async () => {
   try {
-    const healthUrl = import.meta.env.VITE_API_URL 
-      ? import.meta.env.VITE_API_URL.replace('/api', '') 
-      : '/health'; // Use proxy for health check
-    const response = await axios.get(healthUrl);
+    const healthUrl = import.meta.env.VITE_API_URL
+      ? `${import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/health`
+      : '/api/health';
+    const response = await axios.get(healthUrl, { timeout: 8000 });
     return response.data;
   } catch (error) {
     throw new Error('API server is not responding');
@@ -184,18 +236,32 @@ export const getCropRecommendationWithAutoLocation = async () => {
     
   } catch (error) {
     logger.error('Auto location recommendation error', error);
-    
-    const response = await api.post('/crops/recommend', {
-      latitude: 28.6139,
-      longitude: 77.2090,
-      language: localStorage.getItem('language') || 'en'
-    });
-    
-    return {
-      ...response.data,
-      fallback: true,
-      message: 'Using default location for recommendations'
-    };
+    try {
+      const fallbackLocation = getStoredLocation();
+      const payload = {
+        language: localStorage.getItem('language') || 'en'
+      };
+      if (fallbackLocation?.lat && fallbackLocation?.lng) {
+        payload.latitude = fallbackLocation.lat;
+        payload.longitude = fallbackLocation.lng;
+      }
+      const response = await api.post('/crops/recommend', payload);
+      return {
+        ...(response?.data || {}),
+        fallback: true,
+        message: fallbackLocation?.lat && fallbackLocation?.lng
+          ? 'Using last known location for recommendations'
+          : 'Location unavailable for recommendations'
+      };
+    } catch (fallbackError) {
+      logger.error('Fallback recommendation failed', fallbackError);
+      return {
+        success: true,
+        fallback: true,
+        message: 'Location unavailable for recommendations',
+        data: { recommendations: [] }
+      };
+    }
   }
 };
 

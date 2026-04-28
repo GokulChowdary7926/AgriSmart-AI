@@ -13,7 +13,7 @@ const config = {
   },
   
   security: {
-    jwtSecret: process.env.JWT_SECRET || (process.env.NODE_ENV === 'development' ? 'dev-secret-key-change-in-production-min-32-chars' : null),
+    jwtSecret: process.env.JWT_SECRET || null,
     jwtExpiry: process.env.JWT_EXPIRE || '7d',
     corsOrigins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3030', 'http://localhost:5173'],
   },
@@ -25,7 +25,7 @@ const config = {
   
   apiKeys: {
     openweather: process.env.OPENWEATHER_API_KEY || null,
-    agmarknet: process.env.AGMARKNET_API_KEY || process.env.DATA_GOV_IN_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b',
+    agmarknet: process.env.AGMARKNET_API_KEY || process.env.DATA_GOV_IN_API_KEY || null,
     perplexity: process.env.PERPLEXITY_API_KEY || null,
     google: process.env.GOOGLE_AI_KEY || null,
     openai: process.env.OPENAI_API_KEY || null,
@@ -100,6 +100,9 @@ Object.values(config.paths).forEach(dir => {
 });
 
 module.exports = config;
+
+
+
 
 
 

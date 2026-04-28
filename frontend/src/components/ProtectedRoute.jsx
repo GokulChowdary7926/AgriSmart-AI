@@ -26,11 +26,8 @@ export default function ProtectedRoute({ children }) {
     );
   }
 
-  if (hasToken) {
-    return children;
-  }
-
-  if (isAuthenticated || user) {
+  // Only allow access when auth context confirms session.
+  if (isAuthenticated && hasToken && user) {
     return children;
   }
 

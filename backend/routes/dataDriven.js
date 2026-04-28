@@ -3,27 +3,29 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const agriDataIntegrator = require('../services/AgriDataIntegrator');
 const cropRecommendationEngine = require('../services/CropRecommendationEngine');
+const { badRequest, notFound, serverError, ok } = require('../utils/httpResponses');
+
+function parseCoordinates(latitude, longitude) {
+  const lat = Number.parseFloat(latitude);
+  const lng = Number.parseFloat(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
 
 router.get('/recommend', async (req, res) => {
   try {
     const { latitude, longitude } = req.query;
     
     if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        error: 'Latitude and longitude are required'
-      });
+      return badRequest(res, 'Latitude and longitude are required');
     }
 
-    const lat = parseFloat(latitude);
-    const lng = parseFloat(longitude);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid coordinates'
-      });
+    const coordinates = parseCoordinates(latitude, longitude);
+    if (!coordinates) {
+      return badRequest(res, 'Invalid coordinates');
     }
+    const { lat, lng } = coordinates;
 
     const features = agriDataIntegrator.createMasterFeaturesTable(lat, lng);
 
@@ -57,9 +59,9 @@ router.get('/recommend', async (req, res) => {
       };
     });
 
-    res.json({
-      success: true,
-      data: {
+    return ok(
+      res,
+      {
         recommendations: enhancedRecommendations,
         location: locationData.location,
         soil: locationData.soil,
@@ -73,31 +75,23 @@ router.get('/recommend', async (req, res) => {
           },
           integrated_suitability: features.integrated_suitability
         }
-      }
-    });
+      },
+      { source: 'AgriSmart AI', isFallback: false }
+    );
 
   } catch (error) {
     logger.error('Error in data-driven recommendations:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 router.get('/datasets/available', (req, res) => {
   try {
     const datasetInfo = agriDataIntegrator.getDatasetInfo();
-    res.json({
-      success: true,
-      data: datasetInfo
-    });
+    return ok(res, datasetInfo, { source: 'AgriSmart AI', isFallback: false });
   } catch (error) {
     logger.error('Error getting dataset info:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -106,29 +100,19 @@ router.get('/analysis/historical-trends', async (req, res) => {
     const { latitude, longitude, crop } = req.query;
     
     if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        error: 'Latitude and longitude are required'
-      });
+      return badRequest(res, 'Latitude and longitude are required');
     }
 
-    const lat = parseFloat(latitude);
-    const lng = parseFloat(longitude);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid coordinates'
-      });
+    const coordinates = parseCoordinates(latitude, longitude);
+    if (!coordinates) {
+      return badRequest(res, 'Invalid coordinates');
     }
+    const { lat, lng } = coordinates;
 
     const features = agriDataIntegrator.createMasterFeaturesTable(lat, lng);
 
     if (!features || Object.keys(features.integrated_suitability).length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No historical data available for this location'
-      });
+      return notFound(res, 'No historical data available for this location');
     }
 
     const analysis = {
@@ -147,21 +131,18 @@ router.get('/analysis/historical-trends', async (req, res) => {
       };
     }
 
-    res.json({
-      success: true,
-      data: analysis
-    });
+    return ok(res, analysis, { source: 'AgriSmart AI', isFallback: false });
 
   } catch (error) {
     logger.error('Error analyzing historical trends:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 module.exports = router;
+
+
+
 
 
 

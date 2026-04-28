@@ -5,6 +5,7 @@ const apiMonitor = require('../services/monitoring/apiMonitor');
 const { CircuitBreakerManager } = require('../services/api/circuitBreaker');
 const { getCacheStats } = require('../middleware/cache');
 const { authenticateToken } = require('../middleware/auth');
+const { serverError, ok } = require('../utils/httpResponses');
 
 router.get('/metrics', authenticateToken, (req, res) => {
   try {
@@ -12,20 +13,18 @@ router.get('/metrics', authenticateToken, (req, res) => {
     const circuitBreakers = CircuitBreakerManager.getAllStatuses();
     const cacheStats = getCacheStats();
     
-    res.json({
-      success: true,
-      data: {
+    return ok(
+      res,
+      {
         ...metrics,
         circuit_breakers: circuitBreakers,
         cache: cacheStats,
         timestamp: new Date().toISOString()
-      }
-    });
+      },
+      { source: 'AgriSmart AI', isFallback: false }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -38,23 +37,27 @@ router.get('/health', (req, res) => {
       cb => cb.state === 'CLOSED'
     );
     
-    res.json({
-      success: true,
-      status: allHealthy ? 'healthy' : 'degraded',
-      apis: metrics.apis.map(api => ({
-        name: api.name,
-        status: parseFloat(api.success_rate) > 80 ? 'healthy' : 'degraded',
-        success_rate: api.success_rate,
-        avg_response_time: api.avg_response_time + 'ms',
-        circuit_breaker: circuitBreakers[`ai_${api.name}`]?.state || 'N/A'
-      })),
-      timestamp: new Date().toISOString()
-    });
+    return ok(
+      res,
+      {
+        status: allHealthy ? 'healthy' : 'degraded',
+        apis: metrics.apis.map(api => ({
+          name: api.name,
+          status: parseFloat(api.success_rate) > 80 ? 'healthy' : 'degraded',
+          success_rate: api.success_rate,
+          avg_response_time: api.avg_response_time + 'ms',
+          circuit_breaker: circuitBreakers[`ai_${api.name}`]?.state || 'N/A'
+        })),
+        timestamp: new Date().toISOString()
+      },
+      {
+        source: 'AgriSmart AI',
+        isFallback: !allHealthy,
+        degradedReason: !allHealthy ? 'monitoring_health_degraded' : null
+      }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -62,16 +65,17 @@ router.get('/circuit-breakers', authenticateToken, (req, res) => {
   try {
     const breakers = CircuitBreakerManager.getAllStatuses();
     
-    res.json({
-      success: true,
-      data: breakers,
-      timestamp: new Date().toISOString()
-    });
+    return ok(
+      res,
+      breakers,
+      {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        timestamp: new Date().toISOString()
+      }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
@@ -81,19 +85,24 @@ router.post('/reset-circuit-breaker/:name', authenticateToken, (req, res) => {
     const breaker = CircuitBreakerManager.getBreaker(name);
     breaker.reset();
     
-    res.json({
-      success: true,
-      message: `Circuit breaker ${name} reset successfully`
-    });
+    return ok(
+      res,
+      { message: `Circuit breaker ${name} reset successfully` },
+      {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        message: `Circuit breaker ${name} reset successfully`
+      }
+    );
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return serverError(res, error.message);
   }
 });
 
 module.exports = router;
+
+
+
 
 
 

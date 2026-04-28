@@ -1,4 +1,3 @@
-const axios = require('axios');
 let logger;
 try {
   logger = require('../utils/logger');
@@ -19,31 +18,53 @@ class RealTimeAgricultureService {
     this.cacheTimeout = 60000; // 1 minute
   }
 
+  getTimeBucket(minutes = 30) {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}-${Math.floor(now.getUTCHours() * 60 / minutes)}`;
+  }
+
+  hashToUnit(seed) {
+    const str = String(seed || 'default');
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return (Math.abs(hash) % 10000) / 10000;
+  }
+
+  valueFromSeed(seed, min, max, precision = 2) {
+    const v = min + (max - min) * this.hashToUnit(seed);
+    return Number(v.toFixed(precision));
+  }
+
   async getIoTData(farmId, sensorType = 'all') {
     try {
+      const bucket = this.getTimeBucket(30);
+      const baseSeed = `${farmId || 'demo-farm'}:${bucket}`;
       const sensors = {
         soil: {
-          moisture: Math.random() * 100,
-          temperature: 25 + Math.random() * 10,
-          ph: 6.5 + Math.random() * 1.5,
-          nitrogen: 50 + Math.random() * 30,
-          phosphorus: 30 + Math.random() * 20,
-          potassium: 40 + Math.random() * 25,
+          moisture: this.valueFromSeed(`${baseSeed}:soil:moisture`, 25, 85),
+          temperature: this.valueFromSeed(`${baseSeed}:soil:temperature`, 20, 34),
+          ph: this.valueFromSeed(`${baseSeed}:soil:ph`, 5.8, 7.8),
+          nitrogen: this.valueFromSeed(`${baseSeed}:soil:nitrogen`, 45, 85),
+          phosphorus: this.valueFromSeed(`${baseSeed}:soil:phosphorus`, 25, 60),
+          potassium: this.valueFromSeed(`${baseSeed}:soil:potassium`, 35, 70),
           timestamp: new Date().toISOString()
         },
         weather: {
-          temperature: 28 + Math.random() * 5,
-          humidity: 60 + Math.random() * 20,
-          rainfall: Math.random() * 10,
-          windSpeed: Math.random() * 15,
-          pressure: 1013 + Math.random() * 10,
+          temperature: this.valueFromSeed(`${baseSeed}:weather:temperature`, 22, 38),
+          humidity: this.valueFromSeed(`${baseSeed}:weather:humidity`, 40, 90),
+          rainfall: this.valueFromSeed(`${baseSeed}:weather:rainfall`, 0, 18),
+          windSpeed: this.valueFromSeed(`${baseSeed}:weather:wind`, 1, 18),
+          pressure: this.valueFromSeed(`${baseSeed}:weather:pressure`, 1000, 1026),
           timestamp: new Date().toISOString()
         },
         crop: {
-          health: 75 + Math.random() * 20,
-          growth: 60 + Math.random() * 30,
-          pestRisk: Math.random() * 30,
-          diseaseRisk: Math.random() * 25,
+          health: this.valueFromSeed(`${baseSeed}:crop:health`, 68, 96),
+          growth: this.valueFromSeed(`${baseSeed}:crop:growth`, 50, 92),
+          pestRisk: this.valueFromSeed(`${baseSeed}:crop:pestRisk`, 5, 45),
+          diseaseRisk: this.valueFromSeed(`${baseSeed}:crop:diseaseRisk`, 5, 40),
           timestamp: new Date().toISOString()
         }
       };
@@ -74,37 +95,41 @@ class RealTimeAgricultureService {
     try {
       const alerts = [];
       const now = new Date();
+      const iot = await this.getIoTData(`${state || 'region'}:${crop || 'general'}`, 'crop');
+      const cropRisk = iot?.data || {};
+      const demandIndex = this.valueFromSeed(`${state || 'India'}:${crop || 'all'}:${this.getTimeBucket(120)}:demand`, 0, 100);
+      const priceDelta = this.valueFromSeed(`${state || 'India'}:${crop || 'all'}:${this.getTimeBucket(120)}:priceDelta`, -8, 12);
 
-      if (Math.random() > 0.7) {
+      if (priceDelta >= 4) {
         alerts.push({
           type: 'price_surge',
-          severity: 'high',
+          severity: priceDelta >= 8 ? 'high' : 'medium',
           title: `${crop || 'Crop'} Price Surge Alert`,
-          message: `Prices have increased by ${(Math.random() * 10 + 5).toFixed(1)}% in ${state || 'your region'}`,
+          message: `Prices have increased by ${priceDelta.toFixed(1)}% in ${state || 'your region'}`,
           action: 'Consider selling now',
           timestamp: now.toISOString(),
-          priority: 'high'
+          priority: priceDelta >= 8 ? 'high' : 'medium'
         });
       }
 
-      if (Math.random() > 0.8) {
+      if (priceDelta <= -4) {
         alerts.push({
           type: 'price_drop',
           severity: 'medium',
           title: `${crop || 'Crop'} Price Drop Alert`,
-          message: `Prices have decreased. Consider waiting or storing.`,
+          message: `Prices have decreased by ${Math.abs(priceDelta).toFixed(1)}%. Consider waiting or storage.`,
           action: 'Monitor market trends',
           timestamp: now.toISOString(),
           priority: 'medium'
         });
       }
 
-      if (Math.random() > 0.75) {
+      if (demandIndex >= 72 || cropRisk.health >= 88) {
         alerts.push({
           type: 'high_demand',
           severity: 'high',
           title: 'High Demand Alert',
-          message: `High demand for ${crop || 'your crops'} in nearby markets`,
+          message: `High demand for ${crop || 'your crops'} in nearby markets (index ${Math.round(demandIndex)}/100)`,
           action: 'Contact local mandis',
           timestamp: now.toISOString(),
           priority: 'high'
@@ -130,41 +155,45 @@ class RealTimeAgricultureService {
     try {
       const alerts = [];
       const now = new Date();
+      const locationSeed = `${lat || 20.5937}:${lng || 78.9629}:${this.getTimeBucket(120)}`;
+      const rainfallRisk = this.valueFromSeed(`${locationSeed}:rainRisk`, 0, 100);
+      const droughtRisk = this.valueFromSeed(`${locationSeed}:droughtRisk`, 0, 100);
+      const heatRisk = this.valueFromSeed(`${locationSeed}:heatRisk`, 0, 100);
 
-      if (Math.random() > 0.6) {
+      if (rainfallRisk >= 60) {
         alerts.push({
           type: 'rain_forecast',
-          severity: 'medium',
+          severity: rainfallRisk >= 78 ? 'high' : 'medium',
           title: 'Rain Forecast',
-          message: 'Heavy rainfall expected in next 24-48 hours',
+          message: `Elevated rainfall risk (${Math.round(rainfallRisk)}%) expected in next 24-48 hours`,
           action: 'Harvest early or protect crops',
           timestamp: now.toISOString(),
-          priority: 'medium',
+          priority: rainfallRisk >= 78 ? 'high' : 'medium',
           validUntil: new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString()
         });
       }
 
-      if (Math.random() > 0.85) {
+      if (droughtRisk >= 82) {
         alerts.push({
           type: 'drought_warning',
           severity: 'high',
           title: 'Drought Warning',
-          message: 'Low rainfall detected. Irrigation may be needed.',
+          message: `Low rainfall probability detected (risk ${Math.round(droughtRisk)}%). Irrigation may be needed.`,
           action: 'Check irrigation systems',
           timestamp: now.toISOString(),
           priority: 'high'
         });
       }
 
-      if (Math.random() > 0.7) {
+      if (heatRisk >= 65) {
         alerts.push({
           type: 'temperature_extreme',
-          severity: 'medium',
+          severity: heatRisk >= 82 ? 'high' : 'medium',
           title: 'Temperature Alert',
-          message: 'Extreme temperatures expected. Protect sensitive crops.',
+          message: `Extreme temperature risk detected (${Math.round(heatRisk)}%). Protect sensitive crops.`,
           action: 'Use shade nets or irrigation',
           timestamp: now.toISOString(),
-          priority: 'medium'
+          priority: heatRisk >= 82 ? 'high' : 'medium'
         });
       }
 
@@ -231,7 +260,7 @@ class RealTimeAgricultureService {
     }
   }
 
-  async getPestDiseaseWarning(farmId, crop) {
+  async getPestDiseaseWarning(farmId, _crop) {
     try {
       const iotData = await this.getIoTData(farmId, 'crop');
       const cropData = iotData.data;

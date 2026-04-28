@@ -28,26 +28,48 @@ import {
   Cloud as WeatherIcon,
   AccountBalance as SchemeIcon,
   Chat as ChatIcon,
-  Map as MapIcon,
   Analytics as AnalyticsIcon,
   ArrowForward as ArrowIcon,
   CheckCircle as CheckIcon,
   Schedule as ScheduleIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
 import api from '../services/api';
 import logger from '../services/logger';
+import { getBestAvailableLocation } from '../services/realtimeLocation';
+
+const extractApiPayload = (responseData) => {
+  const dataPayload = responseData?.data && typeof responseData.data === 'object' ? responseData.data : {};
+  return {
+    ...dataPayload,
+    ...responseData
+  };
+};
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { t, language } = useLanguage();
   const navigate = useNavigate();
+
+  const { data: dashboardLocation } = useQuery({
+    queryKey: ['dashboard', 'location'],
+    queryFn: async () => {
+      try {
+        return await getBestAvailableLocation(api, localStorage.getItem('language') || 'en');
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 10 * 60 * 1000
+  });
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ['analytics', 'dashboard'],
     queryFn: async () => {
       try {
         const response = await api.get('/analytics/dashboard');
-        return response.data.data || {};
+        return extractApiPayload(response.data);
       } catch (error) {
         logger.error('Failed to fetch analytics', error);
         return {};
@@ -63,7 +85,7 @@ export default function Dashboard() {
     queryFn: async () => {
       try {
         const response = await api.get('/crops/analytics');
-        return response.data.data || {};
+        return extractApiPayload(response.data);
       } catch (error) {
         logger.error('Failed to fetch crops', error);
         return {};
@@ -74,15 +96,29 @@ export default function Dashboard() {
   });
 
   const { data: weatherAlerts } = useQuery({
-    queryKey: ['weather', 'alerts'],
+    queryKey: ['weather', 'alerts', dashboardLocation?.lat, dashboardLocation?.lng],
     queryFn: async () => {
       try {
-        const response = await api.get('/weather/alerts?lat=28.6139&lng=77.2090');
-        return response.data.data || [];
+        if (dashboardLocation?.lat && dashboardLocation?.lng) {
+          const response = await api.get('/weather/alerts', {
+            params: {
+              lat: dashboardLocation.lat,
+              lng: dashboardLocation.lng
+            }
+          });
+          const payload = extractApiPayload(response.data);
+          return payload.alerts || payload.data || [];
+        }
+
+        // Fallback to general alerts when location coordinates are not available.
+        const alertsResponse = await api.get('/alerts');
+        const payload = extractApiPayload(alertsResponse.data);
+        return payload.alerts || payload.data || [];
       } catch (error) {
         try {
           const alertsResponse = await api.get('/alerts');
-          return alertsResponse.data.data || [];
+          const payload = extractApiPayload(alertsResponse.data);
+          return payload.alerts || payload.data || [];
         } catch {
           return [];
         }
@@ -95,7 +131,8 @@ export default function Dashboard() {
     queryFn: async () => {
       try {
         const response = await api.get('/market/prices', { params: { limit: 500 } });
-        const data = response.data.data || [];
+        const payload = extractApiPayload(response.data);
+        const data = payload.data || [];
         return data.filter(item => item.price || (item.commodity && item.market));
       } catch (error) {
         logger.error('Failed to fetch market prices', error);
@@ -108,13 +145,14 @@ export default function Dashboard() {
   });
 
   const { data: schemesData } = useQuery({
-    queryKey: ['schemes', 'summary'],
+    queryKey: ['schemes', 'summary', dashboardLocation?.state, dashboardLocation?.district],
     queryFn: async () => {
       try {
+        const profileLocation = user?.farmerProfile?.location || {};
         const farmerProfile = {
           location: {
-            state: user?.farmerProfile?.location?.state || 'Punjab',
-            district: user?.farmerProfile?.location?.district || 'Ludhiana'
+            state: profileLocation.state || dashboardLocation?.state || '',
+            district: profileLocation.district || dashboardLocation?.district || dashboardLocation?.city || ''
           },
           farmDetails: {
             landSize: user?.farmerProfile?.landDetails?.totalArea || 2.5,
@@ -127,7 +165,7 @@ export default function Dashboard() {
           farmerProfile,
           filters: { showOnlyEligible: false }
         });
-        return response.data.data || {};
+        return extractApiPayload(response.data);
       } catch {
         return {};
       }
@@ -136,12 +174,13 @@ export default function Dashboard() {
     staleTime: 10 * 60 * 1000 // 10 minutes
   });
 
-  const { data: diseasesData } = useQuery({
+  useQuery({
     queryKey: ['diseases', 'recent'],
     queryFn: async () => {
       try {
         const response = await api.get('/diseases?limit=5');
-        return response.data.data || [];
+        const payload = extractApiPayload(response.data);
+        return payload.data || [];
       } catch {
         return [];
       }
@@ -150,28 +189,28 @@ export default function Dashboard() {
 
   const stats = [
     {
-      title: 'Active Crops',
+      title: t('dashboard.activeCrops'),
       value: cropsData?.summary?.totalCrops || cropsData?.summary?.activeCrops || analytics?.cropStats?.topCrops?.length || 0,
       icon: <CropIcon sx={{ fontSize: 40 }} />,
       color: '#4caf50',
       link: '/crops'
     },
     {
-      title: 'Disease Detections',
+      title: t('dashboard.diseaseDetections', 'Disease Detections'),
       value: analytics?.userStats?.diseaseDetections || analytics?.diseaseStats?.commonDiseases?.length || 0,
       icon: <DiseaseIcon sx={{ fontSize: 40 }} />,
       color: '#f44336',
       link: '/diseases'
     },
     {
-      title: 'Weather Alerts',
+      title: t('dashboard.weatherAlerts'),
       value: weatherAlerts?.length || analytics?.weatherStats?.alertStatus?.active || 0,
       icon: <AlertIcon sx={{ fontSize: 40 }} />,
       color: '#ff9800',
       link: '/weather'
     },
     {
-      title: 'Eligible Schemes',
+      title: t('dashboard.eligibleSchemes', 'Eligible Schemes'),
       value: schemesData?.eligibleSchemes || schemesData?.totalSchemesFound || 0,
       icon: <SchemeIcon sx={{ fontSize: 40 }} />,
       color: '#2196f3',
@@ -180,34 +219,14 @@ export default function Dashboard() {
   ];
 
   const quickActions = [
-    { title: 'Crop Recommendation', icon: <CropIcon />, path: '/crop-recommendation', color: '#4caf50' },
-    { title: 'Disease Detection', icon: <DiseaseIcon />, path: '/diseases', color: '#f44336' },
-    { title: 'Market Prices', icon: <MarketIcon />, path: '/market', color: '#ff9800' },
-    { title: 'Weather Forecast', icon: <WeatherIcon />, path: '/weather', color: '#2196f3' },
-    { title: 'Government Schemes', icon: <SchemeIcon />, path: '/government-schemes', color: '#9c27b0' },
-    { title: 'AgriChat', icon: <ChatIcon />, path: '/agri-chat', color: '#00bcd4' },
-    { title: 'AgriMap', icon: <MapIcon />, path: '/agri-map', color: '#795548' },
-    { title: 'Analytics', icon: <AnalyticsIcon />, path: '/analytics', color: '#607d8b' }
+    { title: t('nav.cropRecommendation'), icon: <CropIcon />, path: '/crop-recommendation', color: '#4caf50' },
+    { title: t('dashboard.diseaseDetection', 'Disease Detection'), icon: <DiseaseIcon />, path: '/diseases', color: '#f44336' },
+    { title: t('dashboard.marketPrices', 'Market Prices'), icon: <MarketIcon />, path: '/market', color: '#ff9800' },
+    { title: t('dashboard.weatherForecast', 'Weather Forecast'), icon: <WeatherIcon />, path: '/weather', color: '#2196f3' },
+    { title: t('nav.governmentSchemes'), icon: <SchemeIcon />, path: '/government-schemes', color: '#9c27b0' },
+    { title: t('nav.agriChat'), icon: <ChatIcon />, path: '/agri-chat', color: '#00bcd4' },
+    { title: t('nav.analytics'), icon: <AnalyticsIcon />, path: '/analytics', color: '#607d8b' }
   ];
-
-  const cropGrowthData = React.useMemo(() => {
-    if (analytics?.cropStats?.seasonalTrends) {
-      const trends = analytics.cropStats.seasonalTrends;
-      return [
-        { month: 'Kharif', crops: trends.kharif?.length || 0 },
-        { month: 'Rabi', crops: trends.rabi?.length || 0 },
-        { month: 'Zaid', crops: trends.zaid?.length || 0 }
-      ];
-    }
-    return [
-      { month: 'Jan', crops: 5 },
-      { month: 'Feb', crops: 8 },
-      { month: 'Mar', crops: 12 },
-      { month: 'Apr', crops: 15 },
-      { month: 'May', crops: 18 },
-      { month: 'Jun', crops: 20 }
-    ];
-  }, [analytics]);
 
   const marketTrendsData = React.useMemo(() => {
     if (!marketData || !Array.isArray(marketData) || marketData.length === 0) {
@@ -271,6 +290,24 @@ export default function Dashboard() {
     return aggregated.slice(0, 12);
   }, [marketData, analytics]);
 
+  const localizeCommodityName = React.useCallback((value) => {
+    const text = String(value || '').trim();
+    if (!text || language !== 'ta') return text;
+    const map = {
+      groundnut: 'நிலக்கடலை',
+      maize: 'மக்காச்சோளம்',
+      'moong dal': 'பாசிப்பருப்பு',
+      mustard: 'கடுகு',
+      onion: 'வெங்காயம்',
+      potato: 'உருளைக்கிழங்கு',
+      rice: 'அரிசி',
+      tomato: 'தக்காளி',
+      'toor dal': 'துவரம் பருப்பு',
+      wheat: 'கோதுமை'
+    };
+    return map[text.toLowerCase()] || text;
+  }, [language]);
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       {(analyticsLoading || cropsLoading) && (
@@ -281,22 +318,22 @@ export default function Dashboard() {
 
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Welcome back, {user?.name || 'Farmer'}! 👋
+          {t('dashboard.welcomeBack', { name: user?.name || t('dashboard.farmer', 'Farmer'), defaultValue: 'Welcome back, {{name}}! 👋' })}
         </Typography>
         <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-          Here's your comprehensive agricultural overview
+          {t('dashboard.overviewText', "Here's your comprehensive agricultural overview")}
         </Typography>
         {analytics?.userStats && (
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <Chip
               icon={<CheckIcon />}
-              label={`Engagement Score: ${analytics.userStats.engagementScore || 0}/100`}
+              label={t('dashboard.engagementScore', { score: analytics.userStats.engagementScore || 0, defaultValue: 'Engagement Score: {{score}}/100' })}
               color="primary"
               variant="outlined"
             />
             <Chip
               icon={<ScheduleIcon />}
-              label={`Total Queries: ${analytics.userStats.totalQueries || 0}`}
+              label={t('dashboard.totalQueries', { count: analytics.userStats.totalQueries || 0, defaultValue: 'Total Queries: {{count}}' })}
               color="secondary"
               variant="outlined"
             />
@@ -339,7 +376,7 @@ export default function Dashboard() {
 
       <Paper sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" gutterBottom>
-          Quick Actions
+          {t('dashboard.quickActions', 'Quick Actions')}
         </Typography>
         <Grid container spacing={2}>
           {quickActions.map((action, index) => (
@@ -372,13 +409,13 @@ export default function Dashboard() {
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box>
-                <Typography variant="h6">Market Price Trends</Typography>
+                <Typography variant="h6">{t('dashboard.marketPriceTrends', 'Market Price Trends')}</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Average prices across all markets and states
+                  {t('dashboard.marketPriceCaption', 'Average prices across all markets and states')}
                 </Typography>
               </Box>
               <Button size="small" variant="outlined" onClick={() => navigate('/market')} endIcon={<ArrowIcon />}>
-                View All
+                {t('common.viewAll', 'View All')}
               </Button>
             </Box>
             {marketTrendsData.length > 0 ? (
@@ -400,7 +437,7 @@ export default function Dashboard() {
                       <ListItemText
                         primary={
                           <Typography component="span" variant="body1" sx={{ fontWeight: 500, display: 'inline-block' }}>
-                            {item.commodity}
+                            {localizeCommodityName(item.commodity)}
                             {item.priceRange && (
                               <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
                                 (₹{item.priceRange.min.toFixed(2)} - ₹{item.priceRange.max.toFixed(2)})
@@ -413,7 +450,7 @@ export default function Dashboard() {
                             ₹{item.price?.toFixed(2) || item.price || 0}/kg
                             {item.sampleCount && (
                               <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                                • {item.sampleCount} {item.sampleCount === 1 ? 'market' : 'markets'}
+                                • {item.sampleCount} {item.sampleCount === 1 ? t('market.marketLabel', 'market') : t('market.markets', 'markets')}
                               </Typography>
                             )}
                           </Typography>
@@ -434,13 +471,13 @@ export default function Dashboard() {
                 ))}
               </List>
             ) : (
-              <Alert severity="info">No market data available. Check back later!</Alert>
+              <Alert severity="info">{t('dashboard.noMarketData', 'No market data available. Check back later!')}</Alert>
             )}
           </Paper>
 
           <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
-              Recent Activity
+              {t('dashboard.recentActivity', 'Recent Activity')}
             </Typography>
             {analytics?.userStats?.recentActivity && analytics.userStats.recentActivity.length > 0 ? (
               <List>
@@ -456,7 +493,7 @@ export default function Dashboard() {
                 ))}
               </List>
             ) : (
-              <Alert severity="info">No recent activity. Start using the platform to see your activity here!</Alert>
+              <Alert severity="info">{t('dashboard.noRecentActivity', 'No recent activity. Start using the platform to see your activity here!')}</Alert>
             )}
           </Paper>
         </Grid>
@@ -464,9 +501,9 @@ export default function Dashboard() {
         <Grid item xs={12} md={4}>
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Recent Crops</Typography>
+              <Typography variant="h6">{t('dashboard.recentCrops', 'Recent Crops')}</Typography>
               <Button size="small" onClick={() => navigate('/crops')}>
-                View All
+                {t('common.viewAll', 'View All')}
               </Button>
             </Box>
             {cropsData?.recentCrops && Array.isArray(cropsData.recentCrops) && cropsData.recentCrops.length > 0 ? (
@@ -478,8 +515,12 @@ export default function Dashboard() {
                         <CropIcon color="success" />
                       </ListItemIcon>
                       <ListItemText
-                        primary={crop.name || 'Unknown Crop'}
-                        secondary={`Status: ${crop.status || 'Active'} | Health: ${crop.healthScore || 'N/A'}%`}
+                        primary={crop.name || t('dashboard.unknownCrop', 'Unknown Crop')}
+                        secondary={t('dashboard.cropStatusHealth', {
+                          status: crop.status || t('dashboard.active', 'Active'),
+                          health: crop.healthScore || t('common.notAvailable'),
+                          defaultValue: 'Status: {{status}} | Health: {{health}}%'
+                        })}
                       />
                     </ListItem>
                     {index < cropsData.recentCrops.length - 1 && <Divider />}
@@ -487,15 +528,15 @@ export default function Dashboard() {
                 ))}
               </List>
             ) : (
-              <Alert severity="info">No crops found. Add your first crop to get started!</Alert>
+              <Alert severity="info">{t('dashboard.noCropsFound', 'No crops found. Add your first crop to get started!')}</Alert>
             )}
           </Paper>
 
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Weather Alerts</Typography>
+              <Typography variant="h6">{t('dashboard.weatherAlerts')}</Typography>
               <Button size="small" onClick={() => navigate('/weather')}>
-                View All
+                {t('common.viewAll', 'View All')}
               </Button>
             </Box>
             {weatherAlerts && Array.isArray(weatherAlerts) && weatherAlerts.length > 0 ? (
@@ -506,21 +547,21 @@ export default function Dashboard() {
                     severity={alert.severity === 'warning' ? 'warning' : 'info'}
                     sx={{ mb: 1 }}
                   >
-                    <Typography variant="subtitle2">{alert.event || alert.title || 'Alert'}</Typography>
+                    <Typography variant="subtitle2">{alert.event || alert.title || t('dashboard.alert', 'Alert')}</Typography>
                     <Typography variant="body2">{alert.description || alert.message || ''}</Typography>
                   </Alert>
                 ))}
               </Box>
             ) : (
-              <Alert severity="success">No weather alerts at this time.</Alert>
+              <Alert severity="success">{t('dashboard.noWeatherAlertsNow', 'No weather alerts at this time.')}</Alert>
             )}
           </Paper>
 
           <Paper sx={{ p: 3 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Recommended Schemes</Typography>
+              <Typography variant="h6">{t('dashboard.recommendedSchemes', 'Recommended Schemes')}</Typography>
               <Button size="small" onClick={() => navigate('/government-schemes')}>
-                View All
+                {t('common.viewAll', 'View All')}
               </Button>
             </Box>
             {schemesData?.topRecommendations && Array.isArray(schemesData.topRecommendations) && schemesData.topRecommendations.length > 0 ? (
@@ -532,8 +573,8 @@ export default function Dashboard() {
                         <SchemeIcon color="primary" />
                       </ListItemIcon>
                       <ListItemText
-                        primary={scheme.name || scheme.title || 'Unknown Scheme'}
-                        secondary={scheme.category || scheme.description || 'General'}
+                        primary={scheme.name || scheme.title || t('dashboard.unknownScheme', 'Unknown Scheme')}
+                        secondary={scheme.category || scheme.description || t('governmentSchemes.general')}
                       />
                     </ListItem>
                     {index < schemesData.topRecommendations.length - 1 && <Divider />}
@@ -549,8 +590,8 @@ export default function Dashboard() {
                         <SchemeIcon color="primary" />
                       </ListItemIcon>
                       <ListItemText
-                        primary={scheme.name || scheme.title || 'Unknown Scheme'}
-                        secondary={scheme.category || scheme.description || 'General'}
+                        primary={scheme.name || scheme.title || t('dashboard.unknownScheme', 'Unknown Scheme')}
+                        secondary={scheme.category || scheme.description || t('governmentSchemes.general')}
                       />
                     </ListItem>
                     {index < 2 && <Divider />}
@@ -558,7 +599,7 @@ export default function Dashboard() {
                 ))}
               </List>
             ) : (
-              <Alert severity="info">No schemes available. Check back later!</Alert>
+              <Alert severity="info">{t('dashboard.noSchemesNow', 'No schemes available. Check back later!')}</Alert>
             )}
           </Paper>
         </Grid>
@@ -567,23 +608,23 @@ export default function Dashboard() {
       {analytics?.systemStats && (
         <Paper sx={{ p: 3, mt: 3 }}>
           <Typography variant="h6" gutterBottom>
-            System Overview
+            {t('dashboard.systemOverview', 'System Overview')}
           </Typography>
           <Grid container spacing={2}>
             <Grid item xs={6} md={3}>
-              <Typography variant="body2" color="text.secondary">Total Users</Typography>
+              <Typography variant="body2" color="text.secondary">{t('dashboard.totalUsers', 'Total Users')}</Typography>
               <Typography variant="h6">{analytics.systemStats.totalUsers || 0}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
-              <Typography variant="body2" color="text.secondary">Active Today</Typography>
+              <Typography variant="body2" color="text.secondary">{t('dashboard.activeToday', 'Active Today')}</Typography>
               <Typography variant="h6">{analytics.systemStats.activeUsers || 0}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
-              <Typography variant="body2" color="text.secondary">Crop Recommendations</Typography>
+              <Typography variant="body2" color="text.secondary">{t('dashboard.cropRecommendations', 'Crop Recommendations')}</Typography>
               <Typography variant="h6">{analytics.systemStats.totalCropRecommendations || 0}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
-              <Typography variant="body2" color="text.secondary">Disease Detections</Typography>
+              <Typography variant="body2" color="text.secondary">{t('dashboard.diseaseDetections', 'Disease Detections')}</Typography>
               <Typography variant="h6">{analytics.systemStats.totalDiseaseDetections || 0}</Typography>
             </Grid>
           </Grid>

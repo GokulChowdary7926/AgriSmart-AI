@@ -1,18 +1,16 @@
 import api from './api';
 import logger from './logger';
+import { getStoredLocation } from './realtimeLocation';
 
 
 const checkEndpointHealth = async (endpoint) => {
   const startTime = Date.now();
-  
   try {
     const response = await api.get(endpoint.url, {
-      timeout: 5000,
-      validateStatus: (status) => status < 500 // Don't throw on 4xx
+      timeout: 6000,
+      validateStatus: (status) => status < 500
     });
-    
     const responseTime = Date.now() - startTime;
-    
     return {
       name: endpoint.name,
       status: response.status >= 200 && response.status < 300 ? 'healthy' : 'unhealthy',
@@ -23,22 +21,26 @@ const checkEndpointHealth = async (endpoint) => {
     };
   } catch (error) {
     const responseTime = Date.now() - startTime;
-    
     return {
       name: endpoint.name,
       status: 'offline',
       responseTime: `${responseTime}ms`,
       statusCode: error.response?.status || null,
       timestamp: new Date().toISOString(),
-      error: error.message || 'Request failed'
+      error: 'Unavailable'
     };
   }
 };
 
 export const checkAPIHealth = async () => {
+  const location = getStoredLocation();
+  const weatherQuery = location?.lat && location?.lng
+    ? `/weather/current?lat=${encodeURIComponent(location.lat)}&lng=${encodeURIComponent(location.lng)}`
+    : '/weather/current';
+
   const endpoints = [
     { name: 'Auth API', url: '/auth/me' },
-    { name: 'Weather API', url: '/weather/current?lat=28.6139&lng=77.2090' },
+    { name: 'Weather API', url: weatherQuery },
     { name: 'Market API', url: '/market/prices?limit=1' },
     { name: 'Crop API', url: '/crops?limit=1' },
     { name: 'Disease API', url: '/diseases?limit=1' },
@@ -128,6 +130,9 @@ export default {
   getHealthSummary,
   checkEndpointHealth
 };
+
+
+
 
 
 

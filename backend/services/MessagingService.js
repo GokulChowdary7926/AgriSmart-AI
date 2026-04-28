@@ -46,7 +46,7 @@ class MessagingService {
     }
   }
 
-  async sendSMS(toPhone, message, templateId = null, variables = {}) {
+  async sendSMS(toPhone, message, _templateId = null, _variables = {}) {
     try {
       if (this.twilioClient) {
         const twilioMessage = await this.twilioClient.messages.create({
@@ -308,7 +308,7 @@ class MessagingService {
     return message + footer;
   }
 
-  async getUserPreferences(userId) {
+  async getUserPreferences(_userId) {
     return {
       phone: '+911234567890',
       language: 'en',

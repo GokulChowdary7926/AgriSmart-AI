@@ -105,7 +105,7 @@ class PaymentService {
     }
   }
 
-  async createPayTMOrder(orderId, amount, currency, userId, metadata) {
+  async createPayTMOrder(orderId, amount, currency, userId, _metadata) {
     const merchantId = process.env.PAYTM_MERCHANT_ID;
     const merchantKey = process.env.PAYTM_MERCHANT_KEY;
     
@@ -174,7 +174,7 @@ class PaymentService {
     };
   }
 
-  async createUPIPayment(orderId, amount, currency, userId, metadata) {
+  async createUPIPayment(orderId, amount, currency, _userId, _metadata) {
     const upiId = process.env.UPI_MERCHANT_ID || 'agrismartai@axisbank';
     const amountRupees = amount / 100;
     
@@ -232,12 +232,6 @@ class PaymentService {
     }
     
     try {
-      const params = {
-        razorpay_order_id: orderId,
-        razorpay_payment_id: paymentId,
-        razorpay_signature: signature
-      };
-      
       const generatedSignature = crypto
         .createHmac('sha256', this.razorpayKeySecret)
         .update(`${orderId}|${paymentId}`)

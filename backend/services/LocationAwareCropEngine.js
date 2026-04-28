@@ -977,7 +977,7 @@ class LocationAwareCropEngine {
     return Math.min(score / 100, 1.0);
   }
 
-  _getElevation(lat, lon) {
+  _getElevation(_lat, _lon) {
     return 200.0;
   }
 
@@ -986,15 +986,15 @@ class LocationAwareCropEngine {
     return state;
   }
 
-  _calculateFrostFreeDays(lat, lon) {
+  _calculateFrostFreeDays(_lat, _lon) {
     return 300;
   }
 
-  _getAvgRainfall(lat, lon) {
+  _getAvgRainfall(_lat, _lon) {
     return 800.0;
   }
 
-  _getAvgTemp(lat, lon) {
+  _getAvgTemp(_lat, _lon) {
     return 25.0;
   }
 }

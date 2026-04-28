@@ -21,9 +21,8 @@ class IoTService {
             reconnectStrategy: false
           }
         });
-        this.redisClient.on('error', (err) => {
+        this.redisClient.on('error', (_err) => {
           if (!this.redisErrorLogged) {
-            logger.warn('⚠️ Redis not available, continuing without cache');
             this.redisErrorLogged = true;
           }
           this.redisClient.quit().catch(() => {});
@@ -36,7 +35,6 @@ class IoTService {
           this.redisClient.quit().catch(() => {});
         });
       } catch (error) {
-        logger.warn('⚠️ Redis not available, continuing without cache');
         this.redisClient = null;
       }
     }
@@ -76,9 +74,9 @@ class IoTService {
         this.handleMQTTMessage(topic, message);
       });
       
-      this.mqttClient.on('error', (error) => {
+      this.mqttClient.on('error', (_error) => {
         if (!this.mqttErrorLogged) {
-          logger.warn('⚠️ MQTT broker not available, continuing without IoT features');
+          logger.info('MQTT unavailable: optional IoT features disabled');
           this.mqttErrorLogged = true;
         }
       });
@@ -150,7 +148,7 @@ class IoTService {
         type: reading.sensor_type
       };
       
-      await this.redisClient.setEx(key, 3600, JSON.stringify(data)); // 1 hour TTL
+      await this.redisClient.setEx(key, 3600, JSON.stringify(data));
       
       const tsKey = `sensor:${reading.sensor_id}:history`;
       const tsData = JSON.stringify({
@@ -201,7 +199,7 @@ class IoTService {
     
     if (this.redisClient) {
       const alertKey = `alert:${reading.sensor_id}:${Date.now()}`;
-      await this.redisClient.setEx(alertKey, 86400, JSON.stringify(alertData)); // 24 hours
+      await this.redisClient.setEx(alertKey, 86400, JSON.stringify(alertData));
     }
     
     if (this.mqttClient) {
@@ -343,7 +341,7 @@ class IoTService {
     }
   }
 
-  generateInsights(sensorId, stats, values) {
+  generateInsights(sensorId, stats, _values) {
     const insights = [];
     const sensorType = this.getSensorType(sensorId);
     
@@ -491,7 +489,7 @@ class IoTService {
     };
     
     const soilFactor = soilFactors[soilType?.toLowerCase()] || 1.0;
-    const waterAmount = deficit * soilFactor * 10; // Convert to mm
+    const waterAmount = deficit * soilFactor * 10;
     
     return Math.round(waterAmount * 10) / 10;
   }
@@ -506,6 +504,9 @@ class IoTService {
 }
 
 module.exports = new IoTService();
+
+
+
 
 
 

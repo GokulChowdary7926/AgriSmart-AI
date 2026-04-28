@@ -1,23 +1,79 @@
 const WeatherData = require('../models/WeatherData');
 const WeatherService = require('../services/WeatherService');
+const locationService = require('../services/locationService');
 const logger = require('../utils/logger');
-const axios = require('axios');
+const resilientHttpClient = require('../services/api/resilientHttpClient');
+const { badRequest, serverError, ok } = require('../utils/httpResponses');
 
 class WeatherController {
+  static success(res, data, { isFallback = false, source = 'AgriSmart AI', degradedReason = null } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {})
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 365 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
+  static parseDateOrDefault(value, fallback) {
+    if (!value) return fallback;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+  }
+
+  static parseCoordinates(lat, lng) {
+    const parsedLat = Number.parseFloat(lat);
+    const parsedLng = Number.parseFloat(lng);
+    if (Number.isNaN(parsedLat) || Number.isNaN(parsedLng)) {
+      return null;
+    }
+    if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) {
+      return null;
+    }
+    return { lat: parsedLat, lng: parsedLng };
+  }
+
   static async getCurrent(req, res) {
     try {
-      const { lat, lng, latitude, longitude, city } = req.query;
+      const { lat, lng, lon, latitude, longitude, city } = req.query;
       
-      const latValue = lat || latitude;
-      const lngValue = lng || longitude;
+      let latValue = lat || latitude;
+      let lngValue = lng || lon || longitude;
+
+      if ((!latValue || !lngValue) && city) {
+        try {
+          const results = await locationService.searchByQuery(city, { limit: 1, countryCodes: 'in' });
+          if (results && results.length > 0) {
+            latValue = results[0].latitude;
+            lngValue = results[0].longitude;
+            logger.info(`Resolved city "${city}" to coordinates via OpenStreetMap`);
+          }
+        } catch (geoErr) {
+          logger.warn('OpenStreetMap geocode for city failed:', geoErr.message);
+        }
+      }
       
       let weather = null;
+      let isFallback = false;
+      let degradedReason = null;
+      let coordinates = null;
+      if (latValue || lngValue) {
+        coordinates = WeatherController.parseCoordinates(latValue, lngValue);
+        if (!coordinates) {
+          return badRequest(res, 'Invalid latitude/longitude values');
+        }
+      }
       
-      if (latValue && lngValue) {
+      if (coordinates) {
         try {
           const weatherData = await WeatherService.getWeatherByCoords(
-            parseFloat(latValue),
-            parseFloat(lngValue)
+            coordinates.lat,
+            coordinates.lng
           );
           
           weather = {
@@ -39,25 +95,29 @@ class WeatherController {
             wind: {
               speed: weatherData.wind_speed,
               degree: weatherData.wind_degree,
-              direction: this.getWindDirection(weatherData.wind_degree)
+              direction: WeatherController.getWindDirection(weatherData.wind_degree)
             },
             clouds: weatherData.clouds,
             location: {
               city: weatherData.location || city || 'Current Location',
               country: weatherData.country || 'IN',
-              coordinates: [parseFloat(latValue), parseFloat(lngValue)]
+              coordinates: [coordinates.lat, coordinates.lng]
             },
             sunrise: weatherData.sunrise,
             sunset: weatherData.sunset,
-            source: weatherData.source || 'api',
+            source: 'AgriSmart AI',
             timestamp: weatherData.timestamp || new Date().toISOString()
           };
         } catch (apiError) {
           logger.warn('WeatherService error:', apiError.message);
+          isFallback = true;
+          degradedReason = 'weather_provider_unavailable';
         }
       }
       
       if (!weather) {
+        isFallback = true;
+        degradedReason = degradedReason || 'weather_data_unavailable';
         weather = {
           temperature: { current: 25, min: 20, max: 30, feels_like: 24 },
           humidity: 60,
@@ -67,26 +127,24 @@ class WeatherController {
           wind: { speed: 5, degree: 180, direction: 'S' },
           clouds: 20,
           location: { city: city || 'Unknown', state: 'Unknown' },
-          source: 'mock',
+          source: 'AgriSmart AI',
           timestamp: new Date().toISOString()
         };
       }
       
-      res.json({
-        success: true,
-        data: weather
-      });
+      return WeatherController.success(res, weather, { isFallback, degradedReason });
     } catch (error) {
       logger.error('Error fetching current weather:', error);
-      res.json({
-        success: true,
-        data: {
+      return WeatherController.success(
+        res,
+        {
           temperature: { current: 25, min: 20, max: 30 },
           humidity: 60,
           precipitation: { rainfall: 0 },
           conditions: { main: 'Clear', description: 'Clear sky' }
-        }
-      });
+        },
+        { isFallback: true, degradedReason: 'weather_controller_error' }
+      );
     }
   }
   
@@ -101,15 +159,16 @@ class WeatherController {
       const { lat, lng, startDate, endDate } = req.query;
       
       if (!lat || !lng) {
-        return res.status(400).json({
-          success: false,
-          error: 'Latitude and longitude are required'
-        });
+        return badRequest(res, 'Latitude and longitude are required');
       }
       
-      const coordinates = [parseFloat(lng), parseFloat(lat)];
-      const start = startDate ? new Date(startDate) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const end = endDate ? new Date(endDate) : new Date();
+      const parsedCoordinates = WeatherController.parseCoordinates(lat, lng);
+      if (!parsedCoordinates) {
+        return badRequest(res, 'Invalid latitude/longitude values');
+      }
+      const coordinates = [parsedCoordinates.lng, parsedCoordinates.lat];
+      const start = WeatherController.parseDateOrDefault(startDate, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+      const end = WeatherController.parseDateOrDefault(endDate, new Date());
       
       let history = [];
       
@@ -121,16 +180,10 @@ class WeatherController {
         logger.warn('WeatherData.getHistory not available or failed:', dbError.message);
       }
       
-      res.json({
-        success: true,
-        data: history
-      });
+      return WeatherController.success(res, history);
     } catch (error) {
       logger.error('Error fetching weather history:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
@@ -139,17 +192,19 @@ class WeatherController {
       const { lat, lng, ...weatherData } = req.body;
       
       if (!lat || !lng) {
-        return res.status(400).json({
-          success: false,
-          error: 'Latitude and longitude are required'
-        });
+        return badRequest(res, 'Latitude and longitude are required');
       }
       
+      const parsedCoordinates = WeatherController.parseCoordinates(lat, lng);
+      if (!parsedCoordinates) {
+        return badRequest(res, 'Invalid latitude/longitude values');
+      }
+
       const weather = new WeatherData({
         ...weatherData,
         location: {
           type: 'Point',
-          coordinates: [parseFloat(lng), parseFloat(lat)],
+          coordinates: [parsedCoordinates.lng, parsedCoordinates.lat],
           ...weatherData.location
         },
         timestamp: weatherData.timestamp || new Date()
@@ -157,67 +212,70 @@ class WeatherController {
       
       await weather.save();
       
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         data: weather
       });
     } catch (error) {
       logger.error('Error creating weather data:', error);
-      res.status(400).json({
-        success: false,
-        error: error.message
-      });
+      return badRequest(res, error.message);
     }
   }
   
   static async getForecast(req, res) {
     try {
       const { lat, lng, days = 10 } = req.query;
+      const safeDays = WeatherController.parsePositiveInt(days, 10, { min: 1, max: 14 });
       
       if (!lat || !lng) {
-        return res.status(400).json({
-          success: false,
-          error: 'Latitude and longitude are required'
-        });
+        return badRequest(res, 'Latitude and longitude are required');
       }
       
+      const parsedCoordinates = WeatherController.parseCoordinates(lat, lng);
+      if (!parsedCoordinates) {
+        return badRequest(res, 'Invalid latitude/longitude values');
+      }
+
       let forecastData = null;
+      let isFallback = false;
+      let degradedReason = null;
       try {
         const forecast = await WeatherService.getWeatherForecast(
-          parseFloat(lat),
-          parseFloat(lng)
+          parsedCoordinates.lat,
+          parsedCoordinates.lng
         );
         
         if (Array.isArray(forecast) && forecast.length > 0) {
           forecastData = forecast.map(item => ({
             date: item.date || new Date().toISOString(),
             temperature: {
-              day: item.temperature || 25,
-              min: item.min_temp || 20,
-              max: item.max_temp || 30
+              day: item.temperature ?? 25,
+              min: item.min_temp ?? 20,
+              max: item.max_temp ?? 30
             },
             conditions: {
               main: item.weather || 'Clear',
               description: item.description || 'Clear sky'
             },
-            humidity: item.humidity || 60,
+            humidity: item.humidity ?? 60,
             precipitation: {
               probability: Math.min(100, (item.rainfall || 0) * 20),
               amount: item.rainfall || 0
             },
-            wind: {
-              speed: 5 + Math.random() * 10,
-              direction: 'SW'
-            }
+            wind: item.wind ? { speed: item.wind.speed ?? 5, direction: item.wind.direction || 'SW' } : { speed: 5, direction: 'SW' }
           }));
         }
       } catch (apiError) {
         logger.warn('Forecast API error:', apiError.message);
+        isFallback = true;
+        degradedReason = 'forecast_provider_unavailable';
       }
       
       if (!forecastData || !Array.isArray(forecastData) || forecastData.length === 0) {
+        isFallback = true;
+        degradedReason = degradedReason || 'forecast_data_unavailable';
         forecastData = [];
-        for (let i = 0; i < parseInt(days); i++) {
+        for (let i = 0; i < safeDays; i++) {
           const date = new Date();
           date.setDate(date.getDate() + i);
           forecastData.push({
@@ -246,16 +304,10 @@ class WeatherController {
       
       const forecastArray = Array.isArray(forecastData) ? forecastData : [];
       
-      res.json({
-        success: true,
-        data: forecastArray
-      });
+      return WeatherController.success(res, forecastArray, { isFallback, degradedReason });
     } catch (error) {
       logger.error('Error fetching forecast:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
   
@@ -264,46 +316,24 @@ class WeatherController {
       const { lat, lng, hours = 24 } = req.query;
       
       if (!lat || !lng) {
-        return res.status(400).json({
-          success: false,
-          error: 'Latitude and longitude are required'
-        });
+        return badRequest(res, 'Latitude and longitude are required');
       }
       
-      const hourlyForecast = [];
-      const now = new Date();
-      
-      for (let i = 0; i < parseInt(hours); i++) {
-        const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
-        hourlyForecast.push({
-          time: hour.toISOString(),
-          temperature: 25 + (Math.random() - 0.5) * 4,
-          conditions: {
-            main: ['Clear', 'Partly Cloudy', 'Cloudy', 'Rain'][Math.floor(Math.random() * 4)],
-            description: 'Weather conditions'
-          },
-          precipitation: {
-            probability: Math.floor(Math.random() * 30),
-            amount: Math.random() * 2
-          },
-          humidity: Math.floor(50 + Math.random() * 30),
-          wind: {
-            speed: 3 + Math.random() * 8,
-            direction: ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.floor(Math.random() * 8)]
-          }
-        });
+      const hoursNum = WeatherController.parsePositiveInt(hours, 24, { min: 1, max: 48 });
+      const parsedCoordinates = WeatherController.parseCoordinates(lat, lng);
+      if (!parsedCoordinates) {
+        return badRequest(res, 'Invalid latitude/longitude values');
       }
+      const hourlyForecast = await WeatherService.getWeatherHourlyForecast(
+        parsedCoordinates.lat,
+        parsedCoordinates.lng,
+        hoursNum
+      );
       
-      res.json({
-        success: true,
-        data: hourlyForecast
-      });
+      return WeatherController.success(res, hourlyForecast);
     } catch (error) {
       logger.error('Error fetching hourly forecast:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message
-      });
+      return serverError(res, error.message);
     }
   }
 
@@ -312,27 +342,37 @@ class WeatherController {
       const { lat, lng } = req.query;
       
       if (!lat || !lng) {
-        return res.status(400).json({
-          success: false,
-          error: 'Latitude and longitude are required'
-        });
+        return badRequest(res, 'Latitude and longitude are required');
+      }
+      const parsedCoordinates = WeatherController.parseCoordinates(lat, lng);
+      if (!parsedCoordinates) {
+        return badRequest(res, 'Invalid latitude/longitude values');
       }
 
       let realTimeAlerts = [];
+      let isFallback = false;
+      let degradedReason = null;
       const openweatherApiKey = process.env.OPENWEATHER_API_KEY;
       
       if (openweatherApiKey && openweatherApiKey !== 'your_api_key_here') {
         try {
-          const response = await axios.get('http://api.openweathermap.org/data/2.5/onecall', {
+          const result = await resilientHttpClient.request({
+            serviceName: 'weather-openweathermap-alerts',
+            method: 'get',
+            url: 'http://api.openweathermap.org/data/2.5/onecall',
             params: {
-              lat: parseFloat(lat),
-              lon: parseFloat(lng),
+              lat: parsedCoordinates.lat,
+              lon: parsedCoordinates.lng,
               appid: openweatherApiKey,
               units: 'metric',
               exclude: 'minutely,daily'
             },
             timeout: 10000
           });
+          if (!result.success) {
+            throw new Error(result.error?.message || 'OpenWeather alerts request failed');
+          }
+          const response = result.response;
 
           if (response.data && response.data.alerts && Array.isArray(response.data.alerts)) {
             realTimeAlerts = response.data.alerts.map(alert => ({
@@ -343,7 +383,7 @@ class WeatherController {
               start: new Date(alert.start * 1000).toISOString(),
               end: new Date(alert.end * 1000).toISOString(),
               areas: [alert.tags || 'Current Location'],
-              source: 'OpenWeatherMap',
+              source: 'AgriSmart AI',
               agricultural_impact: {
                 affected_crops: ['All crops'],
                 recommended_actions: getRecommendedActions(alert.event),
@@ -354,14 +394,16 @@ class WeatherController {
           }
         } catch (error) {
           logger.warn('OpenWeatherMap alerts API error:', error.message);
+          isFallback = true;
+          degradedReason = 'alerts_provider_unavailable';
         }
       }
 
       let currentWeather = null;
       try {
         const weatherData = await WeatherService.getWeatherByCoords(
-          parseFloat(lat),
-          parseFloat(lng)
+          parsedCoordinates.lat,
+          parsedCoordinates.lng
         );
         currentWeather = weatherData;
       } catch (error) {
@@ -372,29 +414,31 @@ class WeatherController {
 
       const allAlerts = [...realTimeAlerts, ...agriculturalAlerts];
 
-      res.json({
-        success: true,
-        data: {
+      return WeatherController.success(
+        res,
+        {
           alerts: allAlerts,
           alert_count: allAlerts.length,
           severe_alerts: allAlerts.filter(a => a.severity === 'severe' || a.severity === 'extreme').length,
           real_time_alerts: realTimeAlerts.length,
           agricultural_alerts: agriculturalAlerts.length,
           timestamp: new Date().toISOString()
-        }
-      });
+        },
+        { isFallback, degradedReason }
+      );
     } catch (error) {
       logger.error('Error fetching weather alerts:', error);
-      res.json({
-        success: true,
-        data: {
+      return WeatherController.success(
+        res,
+        {
           alerts: getMockAlerts(lat, lng),
           alert_count: 0,
           severe_alerts: 0,
           real_time_alerts: 0,
           agricultural_alerts: 0
-        }
-      });
+        },
+        { isFallback: true, degradedReason: 'alerts_controller_error' }
+      );
     }
   }
 }
@@ -415,7 +459,7 @@ function generateAgriculturalAlerts(weather, lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 24 * 60 * 60 * 1000),
       areas: ['Current Location'],
-      source: 'Agricultural Weather Advisory',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Wheat', 'Vegetables', 'Fruits'],
         recommended_actions: ['Increase watering', 'Use mulch', 'Provide shade'],
@@ -433,7 +477,7 @@ function generateAgriculturalAlerts(weather, lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 12 * 60 * 60 * 1000),
       areas: ['Current Location'],
-      source: 'Agricultural Advisory',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Potato', 'Tomato', 'Citrus'],
         recommended_actions: ['Use frost cloths', 'Irrigate before frost', 'Harvest early'],
@@ -451,7 +495,7 @@ function generateAgriculturalAlerts(weather, lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 6 * 60 * 60 * 1000),
       areas: ['Current Location'],
-      source: 'Agricultural Advisory',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Rice', 'Sugarcane'],
         recommended_actions: ['Check drainage', 'Delay fertilizer application', 'Monitor for diseases'],
@@ -469,7 +513,7 @@ function generateAgriculturalAlerts(weather, lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 8 * 60 * 60 * 1000),
       areas: ['Current Location'],
-      source: 'Agricultural Advisory',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Tall crops', 'Fruit trees', 'Greenhouses'],
         recommended_actions: ['Stake plants', 'Secure structures', 'Delay spraying'],
@@ -508,7 +552,7 @@ function getRecommendedActions(alertType) {
   return ['Monitor conditions', 'Follow weather updates', 'Take necessary precautions'];
 }
 
-function getMockAlerts(lat, lng) {
+function getMockAlerts(_lat, _lng) {
   return [
     {
       id: 'mock_1',
@@ -518,7 +562,7 @@ function getMockAlerts(lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 24 * 60 * 60 * 1000),
       areas: ['Maharashtra', 'Goa'],
-      source: 'IMD Mumbai',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Rice', 'Sugarcane'],
         recommended_actions: ['Ensure drainage', 'Delay harvesting', 'Protect stored grains'],
@@ -533,7 +577,7 @@ function getMockAlerts(lat, lng) {
       start: new Date(),
       end: new Date(Date.now() + 48 * 60 * 60 * 1000),
       areas: ['North India'],
-      source: 'India Meteorological Department',
+      source: 'AgriSmart AI',
       agricultural_impact: {
         affected_crops: ['Wheat', 'Vegetables'],
         recommended_actions: ['Increase irrigation frequency', 'Use mulch', 'Provide shade'],

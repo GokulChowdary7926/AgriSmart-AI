@@ -1,48 +1,61 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
 const { authenticateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
+const resilientHttpClient = require('../services/api/resilientHttpClient');
+const { badRequest, serverError, notFound, ok } = require('../utils/httpResponses');
+
+function parseCoordinates(latitude, longitude) {
+  const lat = parseFloat(latitude);
+  const lng = parseFloat(longitude);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    return null;
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return null;
+  }
+  return { lat, lng };
+}
 
 router.get('/reverse-geocode', async (req, res) => {
   try {
-    const { latitude, longitude, language = 'en' } = req.query;
+    const { latitude, longitude, lat, lng, language = 'en' } = req.query;
+    const effectiveLatitude = latitude ?? lat;
+    const effectiveLongitude = longitude ?? lng;
     
-    if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        message: 'Latitude and longitude are required'
-      });
+    if (!effectiveLatitude || !effectiveLongitude) {
+      return badRequest(res, 'Latitude and longitude are required');
+    }
+    const coordinates = parseCoordinates(effectiveLatitude, effectiveLongitude);
+    if (!coordinates) {
+      return badRequest(res, 'Invalid latitude/longitude values');
     }
     
-    logger.info(`Reverse geocoding: ${latitude}, ${longitude} (Language: ${language})`);
+    logger.info(`Reverse geocoding: ${effectiveLatitude}, ${effectiveLongitude} (Language: ${language})`);
     
-    const osmResult = await reverseGeocodeOSM(latitude, longitude, language);
+    const osmResult = await reverseGeocodeOSM(coordinates.lat, coordinates.lng, language);
     
     if (osmResult) {
-      return res.json({
-        success: true,
-        address: osmResult,
-        provider: 'openstreetmap'
+      return ok(res, { address: osmResult }, {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        provider: 'AgriSmart AI'
       });
     }
     
-    const approximateAddress = generateApproximateAddress(latitude, longitude, language);
+    const approximateAddress = generateApproximateAddress(coordinates.lat, coordinates.lng, language);
     
-    res.json({
-      success: true,
-      address: approximateAddress,
-      provider: 'approximate',
+    return ok(res, { address: approximateAddress }, {
+      source: 'AgriSmart AI',
+      isFallback: true,
+      degradedReason: 'reverse_geocode_approximate',
+      provider: 'AgriSmart AI',
       note: 'Using approximate address based on coordinates'
     });
     
   } catch (error) {
     logger.error('Reverse geocode error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get address from coordinates',
-      error: error.message
-    });
+    return serverError(res, 'Failed to get address from coordinates', error.message);
   }
 });
 
@@ -51,10 +64,7 @@ router.get('/geocode', async (req, res) => {
     const { query, language = 'en' } = req.query;
     
     if (!query) {
-      return res.status(400).json({
-        success: false,
-        message: 'Search query is required'
-      });
+      return badRequest(res, 'Search query is required');
     }
     
     logger.info(`Geocoding: "${query}" (Language: ${language})`);
@@ -62,27 +72,24 @@ router.get('/geocode', async (req, res) => {
     const osmResults = await forwardGeocodeOSM(query, language);
     
     if (osmResults && osmResults.length > 0) {
-      return res.json({
-        success: true,
-        results: osmResults,
-        provider: 'openstreetmap',
+      return ok(res, { results: osmResults }, {
+        source: 'AgriSmart AI',
+        isFallback: false,
+        provider: 'AgriSmart AI',
         count: osmResults.length
       });
     }
     
-    res.json({
-      success: true,
-      results: [],
+    return ok(res, { results: [] }, {
+      source: 'AgriSmart AI',
+      isFallback: true,
+      degradedReason: 'geocode_no_results',
       message: 'No results found'
     });
     
   } catch (error) {
     logger.error('Geocode error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to geocode address',
-      error: error.message
-    });
+    return serverError(res, 'Failed to geocode address', error.message);
   }
 });
 
@@ -91,43 +98,44 @@ router.get('/address-details', authenticateToken, async (req, res) => {
     const { latitude, longitude, language = 'en' } = req.query;
     
     if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        message: 'Latitude and longitude are required'
-      });
+      return badRequest(res, 'Latitude and longitude are required');
+    }
+    const coordinates = parseCoordinates(latitude, longitude);
+    if (!coordinates) {
+      return badRequest(res, 'Invalid latitude/longitude values');
     }
     
-    const address = await reverseGeocodeOSM(latitude, longitude, language);
+    const address = await reverseGeocodeOSM(coordinates.lat, coordinates.lng, language);
     
     if (!address) {
-      return res.status(404).json({
-        success: false,
-        message: 'Address not found'
-      });
+      return notFound(res, 'Address not found');
     }
     
-    res.json({
-      success: true,
-      address: address,
-      coordinates: {
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude)
+    return ok(
+      res,
+      {
+        address,
+        coordinates: {
+          latitude: coordinates.lat,
+          longitude: coordinates.lng
+        },
+        formatted: formatCompleteAddress(address, language)
       },
-      formatted: formatCompleteAddress(address, language)
-    });
+      { source: 'AgriSmart AI', isFallback: false }
+    );
     
   } catch (error) {
     logger.error('Address details error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get address details'
-    });
+    return serverError(res, 'Failed to get address details');
   }
 });
 
 async function reverseGeocodeOSM(latitude, longitude, language) {
   try {
-    const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+    const result = await resilientHttpClient.request({
+      serviceName: 'nominatim-map-reverse',
+      method: 'get',
+      url: 'https://nominatim.openstreetmap.org/reverse',
       params: {
         format: 'json',
         lat: latitude,
@@ -139,8 +147,11 @@ async function reverseGeocodeOSM(latitude, longitude, language) {
       },
       headers: {
         'User-Agent': 'AgriSmart-AI/1.0'
-      }
+      },
+      timeout: 10000
     });
+    if (!result.success) return null;
+    const response = result.response;
     
     if (response.data && response.data.address) {
       return formatOSMAddress(response.data, latitude, longitude);
@@ -155,7 +166,10 @@ async function reverseGeocodeOSM(latitude, longitude, language) {
 
 async function forwardGeocodeOSM(query, language) {
   try {
-    const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+    const result = await resilientHttpClient.request({
+      serviceName: 'nominatim-map-search',
+      method: 'get',
+      url: 'https://nominatim.openstreetmap.org/search',
       params: {
         q: query,
         format: 'json',
@@ -166,8 +180,11 @@ async function forwardGeocodeOSM(query, language) {
       },
       headers: {
         'User-Agent': 'AgriSmart-AI/1.0'
-      }
+      },
+      timeout: 10000
     });
+    if (!result.success) return [];
+    const response = result.response;
     
     if (response.data && response.data.length > 0) {
       return response.data.map(item => ({
@@ -231,7 +248,7 @@ function formatAddressString(address) {
   return parts.join(', ');
 }
 
-function formatCompleteAddress(address, language) {
+function formatCompleteAddress(address, _language) {
   const parts = [];
   
   if (address.house_number) parts.push(`House: ${address.house_number}`);
@@ -246,7 +263,7 @@ function formatCompleteAddress(address, language) {
   return parts.join('\n');
 }
 
-function generateApproximateAddress(latitude, longitude, language) {
+function generateApproximateAddress(latitude, longitude, _language) {
   const regions = {
     'north': { state: 'Punjab/Haryana', district: 'Northern Region', city: 'North India' },
     'south': { state: 'Tamil Nadu/Karnataka', district: 'Southern Region', city: 'South India' },
@@ -274,14 +291,17 @@ function generateApproximateAddress(latitude, longitude, language) {
 }
 
 function getIndianRegion(lat, lng) {
-  if (lat > 30) return 'north'; // Punjab, Haryana, Himachal
-  if (lat < 15) return 'south'; // Tamil Nadu, Kerala, Karnataka
-  if (lng > 85) return 'east'; // West Bengal, Odisha, Assam
-  if (lng < 70) return 'west'; // Gujarat, Rajasthan
-  return 'central'; // Madhya Pradesh, Uttar Pradesh
+  if (lat > 30) return 'north';
+  if (lat < 15) return 'south';
+  if (lng > 85) return 'east';
+  if (lng < 70) return 'west';
+  return 'central';
 }
 
 module.exports = router;
+
+
+
 
 
 

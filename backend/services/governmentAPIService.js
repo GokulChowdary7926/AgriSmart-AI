@@ -1,5 +1,3 @@
-
-const axios = require('axios');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
@@ -14,12 +12,12 @@ class GovernmentAPIService {
     };
     
     this.apiKeys = {
-      dataGov: process.env.DATA_GOV_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b',
+      dataGov: process.env.DATA_GOV_API_KEY || process.env.DATA_GOV_IN_API_KEY || '',
       pmkisan: process.env.PMKISAN_API_KEY || ''
     };
   }
 
-  async getPMKISANStatus(aadharNumber = null, mobileNumber = null) {
+  async getPMKISANStatus(aadharNumber = null, _mobileNumber = null) {
     try {
       if (aadharNumber) {
         const aadharHash = crypto.createHash('sha256')
@@ -65,7 +63,7 @@ class GovernmentAPIService {
     }
   }
 
-  async getSoilHealthCard(farmerId = null, mobileNumber = null) {
+  async getSoilHealthCard(_farmerId = null, mobileNumber = null) {
     try {
       const cardNumber = mobileNumber 
         ? `SHC_${crypto.createHash('md5').update(mobileNumber).digest('hex').substring(0, 8)}`
@@ -181,7 +179,7 @@ class GovernmentAPIService {
     }
   }
 
-  async getGovernmentSchemes(state = null, category = null, farmerType = null) {
+  async getGovernmentSchemes(state = null, category = null, _farmerType = null) {
     try {
       const schemes = [
         {
@@ -359,7 +357,7 @@ class GovernmentAPIService {
     }
   }
 
-  async registerComplaint(complaintData) {
+  async registerComplaint(_complaintData) {
     try {
       const complaintId = `COMP_${crypto.createHash('md5')
         .update(new Date().toString())

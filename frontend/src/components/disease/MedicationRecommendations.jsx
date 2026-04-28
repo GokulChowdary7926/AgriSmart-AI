@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Box,
   Paper,
@@ -10,19 +10,12 @@ import {
   Button,
   Chip,
   Alert,
-  Stepper,
-  Step,
-  StepLabel,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
   List,
   ListItem,
   ListItemIcon,
@@ -40,7 +33,6 @@ import {
   Schedule,
   MonetizationOn,
   SafetyDivider,
-  ExpandMore,
   Download,
   Share
 } from '@mui/icons-material';
@@ -48,8 +40,6 @@ import { useLanguage } from '../../contexts/LanguageContext';
 
 const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication }) => {
   const { t } = useLanguage();
-  const [activeStep, setActiveStep] = useState(0);
-
   if (!medication && !diseaseInfo) {
     return null;
   }
@@ -65,12 +55,14 @@ const MedicationRecommendations = ({ diseaseInfo, detectionResult, medication })
                           diseaseInfo?.type || 
                           detectionResult?.diseaseInfo?.type ||
                           t('diseases.unknown') || 'Disease';
-  const severity = detectionResult?.severity || 
-                   medData.disease_info?.severity || 
-                   detectionResult?.diseaseInfo?.severityLevel ? 
-                     (detectionResult.diseaseInfo.severityLevel >= 4 ? 'high' : 
-                      detectionResult.diseaseInfo.severityLevel >= 3 ? 'medium' : 'low') : 
-                   'medium';
+  const severityLevel = Number(
+    detectionResult?.diseaseInfo?.severityLevel ??
+    medData?.disease_info?.severityLevel ??
+    0
+  );
+  const severity = detectionResult?.severity ||
+    medData?.disease_info?.severity ||
+    (severityLevel >= 4 ? 'high' : severityLevel >= 3 ? 'medium' : severityLevel > 0 ? 'low' : 'medium');
 
   const getSeverityColor = (severity) => {
     switch (severity) {

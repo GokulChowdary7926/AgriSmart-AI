@@ -3,6 +3,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
+function normalizeIndianPhone(phone) {
+  if (!phone) return phone;
+  const cleaned = String(phone).replace(/[\s+\-]/g, '');
+  if (/^91[6-9]\d{9}$/.test(cleaned)) {
+    return cleaned.slice(2);
+  }
+  return cleaned;
+}
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -40,18 +49,14 @@ const userSchema = new mongoose.Schema({
     validate: {
       validator: function(v) {
         if (!v) return false;
-        const cleaned = v.replace(/[\s+\-]/g, '');
-        const tenDigitPattern = /^[6-9]\d{9}$/; // 10 digits starting with 6-9
-        const twelveDigitPattern = /^91[6-9]\d{9}$/; // 91 followed by 10 digits starting with 6-9 (12 total)
-        
-        return tenDigitPattern.test(cleaned) || twelveDigitPattern.test(cleaned);
+        const normalized = normalizeIndianPhone(v);
+        const tenDigitPattern = /^[6-9]\d{9}$/;
+        return tenDigitPattern.test(normalized);
       },
-      message: 'Please provide a valid phone number (10 digits starting with 6-9, or with country code 91)'
+      message: 'Please provide a valid Indian phone number'
     },
     set: function(v) {
-      if (!v) return v;
-      const cleaned = v.replace(/[\s+\-]/g, '');
-      return cleaned;
+      return normalizeIndianPhone(v);
     }
   },
   
@@ -176,13 +181,16 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 };
 
 userSchema.methods.generateAuthToken = function() {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured');
+  }
   return jwt.sign(
     { 
       userId: this._id,
       email: this.email,
       role: this.role 
     },
-    process.env.JWT_SECRET || 'your-secret-key',
+    process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || '7d' }
   );
 };

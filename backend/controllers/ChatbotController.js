@@ -1,14 +1,47 @@
+const mongoose = require('mongoose');
 const ChatSession = require('../models/ChatSession');
-const User = require('../models/User');
-const { translate, translateAgricultureTerm } = require('../utils/translation');
-const { languagePreferences } = require('../config/languages');
+const { translate } = require('../utils/translation');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
+const { unauthorized, notFound, serverError, serviceUnavailable, ok } = require('../utils/httpResponses');
+
+function mongoReady() {
+  try {
+    return mongoose && mongoose.connection && mongoose.connection.readyState === 1;
+  } catch (_) {
+    return false;
+  }
+}
 
 class ChatbotController {
+  static success(res, data, { source = 'AgriSmart AI', isFallback = false, degradedReason = null, extra = {} } = {}) {
+    return ok(res, data, {
+      source,
+      isFallback,
+      ...(degradedReason ? { degradedReason } : {}),
+      ...extra
+    });
+  }
+
+  static parsePositiveInt(value, defaultValue, { min = 1, max = 100 } = {}) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return defaultValue;
+    return Math.max(min, Math.min(max, parsed));
+  }
+
+  static getUserId(req) {
+    return req.user?._id || req.user?.userId || req.user?.id || null;
+  }
+
   static async startChat(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const { context = {} } = req.body;
       
       const language = context.language || req.user?.preferences?.language || req.language || 'en';
@@ -41,22 +74,16 @@ class ChatbotController {
       session.messages.push(welcomeMessage);
       await session.save();
       
-      res.json({
-        success: true,
-        data: {
-          sessionId: session.sessionId,
-          sessionTitle: translate('chatbot.title', language),
-          language: language,
-          welcomeMessage: welcomeMessage,
-          context: session.context
-        }
+      return ChatbotController.success(res, {
+        sessionId: session.sessionId,
+        sessionTitle: translate('chatbot.title', language),
+        language: language,
+        welcomeMessage: welcomeMessage,
+        context: session.context
       });
     } catch (error) {
       logger.error('Start chat error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to start chat session'
-      });
+      return serverError(res, 'Failed to start chat session');
     }
   }
   
@@ -67,10 +94,10 @@ class ChatbotController {
       const userId = req.user?._id || req.user?.userId || req.user?.id;
       
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          error: 'User authentication required'
-        });
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
       }
       
       const actualSessionId = sessionId || bodySessionId;
@@ -109,13 +136,17 @@ class ChatbotController {
         session.messages.push(aiResponse);
         await session.save();
         
-        return res.json({
-          success: true,
-          data: {
+        return ChatbotController.success(
+          res,
+          {
             sessionId: session.sessionId,
             message: aiResponse
+          },
+          {
+            isFallback: true,
+            degradedReason: 'chatbot_default_response'
           }
-        });
+        );
       }
       
       let session = await ChatSession.findOne({
@@ -124,10 +155,7 @@ class ChatbotController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Chat session not found'
-        });
+        return notFound(res, 'Chat session not found');
       }
       
       const language = session.language || req.user?.preferences?.language || 'en';
@@ -170,30 +198,30 @@ class ChatbotController {
       
       await session.save();
       
-      res.json({
-        success: true,
-        data: {
-          userMessage: userMessage,
-          aiResponse: assistantMessage,
-          session: {
-            sessionId: session.sessionId,
-            language: language
-          }
+      return ChatbotController.success(res, {
+        userMessage: userMessage,
+        aiResponse: assistantMessage,
+        session: {
+          sessionId: session.sessionId,
+          language: language
         }
       });
     } catch (error) {
       logger.error('Send message error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to process message'
-      });
+      return serverError(res, 'Failed to process message');
     }
   }
   
   static async getHistory(req, res) {
     try {
       const { sessionId } = req.params;
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return ChatbotController.success(res, { messages: [] }, { isFallback: true, degradedReason: 'mongo_unavailable' });
+      }
       
       const session = await ChatSession.findOne({
         sessionId,
@@ -201,39 +229,38 @@ class ChatbotController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Chat session not found'
-        });
+        return notFound(res, 'Chat session not found');
       }
       
-      res.json({
-        success: true,
-        data: {
-          sessionId: session.sessionId,
-          title: session.context.currentCrop 
-            ? translate('chatbot.context.crop', session.language) 
-            : translate('chatbot.title', session.language),
-          language: session.language,
-          messages: session.messages,
-          context: session.context,
-          startedAt: session.startedAt,
-          lastActivity: session.lastActivity
-        }
+      return ChatbotController.success(res, {
+        sessionId: session.sessionId,
+        title: session.context.currentCrop 
+          ? translate('chatbot.context.crop', session.language) 
+          : translate('chatbot.title', session.language),
+        language: session.language,
+        messages: session.messages,
+        context: session.context,
+        startedAt: session.startedAt,
+        lastActivity: session.lastActivity
       });
     } catch (error) {
       logger.error('Get history error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch chat history'
-      });
+      return serverError(res, 'Failed to fetch chat history');
     }
   }
   
   static async listSessions(req, res) {
     try {
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return ChatbotController.success(res, [], { isFallback: true, degradedReason: 'mongo_unavailable', extra: { pagination: { page: 1, limit: 0, total: 0, pages: 0 } } });
+      }
       const { page = 1, limit = 20, status = 'active' } = req.query;
+      const safePage = this.parsePositiveInt(page, 1, { min: 1, max: 100000 });
+      const safeLimit = this.parsePositiveInt(limit, 20, { min: 1, max: 100 });
       
       const query = { user: userId };
       if (status !== 'all') {
@@ -242,35 +269,42 @@ class ChatbotController {
       
       const sessions = await ChatSession.find(query)
         .sort({ lastActivity: -1 })
-        .limit(parseInt(limit))
-        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(safeLimit)
+        .skip((safePage - 1) * safeLimit)
         .select('sessionId context language status startedAt lastActivity analytics.messageCount');
       
       const total = await ChatSession.countDocuments(query);
       
-      res.json({
-        success: true,
-        data: sessions,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
+      return ChatbotController.success(
+        res,
+        sessions,
+        {
+          extra: {
+            pagination: {
+              page: safePage,
+              limit: safeLimit,
+              total,
+              pages: Math.ceil(total / safeLimit)
+            }
+          }
         }
-      });
+      );
     } catch (error) {
       logger.error('List sessions error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch chat sessions'
-      });
+      return serverError(res, 'Failed to fetch chat sessions');
     }
   }
   
   static async updateSession(req, res) {
     try {
       const { sessionId } = req.params;
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       const updates = req.body;
       
       const session = await ChatSession.findOne({
@@ -279,10 +313,7 @@ class ChatbotController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Chat session not found'
-        });
+        return notFound(res, 'Chat session not found');
       }
       
       if (updates.context) {
@@ -297,23 +328,23 @@ class ChatbotController {
       
       await session.save();
       
-      res.json({
-        success: true,
-        data: session
-      });
+      return ChatbotController.success(res, session);
     } catch (error) {
       logger.error('Update session error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update chat session'
-      });
+      return serverError(res, 'Failed to update chat session');
     }
   }
   
   static async deleteSession(req, res) {
     try {
       const { sessionId } = req.params;
-      const userId = req.user._id;
+      const userId = this.getUserId(req);
+      if (!userId) {
+        return unauthorized(res, 'User authentication required');
+      }
+      if (!mongoReady()) {
+        return serviceUnavailable(res, 'Chat session store unavailable', { degradedReason: 'mongo_unavailable' });
+      }
       
       const session = await ChatSession.findOneAndDelete({
         sessionId,
@@ -321,22 +352,17 @@ class ChatbotController {
       });
       
       if (!session) {
-        return res.status(404).json({
-          success: false,
-          error: 'Chat session not found'
-        });
+        return notFound(res, 'Chat session not found');
       }
       
-      res.json({
-        success: true,
-        message: 'Chat session deleted successfully'
-      });
+      return ChatbotController.success(
+        res,
+        { message: 'Chat session deleted successfully' },
+        { extra: { message: 'Chat session deleted successfully' } }
+      );
     } catch (error) {
       logger.error('Delete session error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to delete chat session'
-      });
+      return serverError(res, 'Failed to delete chat session');
     }
   }
   
@@ -347,19 +373,13 @@ class ChatbotController {
       
       const recommendations = await this.generateRecommendations(query, context, language);
       
-      res.json({
-        success: true,
-        data: {
-          recommendations,
-          language
-        }
+      return ChatbotController.success(res, {
+        recommendations,
+        language
       });
     } catch (error) {
       logger.error('Get recommendations error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get recommendations'
-      });
+      return serverError(res, 'Failed to get recommendations');
     }
   }
   
@@ -397,7 +417,7 @@ class ChatbotController {
     };
   }
   
-  static async detectIntent(message, language) {
+  static async detectIntent(message, _language) {
     const lowerMessage = message.toLowerCase();
     
     if (lowerMessage.includes('disease') || lowerMessage.includes('रोग') || lowerMessage.includes('நோய்')) {
@@ -423,4 +443,5 @@ class ChatbotController {
   }
 }
 
-module.exports = ChatbotController;
+const { bindStaticMethods } = require('../utils/bindControllerMethods');
+module.exports = bindStaticMethods(ChatbotController);

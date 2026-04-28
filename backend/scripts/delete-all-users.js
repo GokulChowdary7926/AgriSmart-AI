@@ -3,7 +3,6 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const redis = require('redis');
-const logger = require('../utils/logger');
 
 const User = require('../models/User');
 const ChatSession = require('../models/ChatSession');
@@ -181,6 +180,9 @@ if (require.main === module) {
 }
 
 module.exports = { deleteAllUsers, clearRedisSessions };
+
+
+
 
 
 

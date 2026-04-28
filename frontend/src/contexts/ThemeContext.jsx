@@ -39,7 +39,7 @@ export const ThemeProvider = ({ children }) => {
           background: {
             default: '#0a0a0a', // Deep dark background
             paper: '#1a1a1a', // Slightly lighter for cards
-            elevated: '#252525', // For elevated surfaces
+            elevated: '#252525',
           },
           text: {
             primary: '#ffffff',

@@ -1,15 +1,19 @@
-const axios = require('axios');
 const logger = require('../utils/logger');
 const sharp = require('sharp');
-const fs = require('fs');
-const path = require('path');
-const FormData = require('form-data');
+const resilientHttpClient = require('./api/resilientHttpClient');
 
 let tf = null;
+const tfEnabled = process.env.TF_ENABLED !== 'false';
 try {
-  tf = require('@tensorflow/tfjs-node');
+  if (tfEnabled) {
+    tf = require('@tensorflow/tfjs-node');
+  }
 } catch (error) {
-  logger.warn('TensorFlow.js not available, using fallback detection');
+  if (tfEnabled) {
+    logger.warn('TensorFlow.js not available, using fallback detection');
+  } else {
+    logger.info('TensorFlow disabled via TF_ENABLED=false, using fallback detection');
+  }
 }
 
 class RealTimeDiseaseDetectionService {
@@ -22,6 +26,16 @@ class RealTimeDiseaseDetectionService {
     this.cache = new Map();
     this.localModel = null;
     this.initializeLocalModel();
+  }
+
+  hashToUnit(seed) {
+    const str = String(seed || 'default');
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return (Math.abs(hash) % 10000) / 10000;
   }
 
   async detectDiseaseRealTime(imageBuffer, context = {}) {
@@ -132,7 +146,7 @@ class RealTimeDiseaseDetectionService {
     }
   }
 
-  async detectWithPlantNet(imageBuffer, context) {
+  async detectWithPlantNet(imageBuffer, _context) {
     try {
       if (!process.env.PLANTNET_API_KEY) {
         return { diseases: [], source: 'PlantNet' };
@@ -144,16 +158,20 @@ class RealTimeDiseaseDetectionService {
       formData.append('organs', 'leaf');
       formData.append('include-related-images', 'true');
 
-      const response = await axios.post(
-        `${this.models.plantNet}?api-key=${process.env.PLANTNET_API_KEY}`,
-        formData,
-        {
-          headers: {
-            ...formData.getHeaders()
-          },
-          timeout: 10000
-        }
-      );
+      const result = await resilientHttpClient.request({
+        serviceName: 'plantnet-detection',
+        method: 'post',
+        url: `${this.models.plantNet}?api-key=${process.env.PLANTNET_API_KEY}`,
+        data: formData,
+        headers: {
+          ...formData.getHeaders()
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'PlantNet request failed');
+      }
+      const response = result.response;
 
       const diseases = (response.data.results || [])
         .filter(result => result.score > 0.3)
@@ -182,22 +200,26 @@ class RealTimeDiseaseDetectionService {
         return { diseases: [], source: 'Plantix' };
       }
 
-      const response = await axios.post(
-        this.models.plantix,
-        {
+      const result = await resilientHttpClient.request({
+        serviceName: 'plantix-detection',
+        method: 'post',
+        url: this.models.plantix,
+        data: {
           image: imageBuffer.toString('base64'),
           lat: context.lat || 20.5937,
           lon: context.lng || 78.9629,
           crop: context.crop || 'unknown'
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.PLANTIX_API_KEY}`
-          },
-          timeout: 10000
-        }
-      );
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.PLANTIX_API_KEY}`
+        },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Plantix request failed');
+      }
+      const response = result.response;
 
       const diseases = (response.data.predictions || [])
         .filter(pred => pred.confidence > 0.25)
@@ -222,15 +244,17 @@ class RealTimeDiseaseDetectionService {
     }
   }
 
-  async detectWithGoogleVision(imageBuffer, context) {
+  async detectWithGoogleVision(imageBuffer, _context) {
     try {
       if (!process.env.GOOGLE_VISION_API_KEY) {
         return { diseases: [], source: 'Google Vision' };
       }
 
-      const response = await axios.post(
-        `${this.models.googleVision}?key=${process.env.GOOGLE_VISION_API_KEY}`,
-        {
+      const result = await resilientHttpClient.request({
+        serviceName: 'google-vision-detection',
+        method: 'post',
+        url: `${this.models.googleVision}?key=${process.env.GOOGLE_VISION_API_KEY}`,
+        data: {
           requests: [{
             image: { content: imageBuffer.toString('base64') },
             features: [
@@ -239,11 +263,13 @@ class RealTimeDiseaseDetectionService {
             ]
           }]
         },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
-        }
-      );
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || 'Google Vision request failed');
+      }
+      const response = result.response;
 
       const labels = response.data.responses?.[0]?.labelAnnotations || [];
       const objects = response.data.responses?.[0]?.localizedObjectAnnotations || [];
@@ -280,7 +306,7 @@ class RealTimeDiseaseDetectionService {
     }
   }
 
-  async detectWithLocalModel(imageBuffer, context) {
+  async detectWithLocalModel(imageBuffer, _context) {
     try {
       if (!tf || !this.localModel) {
         return { diseases: [], source: 'Local Model' };
@@ -449,7 +475,7 @@ class RealTimeDiseaseDetectionService {
     return avgConfidence * sourceMultiplier;
   }
 
-  generateDetectionReport(detections, treatments, context) {
+  generateDetectionReport(detections, treatments, _context) {
     const report = {
       summary: '',
       recommendations: [],
@@ -482,7 +508,7 @@ class RealTimeDiseaseDetectionService {
     return report;
   }
 
-  async fallbackAnalysis(imageBuffer, context) {
+  async fallbackAnalysis(imageBuffer, _context) {
     try {
       const DiseaseDetectionService = require('./DiseaseDetectionService');
       const fallbackResult = await DiseaseDetectionService.detectDiseaseFromImage(imageBuffer);
@@ -521,16 +547,16 @@ class RealTimeDiseaseDetectionService {
       success: true,
       timestamp: new Date().toISOString(),
       detections: [{
-        name: 'Unknown Disease',
-        diseaseName: 'Unknown Disease',
-        confidence: 0.5,
-        type: 'Unknown',
-        severity: 'Medium',
-        symptoms: ['Please consult an agricultural expert'],
+        name: this.inferFallbackDiseaseName(analysis),
+        diseaseName: this.inferFallbackDiseaseName(analysis),
+        confidence: this.deriveFallbackConfidence(analysis),
+        type: 'Image Analysis Fallback',
+        severity: this.deriveFallbackSeverity(analysis),
+        symptoms: this.deriveFallbackSymptoms(analysis),
         affectedParts: ['Unknown']
       }],
       treatments: [{
-        disease: 'Unknown Disease',
+        disease: this.inferFallbackDiseaseName(analysis),
         organic: ['Consult agricultural expert'],
         chemical: [],
         recommendations: ['Seek professional advice']
@@ -542,7 +568,7 @@ class RealTimeDiseaseDetectionService {
         'Check Plantix app for mobile detection',
         'Submit clearer images of affected areas'
       ],
-      confidence: 0.5,
+      confidence: this.deriveFallbackConfidence(analysis),
       source: 'Ultimate Fallback'
     };
   }
@@ -634,14 +660,14 @@ class RealTimeDiseaseDetectionService {
     };
   }
 
-  getTreatments(name) {
+  getTreatments(_name) {
     return [
       { type: 'Chemical', name: 'Fungicide application', dosage: 'As per label' },
       { type: 'Organic', name: 'Neem oil spray', dosage: '2ml per liter' }
     ];
   }
 
-  getPreventionMethods(name) {
+  getPreventionMethods(_name) {
     return [
       'Maintain proper spacing',
       'Ensure good air circulation',
@@ -649,7 +675,7 @@ class RealTimeDiseaseDetectionService {
     ];
   }
 
-  getLocationSpecificTreatments(name, context) {
+  getLocationSpecificTreatments(name, _context) {
     return this.getTreatments(name);
   }
 
@@ -661,7 +687,7 @@ class RealTimeDiseaseDetectionService {
     return this.getTreatments(name).filter(t => t.type === 'Chemical');
   }
 
-  generateTreatmentRecommendations(detection, treatments, context) {
+  generateTreatmentRecommendations(detection, _treatments, _context) {
     return [
       `Apply treatment for ${detection.name}`,
       'Monitor progress weekly',
@@ -669,30 +695,98 @@ class RealTimeDiseaseDetectionService {
     ];
   }
 
-  calculateSeverity(confidence, details) {
+  calculateSeverity(confidence, _details) {
     if (confidence > 0.8) return 'high';
     if (confidence > 0.5) return 'medium';
     return 'low';
   }
 
-  assessRiskLevel(detection, details) {
+  assessRiskLevel(_detection, _details) {
     return 'moderate';
   }
 
   getDominantColor(stats) {
-    return '#4CAF50'; // Placeholder
+    const channels = stats?.channels || [];
+    if (!channels.length) {
+      return '#4caf50';
+    }
+    const rgb = channels.slice(0, 3).map((channel) => {
+      const value = Math.round(channel.mean || 0);
+      return Math.max(0, Math.min(255, value));
+    });
+    const hex = rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+    return `#${hex}`;
   }
 
   calculateBrightness(stats) {
-    return 0.65; // Placeholder
+    const channels = stats?.channels || [];
+    if (!channels.length) {
+      return 0;
+    }
+    const means = channels.slice(0, 3).map((channel) => channel.mean || 0);
+    const luminance = (0.2126 * means[0]) + (0.7152 * means[1]) + (0.0722 * means[2]);
+    return Number((luminance / 255).toFixed(3));
   }
 
   calculateContrast(stats) {
-    return 0.5; // Placeholder
+    const channels = stats?.channels || [];
+    if (!channels.length) {
+      return 0;
+    }
+    const stdev = channels.slice(0, 3).map((channel) => channel.stdev || 0);
+    const avgStd = stdev.reduce((sum, value) => sum + value, 0) / stdev.length;
+    return Number((Math.max(0, Math.min(avgStd / 128, 1))).toFixed(3));
+  }
+
+  inferFallbackDiseaseName(analysis) {
+    const brightness = analysis?.colorProfile?.brightness || 0;
+    const contrast = analysis?.colorProfile?.contrast || 0;
+    const color = (analysis?.colorProfile?.dominantColor || '').toLowerCase();
+
+    if (brightness < 0.35 && contrast > 0.45) {
+      return 'Possible Leaf Spot';
+    }
+    if (color.includes('8b') || color.includes('7a')) {
+      return 'Possible Nutrient Deficiency';
+    }
+    if (brightness > 0.72) {
+      return 'Possible Powdery Mildew';
+    }
+    return 'Unclassified Plant Stress';
+  }
+
+  deriveFallbackConfidence(analysis) {
+    const width = analysis?.metadata?.width || 0;
+    const height = analysis?.metadata?.height || 0;
+    const pixelCount = width * height;
+    const qualityFactor = Math.min(1, pixelCount / (800 * 800));
+    const contrast = analysis?.colorProfile?.contrast || 0.2;
+    const confidence = 0.42 + (qualityFactor * 0.2) + (contrast * 0.18);
+    return Number(Math.max(0.4, Math.min(confidence, 0.8)).toFixed(2));
+  }
+
+  deriveFallbackSeverity(analysis) {
+    const contrast = analysis?.colorProfile?.contrast || 0;
+    const brightness = analysis?.colorProfile?.brightness || 0;
+    if (contrast > 0.62 || brightness < 0.28) return 'High';
+    if (contrast > 0.4 || brightness < 0.4) return 'Medium';
+    return 'Low';
+  }
+
+  deriveFallbackSymptoms(analysis) {
+    const brightness = analysis?.colorProfile?.brightness || 0;
+    const contrast = analysis?.colorProfile?.contrast || 0;
+    const symptoms = ['Visible leaf stress pattern'];
+    if (brightness < 0.4) symptoms.push('Dark lesion-like regions observed');
+    if (contrast > 0.5) symptoms.push('High texture variation on leaf surface');
+    return symptoms;
   }
 }
 
 module.exports = new RealTimeDiseaseDetectionService();
+
+
+
 
 
 

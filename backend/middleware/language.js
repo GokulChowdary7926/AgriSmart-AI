@@ -1,17 +1,22 @@
 const Language = require('../models/Language');
 const Translation = require('../models/Translation');
 const cache = require('../utils/cache').getInstance();
+const logger = require('../utils/logger');
+const { serverError } = require('../utils/httpResponses');
 
 class LanguageMiddleware {
   static detectLanguage(req, res, next) {
     const langParam = req.query.lang || req.query.language;
     const acceptLanguage = req.headers['accept-language'];
+    const appLanguage = req.headers['x-app-language'];
     const userLanguage = req.user?.preferences?.language || req.user?.language;
     
-    let language = 'en'; // Use lowercase for consistency
+    let language = 'en';
     
     if (langParam && LanguageMiddleware.isValidLanguage(langParam)) {
       language = langParam.toLowerCase();
+    } else if (appLanguage && LanguageMiddleware.isValidLanguage(appLanguage)) {
+      language = appLanguage.toLowerCase();
     } else if (userLanguage && LanguageMiddleware.isValidLanguage(userLanguage)) {
       language = userLanguage.toLowerCase();
     } else if (acceptLanguage) {
@@ -21,8 +26,10 @@ class LanguageMiddleware {
       }
     }
     
-    req.language = language; // Store as lowercase
-    req.locale = language; // Alias for consistency
+    req.language = language;
+    req.locale = language;
+    res.setHeader('Content-Language', language);
+    res.setHeader('X-Detected-Language', language);
     
     next();
   }
@@ -34,7 +41,7 @@ class LanguageMiddleware {
   }
   
   static isValidLanguage(code) {
-    const validCodes = ['en', 'hi', 'ta', 'te', 'kn', 'ml', 'bn', 'mr', 'gu', 'pa'];
+    const validCodes = ['en', 'ta'];
     return validCodes.includes(code.toLowerCase());
   }
   
@@ -71,10 +78,7 @@ class LanguageMiddleware {
       });
     } catch (error) {
       logger.error('Get languages error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch languages'
-      });
+      return serverError(res, 'Failed to fetch languages');
     }
   }
   
@@ -92,7 +96,7 @@ class LanguageMiddleware {
       const translation = await Translation.findOne({ key });
       
       if (!translation) {
-        return key; // Return key if no translation found
+        return key;
       }
       
       const text = translation.getTranslation(lang);

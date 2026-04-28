@@ -5,24 +5,32 @@ const dataQualityMiddleware = (req, res, next) => {
   
   res.json = function(data) {
     if (data && typeof data === 'object' && !data._quality) {
+      const fallback = isFallbackData(data);
+      const mock = isMockData(data);
+      const warnings = getDataWarnings(data);
+      const degradedReason = computeDegradedReason(data, fallback, mock);
       const enhancedData = {
         ...data,
         _quality: {
           timestamp: new Date().toISOString(),
-          source: req.originalUrl,
+          requestId: req.requestId || data.requestId,
+          source: data.source || req.originalUrl,
           confidence: calculateConfidence(data, req),
-          isMockData: isMockData(data),
-          isFallback: isFallbackData(data),
+          isMockData: mock,
+          isFallback: fallback,
+          degradedReason,
           dataFreshness: calculateFreshness(data),
-          warnings: getDataWarnings(data)
+          warnings
         }
       };
       
       if (enhancedData._quality.confidence < 0.7) {
         logger.warn('Low confidence data returned', {
           endpoint: req.originalUrl,
+          requestId: req.requestId,
           confidence: enhancedData._quality.confidence,
-          warnings: enhancedData._quality.warnings
+          warnings: enhancedData._quality.warnings,
+          degradedReason
         });
       }
       
@@ -35,8 +43,17 @@ const dataQualityMiddleware = (req, res, next) => {
   next();
 };
 
+function computeDegradedReason(data, isFallback, isMock) {
+  if (data && typeof data.degradedReason === 'string') return data.degradedReason;
+  if (data && data._degradedReason) return data._degradedReason;
+  if (isMock) return 'mock_data';
+  if (isFallback) return 'fallback_data';
+  if (data && data._cached) return 'cached_data';
+  return null;
+}
+
 function calculateConfidence(data, req) {
-  let confidence = 1.0; // Start with full confidence
+  let confidence = 1.0;
   
   if (isMockData(data)) confidence *= 0.5;
   if (isFallbackData(data)) confidence *= 0.7;
@@ -72,18 +89,20 @@ function isMockData(data) {
 
 function isFallbackData(data) {
   if (data && data._source === 'fallback') return true;
+  if (data && data.isFallback === true) return true;
   if (data && data.fallback === true) return true;
   if (data && data._fallback === true) return true;
+  if (data && typeof data.data === 'object' && data.data && (data.data._source === 'fallback' || data.data.isFallback === true)) return true;
   
   if (data && data.weather) {
     if (data.weather.temperature === 25 && data.weather.humidity === 60) {
-      return true; // Default weather values
+      return true;
     }
   }
   
   if (data && data.recommendations) {
     if (Array.isArray(data.recommendations) && data.recommendations.length === 0) {
-      return true; // Empty recommendations might be fallback
+      return true;
     }
   }
   
@@ -126,7 +145,7 @@ function calculateFreshnessFromTimestamp(timestamp) {
     
     if (diffMinutes < 5) return 'fresh';
     if (diffMinutes < 30) return 'recent';
-    if (diffMinutes < 1440) return 'stale'; // 24 hours
+    if (diffMinutes < 1440) return 'stale';
     return 'outdated';
   } catch (error) {
     return 'unknown';
@@ -163,6 +182,9 @@ function getDataWarnings(data) {
 }
 
 module.exports = dataQualityMiddleware;
+
+
+
 
 
 

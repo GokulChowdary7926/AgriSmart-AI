@@ -1,8 +1,9 @@
 
 const express = require('express');
 const router = express.Router();
-const governmentAPIService = require('../services/GovernmentAPIService');
+const governmentAPIService = require('../services/governmentAPIService');
 const { authenticateToken } = require('../middleware/auth');
+const { badRequest, serverError, ok } = require('../utils/httpResponses');
 
 router.get('/pmkisan/status', authenticateToken, async (req, res) => {
   try {
@@ -13,12 +14,13 @@ router.get('/pmkisan/status', authenticateToken, async (req, res) => {
       mobile_number
     );
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_pmkisan_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -31,12 +33,13 @@ router.get('/soil-health-card', authenticateToken, async (req, res) => {
       mobile_number
     );
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_soil_health_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -46,12 +49,13 @@ router.get('/msp', async (req, res) => {
     
     const result = await governmentAPIService.getMSPPrices(crop, year);
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_msp_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -65,12 +69,13 @@ router.get('/schemes', async (req, res) => {
       farmer_type
     );
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_schemes_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -79,20 +84,18 @@ router.get('/subsidies', async (req, res) => {
     const { crop, state } = req.query;
     
     if (!crop || !state) {
-      return res.status(400).json({
-        success: false,
-        error: 'Crop and state are required'
-      });
+      return badRequest(res, 'Crop and state are required');
     }
     
     const result = await governmentAPIService.getSubsidies(crop, state);
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_subsidies_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -101,20 +104,18 @@ router.get('/weather-advisory', async (req, res) => {
     const { district } = req.query;
     
     if (!district) {
-      return res.status(400).json({
-        success: false,
-        error: 'District is required'
-      });
+      return badRequest(res, 'District is required');
     }
     
     const result = await governmentAPIService.getWeatherAdvisory(district);
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_weather_advisory_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
@@ -124,26 +125,14 @@ router.post('/complaint', authenticateToken, async (req, res) => {
     
     const result = await governmentAPIService.registerComplaint(complaintData);
     
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
+    return ok(res, result, {
+      source: 'AgriSmart AI',
+      isFallback: Boolean(result?.fallback || result?.success === false),
+      degradedReason: result?.fallback || result?.success === false ? 'government_complaint_degraded' : null
     });
+  } catch (error) {
+    return serverError(res, error.message);
   }
 });
 
 module.exports = router;
-
-
-
-
-
-
-
-
-
-
-
-
-
